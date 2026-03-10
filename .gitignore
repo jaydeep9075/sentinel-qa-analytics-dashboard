@@ -1,0 +1,10 @@
+# Node
+node_modules/
+npm-debug.log
+
+# Optional—build folders
+dist/
+build/
+
+# IDE-specific files
+.vscode/
