@@ -1,146 +1,181 @@
 {
+    "metadata": {
+        "env": "DEV_SMOKE",
+        "generated_at": 1773220406118,
+        "source_path": "D:\\FULL_DEV_SMOKE_copy"
+    },
     "tests": [
         {
-            "test_uuid": "29ff712f-d243-4780-bd18-c7ca7eeabcc4",
+            "uuid": "29ff712f-d243-4780-bd18-c7ca7eeabcc4",
             "name": "TS_16-GuestCheckoutTest @place_order_as_guest_validate_user_details",
             "module": "GuestCheckout @hsa_storefront @guestCheckout @third_hsa-group @hsa_guest_smoke",
             "status": "failed",
             "duration_sec": 324.72,
             "error_msg": "Error: \u26a0\ufe0f Maintenance page detected after saving information.",
             "timestamp": 1768476713953,
-            "env": "DEV_SMOKE"
+            "env": "DEV_SMOKE",
+            "tags": []
         },
         {
-            "test_uuid": "3c79f3f7-7a42-49de-a20a-fe351e70e1f0",
+            "uuid": "3c79f3f7-7a42-49de-a20a-fe351e70e1f0",
             "name": "TS_22.1-RegisteredCheckoutTest @log_in_before_placing_order",
             "module": "RegisteredCheckout @hsa_storefront @registeredCheckout @fourth_hsa-group @hsa_reg_smoke",
             "status": "failed",
             "duration_sec": 198.01,
             "error_msg": "TimeoutError: locator.textContent: Timeout 20000ms exceeded.\nCall log:\n  - waiting for locator('xpath=(//div[@class=\\'c-account__card__body card-body\\'])[1]/dl[3]/dd')\n",
             "timestamp": 1768477057335,
-            "env": "DEV_SMOKE"
+            "env": "DEV_SMOKE",
+            "tags": []
         },
         {
-            "test_uuid": "4ae0b822-6284-475b-a6e8-960654759799",
+            "uuid": "4ae0b822-6284-475b-a6e8-960654759799",
             "name": "TS_23-RegisteredCheckoutTest @log_in_before_placing_order @mrt_registercheckout",
             "module": "RegisteredCheckout @hsa_storefront @registeredCheckout @fourth_hsa-group @hsa_reg_smoke",
             "status": "passed",
             "duration_sec": 343.11,
             "error_msg": "No Error",
             "timestamp": 1768476713319,
-            "env": "DEV_SMOKE"
+            "env": "DEV_SMOKE",
+            "tags": []
         },
         {
-            "test_uuid": "515e3d19-8075-4596-a874-8bd7b9b29f95",
+            "uuid": "515e3d19-8075-4596-a874-8bd7b9b29f95",
             "name": "TS_16-GuestCheckoutTest @fsa_storefront @place_order_as_guest_validate_user_details",
             "module": "GuestCheckout @fsa_storefront  @fsa-guestCheckout @third_fsa-group @fsa_guest_smoke",
             "status": "passed",
             "duration_sec": 326.65,
             "error_msg": "No Error",
             "timestamp": 1768476713292,
-            "env": "DEV_SMOKE"
+            "env": "DEV_SMOKE",
+            "tags": []
         },
         {
-            "test_uuid": "5e0903dd-a396-464c-ae89-244911339803",
+            "uuid": "5e0903dd-a396-464c-ae89-244911339803",
             "name": "TS_22.1-RegisteredCheckout @log_in_before_placing_order",
             "module": "RegisteredCheckout @fsa_storefront @registeredCheckout @fourth_fsa-group @fsa_reg_smoke",
             "status": "failed",
             "duration_sec": 199.29,
             "error_msg": "TimeoutError: locator.textContent: Timeout 20000ms exceeded.\nCall log:\n  - waiting for locator('xpath=(//div[@class=\\'c-account__card__body card-body\\'])[1]/dl[3]/dd')\n",
             "timestamp": 1768477055282,
-            "env": "DEV_SMOKE"
+            "env": "DEV_SMOKE",
+            "tags": []
         },
         {
-            "test_uuid": "6ff9e303-9ee5-4272-a3dd-323844292c80",
+            "uuid": "6ff9e303-9ee5-4272-a3dd-323844292c80",
             "name": "TS_23-RegisteredCheckoutmrt @log_in_before_placing_order @mrt_registercheckout",
             "module": "RegisteredCheckout @fsa_storefront @registeredCheckout @fourth_fsa-group @fsa_reg_smoke",
             "status": "failed",
             "duration_sec": 198.96,
             "error_msg": "TimeoutError: locator.textContent: Timeout 20000ms exceeded.\nCall log:\n  - waiting for locator('xpath=(//div[@class=\\'c-account__card__body card-body\\'])[1]/dl[3]/dd')\n",
             "timestamp": 1768477065161,
-            "env": "DEV_SMOKE"
+            "env": "DEV_SMOKE",
+            "tags": []
         },
         {
-            "test_uuid": "83f72c66-bef2-413b-933f-1bb06ffdbf58",
+            "uuid": "83f72c66-bef2-413b-933f-1bb06ffdbf58",
             "name": "TS_22.1-RegisteredCheckout @log_in_before_placing_order",
             "module": "RegisteredCheckout @fsa_storefront @registeredCheckout @fourth_fsa-group @fsa_reg_smoke",
             "status": "passed",
             "duration_sec": 339.67,
             "error_msg": "No Error",
             "timestamp": 1768476714528,
-            "env": "DEV_SMOKE"
+            "env": "DEV_SMOKE",
+            "tags": []
         },
         {
-            "test_uuid": "a40ff78d-a5c2-416b-af32-878353b6fa37",
+            "uuid": "a40ff78d-a5c2-416b-af32-878353b6fa37",
             "name": "TS_22.1-RegisteredCheckoutTest @log_in_before_placing_order",
             "module": "RegisteredCheckout @hsa_storefront @registeredCheckout @fourth_hsa-group @hsa_reg_smoke",
             "status": "passed",
             "duration_sec": 346.8,
             "error_msg": "No Error",
             "timestamp": 1768476713231,
-            "env": "DEV_SMOKE"
+            "env": "DEV_SMOKE",
+            "tags": []
         },
         {
-            "test_uuid": "a4f07eb9-aece-482c-9499-c35e84c7ceb2",
+            "uuid": "a4f07eb9-aece-482c-9499-c35e84c7ceb2",
             "name": "TS_22-RegisteredCheckoutTest @log_in_before_placing_order",
             "module": "RegisteredCheckout @wdh_storefront @registeredCheckout @third_wdh-group @wdh_reg_smoke",
             "status": "passed",
             "duration_sec": 403.63,
             "error_msg": "No Error",
             "timestamp": 1768476713077,
-            "env": "DEV_SMOKE"
+            "env": "DEV_SMOKE",
+            "tags": []
         },
         {
-            "test_uuid": "ad8b60f7-88cd-4d5b-950f-656cf27dd026",
+            "uuid": "ad8b60f7-88cd-4d5b-950f-656cf27dd026",
             "name": "TS_23-RegisteredCheckoutmrt @log_in_before_placing_order @mrt_registercheckout",
             "module": "RegisteredCheckout @fsa_storefront @registeredCheckout @fourth_fsa-group @fsa_reg_smoke",
             "status": "passed",
             "duration_sec": 349.49,
             "error_msg": "No Error",
             "timestamp": 1768476714549,
-            "env": "DEV_SMOKE"
+            "env": "DEV_SMOKE",
+            "tags": []
         },
         {
-            "test_uuid": "c2478b6a-b9f6-4049-8735-63ecd98ff29a",
+            "uuid": "c2478b6a-b9f6-4049-8735-63ecd98ff29a",
             "name": "TS_16-GuestCheckoutTest @place_order_as_guest_validate_user_details",
             "module": "GuestCheckout @hsa_storefront @guestCheckout @third_hsa-group @hsa_guest_smoke",
             "status": "failed",
             "duration_sec": 241.77,
             "error_msg": "Error: \u26a0\ufe0f Maintenance page detected after saving information.",
             "timestamp": 1768476713955,
-            "env": "DEV_SMOKE"
+            "env": "DEV_SMOKE",
+            "tags": []
         },
         {
-            "test_uuid": "c553d20d-e002-4d04-a7d5-73d75834020a",
+            "uuid": "c553d20d-e002-4d04-a7d5-73d75834020a",
             "name": "TS_23-RegisteredCheckoutTest @log_in_before_placing_order @mrt_registercheckout",
             "module": "RegisteredCheckout @hsa_storefront @registeredCheckout @fourth_hsa-group @hsa_reg_smoke",
             "status": "failed",
             "duration_sec": 197.5,
             "error_msg": "TimeoutError: locator.textContent: Timeout 20000ms exceeded.\nCall log:\n  - waiting for locator('xpath=(//div[@class=\\'c-account__card__body card-body\\'])[1]/dl[3]/dd')\n",
             "timestamp": 1768477061003,
-            "env": "DEV_SMOKE"
+            "env": "DEV_SMOKE",
+            "tags": []
         },
         {
-            "test_uuid": "cb46079a-f9d7-4708-83d5-8c3856458ae3",
+            "uuid": "cb46079a-f9d7-4708-83d5-8c3856458ae3",
             "name": "TS_22-RegisteredCheckoutTest @log_in_before_placing_order",
             "module": "RegisteredCheckout @wdh_storefront @registeredCheckout @third_wdh-group @wdh_reg_smoke",
             "status": "passed",
             "duration_sec": 276.44,
             "error_msg": "No Error",
             "timestamp": 1768476713049,
-            "env": "DEV_SMOKE"
+            "env": "DEV_SMOKE",
+            "tags": []
         },
         {
-            "test_uuid": "ce96b8ed-9734-4528-af38-c777150e8b40",
+            "uuid": "ce96b8ed-9734-4528-af38-c777150e8b40",
             "name": "TS_16-GuestCheckoutTest @fsa_storefront @place_order_as_guest_validate_user_details",
             "module": "GuestCheckout @fsa_storefront  @fsa-guestCheckout @third_fsa-group @fsa_guest_smoke",
             "status": "passed",
             "duration_sec": 243.33,
             "error_msg": "No Error",
             "timestamp": 1768476713346,
-            "env": "DEV_SMOKE"
+            "env": "DEV_SMOKE",
+            "tags": []
         }
     ],
+    "modules": {
+        "GuestCheckout": {
+            "total": 4,
+            "passed": 2,
+            "failed": 2,
+            "avg_duration_sec": 284.12,
+            "failure_rate": 50.0
+        },
+        "RegisteredCheckout": {
+            "total": 10,
+            "passed": 6,
+            "failed": 4,
+            "avg_duration_sec": 285.29,
+            "failure_rate": 40.0
+        }
+    },
     "trends": {
         "history-trend": [
             {
@@ -900,6 +935,190 @@
                     "run": 0,
                     "retry": 0
                 }
+            }
+        ]
+    },
+    "analytics": {
+        "flaky_tests": [
+            "TS_22.1-RegisteredCheckoutTest @log_in_before_placing_order",
+            "TS_23-RegisteredCheckoutTest @log_in_before_placing_order @mrt_registercheckout",
+            "TS_22.1-RegisteredCheckout @log_in_before_placing_order",
+            "TS_23-RegisteredCheckoutmrt @log_in_before_placing_order @mrt_registercheckout"
+        ],
+        "slow_tests": [
+            {
+                "uuid": "a4f07eb9-aece-482c-9499-c35e84c7ceb2",
+                "name": "TS_22-RegisteredCheckoutTest @log_in_before_placing_order",
+                "module": "RegisteredCheckout @wdh_storefront @registeredCheckout @third_wdh-group @wdh_reg_smoke",
+                "status": "passed",
+                "duration_sec": 403.63,
+                "error_msg": "No Error",
+                "timestamp": 1768476713077,
+                "env": "DEV_SMOKE",
+                "tags": []
+            },
+            {
+                "uuid": "ad8b60f7-88cd-4d5b-950f-656cf27dd026",
+                "name": "TS_23-RegisteredCheckoutmrt @log_in_before_placing_order @mrt_registercheckout",
+                "module": "RegisteredCheckout @fsa_storefront @registeredCheckout @fourth_fsa-group @fsa_reg_smoke",
+                "status": "passed",
+                "duration_sec": 349.49,
+                "error_msg": "No Error",
+                "timestamp": 1768476714549,
+                "env": "DEV_SMOKE",
+                "tags": []
+            },
+            {
+                "uuid": "a40ff78d-a5c2-416b-af32-878353b6fa37",
+                "name": "TS_22.1-RegisteredCheckoutTest @log_in_before_placing_order",
+                "module": "RegisteredCheckout @hsa_storefront @registeredCheckout @fourth_hsa-group @hsa_reg_smoke",
+                "status": "passed",
+                "duration_sec": 346.8,
+                "error_msg": "No Error",
+                "timestamp": 1768476713231,
+                "env": "DEV_SMOKE",
+                "tags": []
+            },
+            {
+                "uuid": "4ae0b822-6284-475b-a6e8-960654759799",
+                "name": "TS_23-RegisteredCheckoutTest @log_in_before_placing_order @mrt_registercheckout",
+                "module": "RegisteredCheckout @hsa_storefront @registeredCheckout @fourth_hsa-group @hsa_reg_smoke",
+                "status": "passed",
+                "duration_sec": 343.11,
+                "error_msg": "No Error",
+                "timestamp": 1768476713319,
+                "env": "DEV_SMOKE",
+                "tags": []
+            },
+            {
+                "uuid": "83f72c66-bef2-413b-933f-1bb06ffdbf58",
+                "name": "TS_22.1-RegisteredCheckout @log_in_before_placing_order",
+                "module": "RegisteredCheckout @fsa_storefront @registeredCheckout @fourth_fsa-group @fsa_reg_smoke",
+                "status": "passed",
+                "duration_sec": 339.67,
+                "error_msg": "No Error",
+                "timestamp": 1768476714528,
+                "env": "DEV_SMOKE",
+                "tags": []
+            },
+            {
+                "uuid": "515e3d19-8075-4596-a874-8bd7b9b29f95",
+                "name": "TS_16-GuestCheckoutTest @fsa_storefront @place_order_as_guest_validate_user_details",
+                "module": "GuestCheckout @fsa_storefront  @fsa-guestCheckout @third_fsa-group @fsa_guest_smoke",
+                "status": "passed",
+                "duration_sec": 326.65,
+                "error_msg": "No Error",
+                "timestamp": 1768476713292,
+                "env": "DEV_SMOKE",
+                "tags": []
+            },
+            {
+                "uuid": "29ff712f-d243-4780-bd18-c7ca7eeabcc4",
+                "name": "TS_16-GuestCheckoutTest @place_order_as_guest_validate_user_details",
+                "module": "GuestCheckout @hsa_storefront @guestCheckout @third_hsa-group @hsa_guest_smoke",
+                "status": "failed",
+                "duration_sec": 324.72,
+                "error_msg": "Error: \u26a0\ufe0f Maintenance page detected after saving information.",
+                "timestamp": 1768476713953,
+                "env": "DEV_SMOKE",
+                "tags": []
+            },
+            {
+                "uuid": "cb46079a-f9d7-4708-83d5-8c3856458ae3",
+                "name": "TS_22-RegisteredCheckoutTest @log_in_before_placing_order",
+                "module": "RegisteredCheckout @wdh_storefront @registeredCheckout @third_wdh-group @wdh_reg_smoke",
+                "status": "passed",
+                "duration_sec": 276.44,
+                "error_msg": "No Error",
+                "timestamp": 1768476713049,
+                "env": "DEV_SMOKE",
+                "tags": []
+            },
+            {
+                "uuid": "ce96b8ed-9734-4528-af38-c777150e8b40",
+                "name": "TS_16-GuestCheckoutTest @fsa_storefront @place_order_as_guest_validate_user_details",
+                "module": "GuestCheckout @fsa_storefront  @fsa-guestCheckout @third_fsa-group @fsa_guest_smoke",
+                "status": "passed",
+                "duration_sec": 243.33,
+                "error_msg": "No Error",
+                "timestamp": 1768476713346,
+                "env": "DEV_SMOKE",
+                "tags": []
+            },
+            {
+                "uuid": "c2478b6a-b9f6-4049-8735-63ecd98ff29a",
+                "name": "TS_16-GuestCheckoutTest @place_order_as_guest_validate_user_details",
+                "module": "GuestCheckout @hsa_storefront @guestCheckout @third_hsa-group @hsa_guest_smoke",
+                "status": "failed",
+                "duration_sec": 241.77,
+                "error_msg": "Error: \u26a0\ufe0f Maintenance page detected after saving information.",
+                "timestamp": 1768476713955,
+                "env": "DEV_SMOKE",
+                "tags": []
+            }
+        ],
+        "retry_impact": [
+            "TS_22.1-RegisteredCheckoutTest @log_in_before_placing_order",
+            "TS_23-RegisteredCheckoutTest @log_in_before_placing_order @mrt_registercheckout",
+            "TS_22.1-RegisteredCheckout @log_in_before_placing_order",
+            "TS_23-RegisteredCheckoutmrt @log_in_before_placing_order @mrt_registercheckout"
+        ],
+        "module_stability": [
+            {
+                "module": "GuestCheckout",
+                "total": 4,
+                "passed": 2,
+                "failed": 2,
+                "avg_duration_sec": 284.12,
+                "failure_rate": 50.0
+            },
+            {
+                "module": "RegisteredCheckout",
+                "total": 10,
+                "passed": 6,
+                "failed": 4,
+                "avg_duration_sec": 285.29,
+                "failure_rate": 40.0
+            }
+        ],
+        "risk_matrix": [
+            {
+                "module": "GuestCheckout",
+                "risk_score": 14206.0
+            },
+            {
+                "module": "RegisteredCheckout",
+                "risk_score": 11411.6
+            }
+        ],
+        "stability_score": [
+            {
+                "test": "TS_16-GuestCheckoutTest @place_order_as_guest_validate_user_details",
+                "stability_score": 0.0
+            },
+            {
+                "test": "TS_22.1-RegisteredCheckoutTest @log_in_before_placing_order",
+                "stability_score": 0.5
+            },
+            {
+                "test": "TS_23-RegisteredCheckoutTest @log_in_before_placing_order @mrt_registercheckout",
+                "stability_score": 0.5
+            },
+            {
+                "test": "TS_16-GuestCheckoutTest @fsa_storefront @place_order_as_guest_validate_user_details",
+                "stability_score": 1.0
+            },
+            {
+                "test": "TS_22.1-RegisteredCheckout @log_in_before_placing_order",
+                "stability_score": 0.5
+            },
+            {
+                "test": "TS_23-RegisteredCheckoutmrt @log_in_before_placing_order @mrt_registercheckout",
+                "stability_score": 0.5
+            },
+            {
+                "test": "TS_22-RegisteredCheckoutTest @log_in_before_placing_order",
+                "stability_score": 1.0
             }
         ]
     }
