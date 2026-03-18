@@ -3,7 +3,7 @@ import json
 import time
 from collections import defaultdict, Counter
 
-SOURCE_PATH = r"D:\FULL_DEV_SMOKE_copy"
+SOURCE_PATH = r"C:\Users\ADITYA THODSARE\Downloads\allure-results"
 HISTORY_PATH = os.path.join(SOURCE_PATH, "history")
 OUTPUT_FILE = "qa_analytics_master.json"
 

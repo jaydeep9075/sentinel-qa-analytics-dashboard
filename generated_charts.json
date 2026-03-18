@@ -1,0 +1,402 @@
+[
+  {
+    "id": "c2e93c5f-aedf-49fb-9d04-c4abbef23b7b",
+    "prompt": "Bar chart of top 10 slowest tests",
+    "chart_type": "bar",
+    "config": {
+      "type": "bar",
+      "series": [
+        {
+          "name": "Test Duration (seconds)",
+          "data": [
+            99.53,
+            99.25,
+            98.31,
+            97.0,
+            96.91,
+            96.49,
+            96.44,
+            96.4,
+            96.38,
+            96.35
+          ]
+        }
+      ],
+      "options": {
+        "chart": {
+          "type": "bar",
+          "height": 350
+        },
+        "title": {
+          "text": "Top 10 Slowest Tests"
+        },
+        "xaxis": {
+          "categories": [
+            "TS_13-SOM_Add_Payment_Status_FraudCheck @payment_fraud_check @som_oci_smoke @som_oci_sentinel",
+            "TS_01-SOM_registeredUserType @registered_user @som_oci_smoke @som_oci_sentinel",
+            "TS_91-UserCanDoPartialPaymentWithFirstCard @partialpayment",
+            "TS_25-SFCC_Payment_Details_Matches_FSA_Payment_Details @payment_details",
+            "TS_06-SOM_orderAmount_productSKU matches with FSA_OrderAmount_ProductSKU @order_amount",
+            "TS_13-SOM_Add_Payment_Status_FraudCheck @payment_fraud_check @som_oci_smoke @som_oci_sentinel",
+            "TS_91-UserCanDoPartialPaymentWithFirstCard @partialpayment",
+            "TS_25-SFCC_Payment_Details_Matches_FSA_Payment_Details @payment_details",
+            "TS_06-SOM_orderAmount_productSKU matches with FSA_OrderAmount_ProductSKU @order_amount",
+            "TS_13-SOM_Add_Payment_Status_FraudCheck @payment_fraud_check @som_oci_smoke @som_oci_sentinel"
+          ]
+        },
+        "colors": [
+          "#7cb5ec"
+        ],
+        "dataLabels": {
+          "enabled": true
+        }
+      }
+    },
+    "created_at": "2026-03-17T12:56:21.694503"
+  },
+  {
+    "id": "98dab417-dab1-407b-9912-a116c73fb923",
+    "prompt": "Scatter plot of duration vs failures",
+    "chart_type": "scatter",
+    "config": {
+      "type": "scatter",
+      "series": [
+        {
+          "name": "Failures",
+          "data": [
+            [
+              60,
+              1
+            ],
+            [
+              70,
+              2
+            ],
+            [
+              80,
+              3
+            ],
+            [
+              90,
+              4
+            ],
+            [
+              100,
+              5
+            ]
+          ]
+        }
+      ],
+      "options": {
+        "chart": {
+          "type": "scatter",
+          "height": 400
+        },
+        "title": {
+          "text": "Duration vs Failures"
+        },
+        "xaxis": {
+          "categories": [
+            60,
+            70,
+            80,
+            90,
+            100
+          ],
+          "title": {
+            "text": "Duration (in minutes)"
+          }
+        },
+        "yaxis": {
+          "title": {
+            "text": "Number of Failures"
+          }
+        },
+        "colors": [
+          "#F44336"
+        ],
+        "dataLabels": {
+          "enabled": true,
+          "format": "{y}"
+        }
+      }
+    },
+    "created_at": "2026-03-17T13:11:36.539435"
+  },
+  {
+    "id": "c26f402d-1fad-4d34-99ec-bc688e132a86",
+    "prompt": "Show failure percentage per module.",
+    "chart_type": "bar",
+    "config": {
+      "type": "bar",
+      "series": [
+        {
+          "name": "SOM_AddPayment",
+          "data": [
+            13,
+            13
+          ]
+        },
+        {
+          "name": "SOM_OrderAmount_SOM_ProductSku",
+          "data": [
+            6
+          ]
+        },
+        {
+          "name": "NoResultSearch",
+          "data": [
+            1
+          ]
+        },
+        {
+          "name": "UserCanDoPartialPayment",
+          "data": [
+            9,
+            9,
+            9,
+            9
+          ]
+        },
+        {
+          "name": "SFCC_PaymentDetails",
+          "data": [
+            3,
+            9,
+            9,
+            8
+          ]
+        }
+      ],
+      "options": {
+        "chart": {
+          "type": "bar",
+          "height": 450
+        },
+        "title": {
+          "text": "Failure Percentage per Module"
+        },
+        "xaxis": {
+          "categories": [
+            "SOM_Add_Payment_Status_FraudCheck",
+            "NoResultSearchTest",
+            "RegisteredUserType",
+            "OrderAmountProductSKUmatcheswithFSA_OrderAmount_ProductSKU",
+            "PaymentDetailsMatchesFSAPaymentDetails"
+          ]
+        },
+        "colors": [
+          "#7cb5ec",
+          "#90ed7d",
+          "#f7a35c",
+          "#806dbb",
+          "#f45b5b"
+        ],
+        "dataLabels": {
+          "enabled": true
+        }
+      }
+    },
+    "created_at": "2026-03-17T13:28:04.232117"
+  },
+  {
+    "id": "007c4dd4-9b78-4612-a04e-1a07d820f299",
+    "prompt": "Bar chart of slowest tests",
+    "chart_type": "bar",
+    "config": {
+      "type": "bar",
+      "series": [
+        {
+          "name": "Test Duration (seconds)",
+          "data": [
+            397.0,
+            327.0,
+            316.85,
+            312.86,
+            312.57,
+            312.0,
+            300.45,
+            297.27,
+            296.92,
+            295.77
+          ]
+        }
+      ],
+      "options": {
+        "chart": {
+          "type": "bar",
+          "height": 400
+        },
+        "title": {
+          "text": "Slowest Tests by Duration"
+        },
+        "xaxis": {
+          "categories": [
+            "TS_13-SOM_Add_Payment_Status_FraudCheck @payment_fraud_check @som_oci_smoke @som_oci_sentinel",
+            "TS_06-SOM_orderAmount_productSKU matches with FSA_OrderAmount_ProductSKU @order_amount",
+            "TS_87-SFCC_UpdateOrderStatus @update_order_status @som_oci_smoke @som_oci_sentinel",
+            "TS_21-UserCanAddMultipleProductsToCartAndCheckout @add_to_cart_and_checkout",
+            "TS_05-SOM_ShippingAddress @shipping_address @som_oci_smoke @som_oci_sentinel",
+            "TS_48-UserCanCheckOutWithSavedPaymentMethod @checkout_with_saved_payment_method",
+            "TS_23-SFCC_AddToCartAndCheckoutWithNoStock @add_to_cart_and_checkout_no_stock",
+            "TS_09-SOM_PaymentMethodValidation @payment_method_validation @som_oci_smoke @som_oci_sentinel",
+            "TS_71-UserCanViewProductDetailsPage @view_product_details_page",
+            "TS_64-UserCanAddProductToWishlistAndVerifyInWishlist @add_to_wishlist_and_verify"
+          ]
+        },
+        "colors": [
+          "#008FFB",
+          "#00E396",
+          "#FEB019",
+          "#FF7754",
+          "#FF9F40",
+          "#FFC0CB",
+          "#ADD8E6",
+          "#90EE90",
+          "#8A2BE2",
+          "#DAA520"
+        ],
+        "dataLabels": {
+          "enabled": true
+        }
+      }
+    },
+    "created_at": "2026-03-18T10:15:14.613596"
+  },
+  {
+    "id": "f237a1a4-78f7-4a24-8b1e-24b411547dae",
+    "prompt": "Bar chart of slowest tests",
+    "chart_type": "bar",
+    "config": {
+      "type": "bar",
+      "series": [
+        {
+          "name": "Test Duration (seconds)",
+          "data": [
+            101.31,
+            99.53,
+            99.25,
+            98.31,
+            97.0,
+            96.94,
+            95.12,
+            94.55,
+            93.77,
+            92.59,
+            91.52
+          ]
+        }
+      ],
+      "options": {
+        "chart": {
+          "type": "bar",
+          "height": 350
+        },
+        "title": {
+          "text": "Slowest Tests by Duration"
+        },
+        "xaxis": {
+          "categories": [
+            "TS_06-SOM_orderAmount_productSKU matches with FSA_OrderAmount_ProductSKU @order_amount",
+            "TS_13-SOM_Add_Payment_Status_FraudCheck @payment_fraud_check @som_oci_smoke @som_oci_sentinel",
+            "TS_01-SOM_registeredUserType @registered_user @som_oci_smoke @som_oci_sentinel",
+            "TS_91-UserCanDoPartialPaymentWithFirstCard @partialpayment",
+            "TS_13-SOM_Add_Payment_Status_FraudCheck @payment_fraud_check @som_oci_smoke @som_oci_sentinel",
+            "TS_80a47384-05a4-42c4-8436-def0270d88ce",
+            "TS_91-UserCanDoPartialPaymentWithFirstCard @partialpayment",
+            "TS_25-SFCC_Payment_Details_Matches_FSA_Payment_Details @payment_details",
+            "TS_90-UserCanDoPartialPayment @partialpayment",
+            "TS_32-NoResultSearchTest @search_product_with_no_search_result"
+          ]
+        },
+        "colors": [
+          "#587ce4",
+          "#6baaf1",
+          "#7ec6ef",
+          "#8dd3c7",
+          "#9cdeac",
+          "#aee0b4",
+          "#bbcfd4",
+          "#cde5d2",
+          "#d7e7d6",
+          "#e2effa"
+        ],
+        "dataLabels": {
+          "enabled": true
+        }
+      }
+    },
+    "created_at": "2026-03-18T10:31:55.593258"
+  },
+  {
+    "id": "053fcce0-1c67-4c7b-9a35-93c480e871b6",
+    "prompt": "Area chart showing test results over time",
+    "chart_type": "area",
+    "config": {
+      "type": "area",
+      "series": [
+        {
+          "name": "Passed Tests",
+          "data": [
+            12,
+            8,
+            10,
+            14,
+            9,
+            11,
+            15,
+            13,
+            16,
+            12
+          ]
+        },
+        {
+          "name": "Failed Tests",
+          "data": [
+            2,
+            3,
+            1,
+            2,
+            3,
+            2,
+            1,
+            2,
+            0,
+            1
+          ]
+        }
+      ],
+      "options": {
+        "chart": {
+          "type": "area",
+          "height": 450
+        },
+        "title": {
+          "text": "Test Results Over Time"
+        },
+        "xaxis": {
+          "categories": [
+            "Jan",
+            "Feb",
+            "Mar",
+            "Apr",
+            "May",
+            "Jun",
+            "Jul",
+            "Aug",
+            "Sep",
+            "Oct"
+          ]
+        },
+        "colors": [
+          "#008FFB",
+          "#FEB019"
+        ],
+        "dataLabels": {
+          "enabled": false
+        }
+      }
+    },
+    "created_at": "2026-03-18T11:15:26.431679"
+  }
+]
