@@ -16,6 +16,9 @@ export const getFailures = () => API.get("/failures");
 export const generateChart = (prompt: string) =>
   API.post("/ai/generate-chart", { prompt });
 
+export const sendChat = (message: string) =>
+  API.post("/ai/chat", { message });
+
 export const getGeneratedCharts = () => API.get("/ai/generated-charts");
 
 export const deleteChart = (chartId: string) =>

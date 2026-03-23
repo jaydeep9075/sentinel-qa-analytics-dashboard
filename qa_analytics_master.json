@@ -1,859 +1,1411 @@
 {
     "metadata": {
-        "env": "DEV_SMOKE",
-        "generated_at": 1773228847833,
-        "source_path": "C:\\Users\\ADITYA THODSARE\\Downloads\\allure-results"
+        "env": "MULTIPLE",
+        "generated_at": 1774255537405,
+        "total_records": 14
     },
     "tests": [
         {
-            "uuid": "226adc6b-4383-40cc-b398-842e3e85328a",
-            "name": "TS_22.1-RiskifiedRegisteredCheckout @reskified_Log_user",
-            "module": "RegisteredCheckout @fsa_storefront @fourth_fsa-group ",
+            "uuid": "29ff712f-d243-4780-bd18-c7ca7eeabcc4",
+            "name": "TS_16-GuestCheckoutTest @place_order_as_guest_validate_user_details",
+            "module": "GuestCheckout @hsa_storefront @guestCheckout @third_hsa-group @hsa_guest_smoke",
+            "status": "failed",
+            "duration_sec": 324.72,
+            "error_msg": "Error: \u26a0\ufe0f Maintenance page detected after saving information.",
+            "timestamp": 1768476713953,
+            "env": "DEV_SMOKE",
+            "tags": [
+                "language",
+                "framework",
+                "titlePath",
+                "host",
+                "thread",
+                "parentSuite",
+                "suite",
+                "subSuite",
+                "tag",
+                "tag",
+                "tag"
+            ]
+        },
+        {
+            "uuid": "3c79f3f7-7a42-49de-a20a-fe351e70e1f0",
+            "name": "TS_22.1-RegisteredCheckoutTest @log_in_before_placing_order",
+            "module": "RegisteredCheckout @hsa_storefront @registeredCheckout @fourth_hsa-group @hsa_reg_smoke",
+            "status": "failed",
+            "duration_sec": 198.01,
+            "error_msg": "TimeoutError: locator.textContent: Timeout 20000ms exceeded.\nCall log:\n  - waiting for locator('xpath=(//div[@class=\\'c-account__card__body card-body\\'])[1]/dl[3]/dd')\n",
+            "timestamp": 1768477057335,
+            "env": "DEV_SMOKE",
+            "tags": [
+                "language",
+                "framework",
+                "titlePath",
+                "host",
+                "thread",
+                "parentSuite",
+                "suite",
+                "subSuite",
+                "tag",
+                "tag",
+                "tag"
+            ]
+        },
+        {
+            "uuid": "4ae0b822-6284-475b-a6e8-960654759799",
+            "name": "TS_23-RegisteredCheckoutTest @log_in_before_placing_order @mrt_registercheckout",
+            "module": "RegisteredCheckout @hsa_storefront @registeredCheckout @fourth_hsa-group @hsa_reg_smoke",
             "status": "passed",
-            "duration_sec": 260.4,
+            "duration_sec": 343.11,
             "error_msg": "No Error",
-            "timestamp": 1773214407698,
+            "timestamp": 1768476713319,
             "env": "DEV_SMOKE",
-            "tags": []
+            "tags": [
+                "language",
+                "framework",
+                "titlePath",
+                "host",
+                "thread",
+                "parentSuite",
+                "suite",
+                "subSuite",
+                "tag",
+                "tag",
+                "tag"
+            ]
         },
         {
-            "uuid": "2b2ad867-5226-4ddf-807e-f46be5d56e06",
-            "name": "TS_01-SOM_registeredUserType @registered_user @som_oci_smoke @som_oci_sentinel",
-            "module": "SOM_userType @fsa_storefront @user_type @fsa_som_oci",
-            "status": "failed",
-            "duration_sec": 97.08,
-            "error_msg": "TimeoutError: locator.textContent: Timeout 20000ms exceeded.\nCall log:\n  - waiting for locator('.minicart-quantity').last()\n",
-            "timestamp": 1772489464967,
-            "env": "DEV_SMOKE",
-            "tags": []
-        },
-        {
-            "uuid": "34728a66-1d88-478f-980f-0c898dbdd958",
-            "name": "TS_23-RegisteredOnCheckoutTest @login_at_the_time_of_placing_order",
-            "module": "RegisteredOnCheckout @fsa_storefront @registeredOnCheckout @fourth_fsa-group ",
+            "uuid": "515e3d19-8075-4596-a874-8bd7b9b29f95",
+            "name": "TS_16-GuestCheckoutTest @fsa_storefront @place_order_as_guest_validate_user_details",
+            "module": "GuestCheckout @fsa_storefront  @fsa-guestCheckout @third_fsa-group @fsa_guest_smoke",
             "status": "passed",
-            "duration_sec": 295.26,
+            "duration_sec": 326.65,
             "error_msg": "No Error",
-            "timestamp": 1773214359306,
+            "timestamp": 1768476713292,
             "env": "DEV_SMOKE",
-            "tags": []
+            "tags": [
+                "language",
+                "framework",
+                "titlePath",
+                "host",
+                "thread",
+                "parentSuite",
+                "suite",
+                "subSuite",
+                "tag",
+                "tag",
+                "tag"
+            ]
         },
         {
-            "uuid": "4acf4aab-676b-465a-b24c-f7d872b6a940",
-            "name": "TS_94-NormalOrder @normal_order",
-            "module": "NormalOrder @fsa_storefront @normal_order @fsa_som_oci @som_oci_smoke @som_oci_sentinel",
+            "uuid": "5e0903dd-a396-464c-ae89-244911339803",
+            "name": "TS_22.1-RegisteredCheckout @log_in_before_placing_order",
+            "module": "RegisteredCheckout @fsa_storefront @registeredCheckout @fourth_fsa-group @fsa_reg_smoke",
             "status": "failed",
-            "duration_sec": 135.5,
-            "error_msg": "TimeoutError: locator.click: Timeout 20000ms exceeded.\nCall log:\n  - waiting for locator('.sod_label')\n    - locator resolved to <span class=\"sod_label\" title=\"FSA Store\">FSA Store</span>\n  - attempting click action\n    2 \u00d7 waiting for element to be visible, enabled and stable\n      - element is visible, enabled and stable\n      - scrolling into view if needed\n      - done scrolling\n      - <div pendo-region=\"right\" id=\"pendo-backdrop-3\" class=\"pendo-backdrop-region-right _pendo-backdrop\"></div> from <div id=\"pendo-base\" data-layout=\"lightboxBlank\" class=\"_pendo-step-container\">\u2026</div> subtree intercepts pointer events\n    - retrying click action\n    - waiting 20ms\n    2 \u00d7 waiting for element to be visible, enabled and stable\n      - element is visible, enabled and stable\n      - scrolling into view if needed\n      - done scrolling\n      - <div pendo-region=\"right\" id=\"pendo-backdrop-3\" class=\"pendo-backdrop-region-right _pendo-backdrop\"></div> from <div id=\"pendo-base\" data-layout=\"lightboxBlank\" class=\"_pendo-step-container\">\u2026</div> subtree intercepts pointer events\n    - retrying click action\n      - waiting 100ms\n    39 \u00d7 waiting for element to be visible, enabled and stable\n       - element is visible, enabled and stable\n       - scrolling into view if needed\n       - done scrolling\n       - <div pendo-region=\"right\" id=\"pendo-backdrop-3\" class=\"pendo-backdrop-region-right _pendo-backdrop\"></div> from <div id=\"pendo-base\" data-layout=\"lightboxBlank\" class=\"_pendo-step-container\">\u2026</div> subtree intercepts pointer events\n     - retrying click action\n       - waiting 500ms\n",
-            "timestamp": 1772488571173,
+            "duration_sec": 199.29,
+            "error_msg": "TimeoutError: locator.textContent: Timeout 20000ms exceeded.\nCall log:\n  - waiting for locator('xpath=(//div[@class=\\'c-account__card__body card-body\\'])[1]/dl[3]/dd')\n",
+            "timestamp": 1768477055282,
             "env": "DEV_SMOKE",
-            "tags": []
+            "tags": [
+                "language",
+                "framework",
+                "titlePath",
+                "host",
+                "thread",
+                "parentSuite",
+                "suite",
+                "subSuite",
+                "tag",
+                "tag",
+                "tag"
+            ]
         },
         {
-            "uuid": "5a19dc4a-92e1-4d2c-8187-436b0cb05904",
-            "name": "TS_23-SFCC_ProductDetails_Matches_FSA_ProductDetails @product_details",
-            "module": "SFCC_ProductDetails @fsa_storefront @order_details @fsa_som_oci @som_oci_smoke @som_oci_sentinel",
-            "status": "failed",
-            "duration_sec": 95.96,
-            "error_msg": "TimeoutError: locator.textContent: Timeout 20000ms exceeded.\nCall log:\n  - waiting for locator('.minicart-quantity').last()\n",
-            "timestamp": 1772488083489,
-            "env": "DEV_SMOKE",
-            "tags": []
-        },
-        {
-            "uuid": "5b10463f-cb9c-4822-a15a-f59592845b82",
-            "name": "TS_25-SFCC_Payment_Details_Matches_FSA_Payment_Details @payment_details",
-            "module": "SFCC_PaymentDetails @fsa_storefront @payment_details @fsa_som_oci @som_oci_smoke @som_oci_sentinel",
-            "status": "failed",
-            "duration_sec": 96.84,
-            "error_msg": "TimeoutError: locator.textContent: Timeout 20000ms exceeded.\nCall log:\n  - waiting for locator('.minicart-quantity').last()\n",
-            "timestamp": 1772488279484,
-            "env": "DEV_SMOKE",
-            "tags": []
-        },
-        {
-            "uuid": "5d38ef6c-0512-45c8-bd84-01532e25713c",
-            "name": "TS_91-UserCanDoPartialPaymentWithFirstCard @partialpayment",
-            "module": "UserCanDoPartialPayment @fsa_storefront @partial_payment @fourth_fsa-group",
-            "status": "failed",
-            "duration_sec": 349.5,
-            "error_msg": "Error: Assert(OrderStatus).toHaveText(Ordered)\n\nexpect(locator).toHaveText(expected) failed\n\nLocator: locator('//div[contains(@class,\\'c-order-history__card\\')]//span//span').filter({ hasText: 'dev-11273007' }).locator('//following::div[11]//span[2]')\nExpected: \"Ordered\"\nTimeout: 15000ms\nError: element(s) not found\n\nCall log:\n  - Assert(OrderStatus).toHaveText(Ordered) with timeout 15000ms\n  - waiting for locator('//div[contains(@class,\\'c-order-history__card\\')]//span//span').filter({ hasText: 'dev-11273007' }).locator('//following::div[11]//span[2]')\n",
-            "timestamp": 1773213730228,
-            "env": "DEV_SMOKE",
-            "tags": []
-        },
-        {
-            "uuid": "69155be9-9dd3-4525-89f5-67f8baba0ba1",
+            "uuid": "6ff9e303-9ee5-4272-a3dd-323844292c80",
             "name": "TS_23-RegisteredCheckoutmrt @log_in_before_placing_order @mrt_registercheckout",
             "module": "RegisteredCheckout @fsa_storefront @registeredCheckout @fourth_fsa-group @fsa_reg_smoke",
-            "status": "passed",
-            "duration_sec": 316.19,
-            "error_msg": "No Error",
-            "timestamp": 1773214043102,
-            "env": "DEV_SMOKE",
-            "tags": []
-        },
-        {
-            "uuid": "70011b99-0f3c-493c-9fbc-7da0b2b8445b",
-            "name": "TS_21-CanPlaceOrderAsGuest @can_place_order_as_guest",
-            "module": "OrderStatusTest @fsa_storefront @order_status_test @fourth_fsa-group",
-            "status": "passed",
-            "duration_sec": 290.85,
-            "error_msg": "No Error",
-            "timestamp": 1773214961239,
-            "env": "DEV_SMOKE",
-            "tags": []
-        },
-        {
-            "uuid": "72761cb2-a03d-4867-ba40-1692995dbefc",
-            "name": "TS_20.1-CanPlaceOrderAsRegisteredUser_1 @can_place_order_as_registered_user",
-            "module": "OrderHistoryTest @fsa_storefront @order_history_test @fourth_fsa-group ",
-            "status": "passed",
-            "duration_sec": 392.14,
-            "error_msg": "No Error",
-            "timestamp": 1773214654578,
-            "env": "DEV_SMOKE",
-            "tags": []
-        },
-        {
-            "uuid": "7da0deaa-a66a-4db9-85e0-f832d3d095c5",
-            "name": "TS_20.2-CanPlaceOrderAsRegisteredUser_2 @can_place_order_as_registered_user",
-            "module": "OrderHistoryTest @fsa_storefront @order_history_test @fourth_fsa-group ",
-            "status": "passed",
-            "duration_sec": 396.78,
-            "error_msg": "No Error",
-            "timestamp": 1773214668118,
-            "env": "DEV_SMOKE",
-            "tags": []
-        },
-        {
-            "uuid": "7dacf88f-c07e-4098-9edf-fa1dda99146b",
-            "name": "TS_94-NormalOrder @normal_order",
-            "module": "NormalOrder @fsa_storefront @normal_order @fsa_som_oci @som_oci_smoke @som_oci_sentinel",
             "status": "failed",
-            "duration_sec": 131.21,
-            "error_msg": "TimeoutError: locator.click: Timeout 20000ms exceeded.\nCall log:\n  - waiting for locator('.sod_label')\n    - locator resolved to <span class=\"sod_label\" title=\"FSA Store\">FSA Store</span>\n  - attempting click action\n    2 \u00d7 waiting for element to be visible, enabled and stable\n      - element is visible, enabled and stable\n      - scrolling into view if needed\n      - done scrolling\n      - <div pendo-region=\"right\" id=\"pendo-backdrop-3\" class=\"pendo-backdrop-region-right _pendo-backdrop\"></div> from <div id=\"pendo-base\" data-layout=\"lightboxBlank\" class=\"_pendo-step-container\">\u2026</div> subtree intercepts pointer events\n    - retrying click action\n    - waiting 20ms\n    2 \u00d7 waiting for element to be visible, enabled and stable\n      - element is visible, enabled and stable\n      - scrolling into view if needed\n      - done scrolling\n      - <div pendo-region=\"right\" id=\"pendo-backdrop-3\" class=\"pendo-backdrop-region-right _pendo-backdrop\"></div> from <div id=\"pendo-base\" data-layout=\"lightboxBlank\" class=\"_pendo-step-container\">\u2026</div> subtree intercepts pointer events\n    - retrying click action\n      - waiting 100ms\n    39 \u00d7 waiting for element to be visible, enabled and stable\n       - element is visible, enabled and stable\n       - scrolling into view if needed\n       - done scrolling\n       - <div pendo-region=\"right\" id=\"pendo-backdrop-3\" class=\"pendo-backdrop-region-right _pendo-backdrop\"></div> from <div id=\"pendo-base\" data-layout=\"lightboxBlank\" class=\"_pendo-step-container\">\u2026</div> subtree intercepts pointer events\n     - retrying click action\n       - waiting 500ms\n",
-            "timestamp": 1772488707750,
+            "duration_sec": 198.96,
+            "error_msg": "TimeoutError: locator.textContent: Timeout 20000ms exceeded.\nCall log:\n  - waiting for locator('xpath=(//div[@class=\\'c-account__card__body card-body\\'])[1]/dl[3]/dd')\n",
+            "timestamp": 1768477065161,
             "env": "DEV_SMOKE",
-            "tags": []
+            "tags": [
+                "language",
+                "framework",
+                "titlePath",
+                "host",
+                "thread",
+                "parentSuite",
+                "suite",
+                "subSuite",
+                "tag",
+                "tag",
+                "tag"
+            ]
         },
         {
-            "uuid": "80a47384-05a4-42c4-8436-def0270d88ce",
-            "name": "TS_91-UserCanDoPartialPaymentWithFirstCard @partialpayment",
-            "module": "UserCanDoPartialPayment @fsa_storefront @partial_payment @fourth_fsa-group",
-            "status": "passed",
-            "duration_sec": 327.0,
-            "error_msg": "No Error",
-            "timestamp": 1773214080693,
-            "env": "DEV_SMOKE",
-            "tags": []
-        },
-        {
-            "uuid": "9ae4d0b2-8053-455c-b004-3708c78a3ca1",
-            "name": "TS_25-SFCC_Payment_Details_Matches_FSA_Payment_Details @payment_details",
-            "module": "SFCC_PaymentDetails @fsa_storefront @payment_details @fsa_som_oci @som_oci_smoke @som_oci_sentinel",
-            "status": "failed",
-            "duration_sec": 98.31,
-            "error_msg": "TimeoutError: locator.textContent: Timeout 20000ms exceeded.\nCall log:\n  - waiting for locator('.minicart-quantity').last()\n",
-            "timestamp": 1772488180298,
-            "env": "DEV_SMOKE",
-            "tags": []
-        },
-        {
-            "uuid": "9b550af7-5e56-45b7-9188-813b9ece7f4a",
-            "name": "TS_90-UserCanDoPartialPayment @partialpayment",
-            "module": "UserCanDoPartialPayment @fsa_storefront @partial_payment @fourth_fsa-group",
-            "status": "passed",
-            "duration_sec": 312.86,
-            "error_msg": "No Error",
-            "timestamp": 1773213730227,
-            "env": "DEV_SMOKE",
-            "tags": []
-        },
-        {
-            "uuid": "a5d08852-bf94-47c8-b91f-48cb207af4bb",
-            "name": "TS_13-SOM_Add_Payment_Status_FraudCheck @payment_fraud_check @som_oci_smoke @som_oci_sentinel",
-            "module": "SOM_AddPayment @fsa_storefront @payment @fsa_som_oci",
-            "status": "failed",
-            "duration_sec": 97.0,
-            "error_msg": "TimeoutError: locator.textContent: Timeout 20000ms exceeded.\nCall log:\n  - waiting for locator('.minicart-quantity').last()\n",
-            "timestamp": 1772489266714,
-            "env": "DEV_SMOKE",
-            "tags": []
-        },
-        {
-            "uuid": "abe361bc-53d5-46eb-bf36-cdf7fc8ca524",
-            "name": "TS_13-SOM_Add_Payment_Status_FraudCheck @payment_fraud_check @som_oci_smoke @som_oci_sentinel",
-            "module": "SOM_AddPayment @fsa_storefront @payment @fsa_som_oci",
-            "status": "failed",
-            "duration_sec": 99.53,
-            "error_msg": "TimeoutError: locator.textContent: Timeout 20000ms exceeded.\nCall log:\n  - waiting for locator('.minicart-quantity').last()\n",
-            "timestamp": 1772489166243,
-            "env": "DEV_SMOKE",
-            "tags": []
-        },
-        {
-            "uuid": "c2bf034e-a259-4dbf-9475-3bf03e969523",
-            "name": "TS_06-SOM_orderAmount_productSKU matches with FSA_OrderAmount_ProductSKU @order_amount",
-            "module": "SOM_OrderAmount_SOM_ProductSku @fsa_storefront @order_details @fsa_som_oci @som_oci_smoke @som_oci_sentinel",
-            "status": "failed",
-            "duration_sec": 101.31,
-            "error_msg": "TimeoutError: locator.textContent: Timeout 20000ms exceeded.\nCall log:\n  - waiting for locator('.minicart-quantity').last()\n",
-            "timestamp": 1772488839822,
-            "env": "DEV_SMOKE",
-            "tags": []
-        },
-        {
-            "uuid": "c56489de-79d4-432a-b6d9-70873563215a",
-            "name": "TS_32-NoResultSearchTest @search_product_with_no_search_result",
-            "module": "NoResultSearch @fsa_storefront @fourth_fsa-group",
-            "status": "passed",
-            "duration_sec": 66.92,
-            "error_msg": "No Error",
-            "timestamp": 1773214586980,
-            "env": "DEV_SMOKE",
-            "tags": []
-        },
-        {
-            "uuid": "c8ec3674-e320-43a8-a62d-c69aa022c956",
-            "name": "TS_01-SOM_registeredUserType @registered_user @som_oci_smoke @som_oci_sentinel",
-            "module": "SOM_userType @fsa_storefront @user_type @fsa_som_oci",
-            "status": "failed",
-            "duration_sec": 99.25,
-            "error_msg": "TimeoutError: locator.textContent: Timeout 20000ms exceeded.\nCall log:\n  - waiting for locator('.minicart-quantity').last()\n",
-            "timestamp": 1772489364691,
-            "env": "DEV_SMOKE",
-            "tags": []
-        },
-        {
-            "uuid": "ce131c9a-40a4-46ce-8103-7ca781a32744",
-            "name": "TS_47-UserCanPlaceOrderWithPromoCode @fsa-storefront",
-            "module": "RegisteredCheckoutWithPromo @fsa_storefront @fourth_fsa-group",
-            "status": "passed",
-            "duration_sec": 291.76,
-            "error_msg": "No Error",
-            "timestamp": 1773214295210,
-            "env": "DEV_SMOKE",
-            "tags": []
-        },
-        {
-            "uuid": "db8023e7-b8e2-498d-b6f0-6a7e19477ccd",
-            "name": "TS_07-SOM_verifyStore_&_verifyAddress of placed order @store_address",
-            "module": "SOM_OrderAmount_SOM_ProductSku @fsa_storefront @order_details @fsa_som_oci @som_oci_smoke @som_oci_sentinel",
-            "status": "failed",
-            "duration_sec": 61.05,
-            "error_msg": "Error: Invalid range: min cannot be greater than max.",
-            "timestamp": 1772489040738,
-            "env": "DEV_SMOKE",
-            "tags": []
-        },
-        {
-            "uuid": "e3f791e7-6165-4db6-bddd-91a116c39f55",
-            "name": "TS_06-SOM_orderAmount_productSKU matches with FSA_OrderAmount_ProductSKU @order_amount",
-            "module": "SOM_OrderAmount_SOM_ProductSku @fsa_storefront @order_details @fsa_som_oci @som_oci_smoke @som_oci_sentinel",
-            "status": "failed",
-            "duration_sec": 97.77,
-            "error_msg": "TimeoutError: locator.textContent: Timeout 20000ms exceeded.\nCall log:\n  - waiting for locator('.minicart-quantity').last()\n",
-            "timestamp": 1772488942003,
-            "env": "DEV_SMOKE",
-            "tags": []
-        },
-        {
-            "uuid": "e8a46673-5334-4e7c-85f8-d6005ec98520",
+            "uuid": "83f72c66-bef2-413b-933f-1bb06ffdbf58",
             "name": "TS_22.1-RegisteredCheckout @log_in_before_placing_order",
             "module": "RegisteredCheckout @fsa_storefront @registeredCheckout @fourth_fsa-group @fsa_reg_smoke",
             "status": "passed",
-            "duration_sec": 313.14,
+            "duration_sec": 339.67,
             "error_msg": "No Error",
-            "timestamp": 1773213730121,
+            "timestamp": 1768476714528,
             "env": "DEV_SMOKE",
-            "tags": []
+            "tags": [
+                "language",
+                "framework",
+                "titlePath",
+                "host",
+                "thread",
+                "parentSuite",
+                "suite",
+                "subSuite",
+                "tag",
+                "tag",
+                "tag"
+            ]
         },
         {
-            "uuid": "f113b982-3a36-4f71-9803-4d259b0cc115",
-            "name": "TS_22-SFCC_payment_status @payment_status",
-            "module": "SFCC_PaymentStatus @fsa_storefront @payment_status @fsa_som_oci @som_oci_smoke @som_oci_sentinel",
-            "status": "failed",
-            "duration_sec": 95.57,
-            "error_msg": "TimeoutError: locator.textContent: Timeout 20000ms exceeded.\nCall log:\n  - waiting for locator('.minicart-quantity').last()\n",
-            "timestamp": 1772488474759,
-            "env": "DEV_SMOKE",
-            "tags": []
-        },
-        {
-            "uuid": "f2e2da83-6903-4bf8-992f-633f6523283f",
-            "name": "TS_07-SOM_verifyStore_&_verifyAddress of placed order @store_address",
-            "module": "SOM_OrderAmount_SOM_ProductSku @fsa_storefront @order_details @fsa_som_oci @som_oci_smoke @som_oci_sentinel",
-            "status": "failed",
-            "duration_sec": 62.68,
-            "error_msg": "Error: Invalid range: min cannot be greater than max.",
-            "timestamp": 1772489102622,
-            "env": "DEV_SMOKE",
-            "tags": []
-        },
-        {
-            "uuid": "f4687b0c-a952-4b53-8941-8e9b3ba03e76",
-            "name": "TS_22-SFCC_payment_status @payment_status",
-            "module": "SFCC_PaymentStatus @fsa_storefront @payment_status @fsa_som_oci @som_oci_smoke @som_oci_sentinel",
-            "status": "failed",
-            "duration_sec": 96.76,
-            "error_msg": "TimeoutError: locator.textContent: Timeout 20000ms exceeded.\nCall log:\n  - waiting for locator('.minicart-quantity').last()\n",
-            "timestamp": 1772488377153,
-            "env": "DEV_SMOKE",
-            "tags": []
-        },
-        {
-            "uuid": "fa39e909-31d1-49ef-ab63-4117082bf1de",
-            "name": "TS_23-SFCC_ProductDetails_Matches_FSA_ProductDetails @product_details",
-            "module": "SFCC_ProductDetails @fsa_storefront @order_details @fsa_som_oci @som_oci_smoke @som_oci_sentinel",
-            "status": "failed",
-            "duration_sec": 97.63,
-            "error_msg": "TimeoutError: locator.textContent: Timeout 20000ms exceeded.\nCall log:\n  - waiting for locator('.minicart-quantity').last()\n",
-            "timestamp": 1772487985007,
-            "env": "DEV_SMOKE",
-            "tags": []
-        },
-        {
-            "uuid": "fa5c1d56-bbf2-4f65-a953-0bff75caa5d9",
-            "name": "TS_24-RegUserWithDifferentAddresses @billing_shipping_address_should_not_same",
-            "module": "RegisteredCheckoutBillingNotSameAsShipping @fsa_storefront @registeredCheckoutBillingNotSameAsShipping @fourth_fsa-group",
+            "uuid": "a40ff78d-a5c2-416b-af32-878353b6fa37",
+            "name": "TS_22.1-RegisteredCheckoutTest @log_in_before_placing_order",
+            "module": "RegisteredCheckout @hsa_storefront @registeredCheckout @fourth_hsa-group @hsa_reg_smoke",
             "status": "passed",
-            "duration_sec": 251.94,
+            "duration_sec": 346.8,
             "error_msg": "No Error",
-            "timestamp": 1773214043268,
+            "timestamp": 1768476713231,
             "env": "DEV_SMOKE",
-            "tags": []
+            "tags": [
+                "language",
+                "framework",
+                "titlePath",
+                "host",
+                "thread",
+                "parentSuite",
+                "suite",
+                "subSuite",
+                "tag",
+                "tag",
+                "tag"
+            ]
         },
         {
-            "uuid": "fed2da7c-8eca-4c93-a199-63f9188f766d",
-            "name": "TS_101-EditSavedAddressAtCheckout @edit_saved_address_at_checkout",
-            "module": "EditAddressAtCheckout @fsa_storefront @fsa-editAddressAtCheckout @fourth_fsa-group",
+            "uuid": "a4f07eb9-aece-482c-9499-c35e84c7ceb2",
+            "name": "TS_22-RegisteredCheckoutTest @log_in_before_placing_order",
+            "module": "RegisteredCheckout @wdh_storefront @registeredCheckout @third_wdh-group @wdh_reg_smoke",
             "status": "passed",
-            "duration_sec": 307.33,
+            "duration_sec": 403.63,
             "error_msg": "No Error",
-            "timestamp": 1773214653905,
+            "timestamp": 1768476713077,
             "env": "DEV_SMOKE",
-            "tags": []
+            "tags": [
+                "language",
+                "framework",
+                "titlePath",
+                "host",
+                "thread",
+                "parentSuite",
+                "suite",
+                "subSuite",
+                "tag",
+                "tag",
+                "tag"
+            ]
+        },
+        {
+            "uuid": "ad8b60f7-88cd-4d5b-950f-656cf27dd026",
+            "name": "TS_23-RegisteredCheckoutmrt @log_in_before_placing_order @mrt_registercheckout",
+            "module": "RegisteredCheckout @fsa_storefront @registeredCheckout @fourth_fsa-group @fsa_reg_smoke",
+            "status": "passed",
+            "duration_sec": 349.49,
+            "error_msg": "No Error",
+            "timestamp": 1768476714549,
+            "env": "DEV_SMOKE",
+            "tags": [
+                "language",
+                "framework",
+                "titlePath",
+                "host",
+                "thread",
+                "parentSuite",
+                "suite",
+                "subSuite",
+                "tag",
+                "tag",
+                "tag"
+            ]
+        },
+        {
+            "uuid": "c2478b6a-b9f6-4049-8735-63ecd98ff29a",
+            "name": "TS_16-GuestCheckoutTest @place_order_as_guest_validate_user_details",
+            "module": "GuestCheckout @hsa_storefront @guestCheckout @third_hsa-group @hsa_guest_smoke",
+            "status": "failed",
+            "duration_sec": 241.77,
+            "error_msg": "Error: \u26a0\ufe0f Maintenance page detected after saving information.",
+            "timestamp": 1768476713955,
+            "env": "DEV_SMOKE",
+            "tags": [
+                "language",
+                "framework",
+                "titlePath",
+                "host",
+                "thread",
+                "parentSuite",
+                "suite",
+                "subSuite",
+                "tag",
+                "tag",
+                "tag"
+            ]
+        },
+        {
+            "uuid": "c553d20d-e002-4d04-a7d5-73d75834020a",
+            "name": "TS_23-RegisteredCheckoutTest @log_in_before_placing_order @mrt_registercheckout",
+            "module": "RegisteredCheckout @hsa_storefront @registeredCheckout @fourth_hsa-group @hsa_reg_smoke",
+            "status": "failed",
+            "duration_sec": 197.5,
+            "error_msg": "TimeoutError: locator.textContent: Timeout 20000ms exceeded.\nCall log:\n  - waiting for locator('xpath=(//div[@class=\\'c-account__card__body card-body\\'])[1]/dl[3]/dd')\n",
+            "timestamp": 1768477061003,
+            "env": "DEV_SMOKE",
+            "tags": [
+                "language",
+                "framework",
+                "titlePath",
+                "host",
+                "thread",
+                "parentSuite",
+                "suite",
+                "subSuite",
+                "tag",
+                "tag",
+                "tag"
+            ]
+        },
+        {
+            "uuid": "cb46079a-f9d7-4708-83d5-8c3856458ae3",
+            "name": "TS_22-RegisteredCheckoutTest @log_in_before_placing_order",
+            "module": "RegisteredCheckout @wdh_storefront @registeredCheckout @third_wdh-group @wdh_reg_smoke",
+            "status": "passed",
+            "duration_sec": 276.44,
+            "error_msg": "No Error",
+            "timestamp": 1768476713049,
+            "env": "DEV_SMOKE",
+            "tags": [
+                "language",
+                "framework",
+                "titlePath",
+                "host",
+                "thread",
+                "parentSuite",
+                "suite",
+                "subSuite",
+                "tag",
+                "tag",
+                "tag"
+            ]
+        },
+        {
+            "uuid": "ce96b8ed-9734-4528-af38-c777150e8b40",
+            "name": "TS_16-GuestCheckoutTest @fsa_storefront @place_order_as_guest_validate_user_details",
+            "module": "GuestCheckout @fsa_storefront  @fsa-guestCheckout @third_fsa-group @fsa_guest_smoke",
+            "status": "passed",
+            "duration_sec": 243.33,
+            "error_msg": "No Error",
+            "timestamp": 1768476713346,
+            "env": "DEV_SMOKE",
+            "tags": [
+                "language",
+                "framework",
+                "titlePath",
+                "host",
+                "thread",
+                "parentSuite",
+                "suite",
+                "subSuite",
+                "tag",
+                "tag",
+                "tag"
+            ]
         }
     ],
     "modules": {
-        "RegisteredCheckout": {
-            "total": 3,
-            "passed": 3,
-            "failed": 0,
-            "avg_duration_sec": 296.58,
-            "failure_rate": 0.0
-        },
-        "SOM_userType": {
-            "total": 2,
-            "passed": 0,
-            "failed": 2,
-            "avg_duration_sec": 98.16,
-            "failure_rate": 100.0
-        },
-        "RegisteredOnCheckout": {
-            "total": 1,
-            "passed": 1,
-            "failed": 0,
-            "avg_duration_sec": 295.26,
-            "failure_rate": 0.0
-        },
-        "NormalOrder": {
-            "total": 2,
-            "passed": 0,
-            "failed": 2,
-            "avg_duration_sec": 133.36,
-            "failure_rate": 100.0
-        },
-        "SFCC_ProductDetails": {
-            "total": 2,
-            "passed": 0,
-            "failed": 2,
-            "avg_duration_sec": 96.79,
-            "failure_rate": 100.0
-        },
-        "SFCC_PaymentDetails": {
-            "total": 2,
-            "passed": 0,
-            "failed": 2,
-            "avg_duration_sec": 97.58,
-            "failure_rate": 100.0
-        },
-        "UserCanDoPartialPayment": {
-            "total": 3,
-            "passed": 2,
-            "failed": 1,
-            "avg_duration_sec": 329.79,
-            "failure_rate": 33.33
-        },
-        "OrderStatusTest": {
-            "total": 1,
-            "passed": 1,
-            "failed": 0,
-            "avg_duration_sec": 290.85,
-            "failure_rate": 0.0
-        },
-        "OrderHistoryTest": {
-            "total": 2,
-            "passed": 2,
-            "failed": 0,
-            "avg_duration_sec": 394.46,
-            "failure_rate": 0.0
-        },
-        "SOM_AddPayment": {
-            "total": 2,
-            "passed": 0,
-            "failed": 2,
-            "avg_duration_sec": 98.27,
-            "failure_rate": 100.0
-        },
-        "SOM_OrderAmount_SOM_ProductSku": {
+        "GuestCheckout": {
             "total": 4,
-            "passed": 0,
-            "failed": 4,
-            "avg_duration_sec": 80.7,
-            "failure_rate": 100.0
-        },
-        "NoResultSearch": {
-            "total": 1,
-            "passed": 1,
-            "failed": 0,
-            "avg_duration_sec": 66.92,
-            "failure_rate": 0.0
-        },
-        "RegisteredCheckoutWithPromo": {
-            "total": 1,
-            "passed": 1,
-            "failed": 0,
-            "avg_duration_sec": 291.76,
-            "failure_rate": 0.0
-        },
-        "SFCC_PaymentStatus": {
-            "total": 2,
-            "passed": 0,
+            "passed": 2,
             "failed": 2,
-            "avg_duration_sec": 96.16,
-            "failure_rate": 100.0
+            "avg_duration_sec": 284.12,
+            "failure_rate": 50.0
         },
-        "RegisteredCheckoutBillingNotSameAsShipping": {
-            "total": 1,
-            "passed": 1,
-            "failed": 0,
-            "avg_duration_sec": 251.94,
-            "failure_rate": 0.0
-        },
-        "EditAddressAtCheckout": {
-            "total": 1,
-            "passed": 1,
-            "failed": 0,
-            "avg_duration_sec": 307.33,
-            "failure_rate": 0.0
+        "RegisteredCheckout": {
+            "total": 10,
+            "passed": 6,
+            "failed": 4,
+            "avg_duration_sec": 285.29,
+            "failure_rate": 40.0
         }
     },
     "trends": {
-        "history-trend": [],
-        "categories-trend": [],
-        "duration-trend": [],
-        "retry-trend": []
+        "history-trend": [
+            {
+                "buildOrder": 4906,
+                "reportUrl": "../4906/index.html",
+                "reportName": "FULL_DEV_SMOKE",
+                "data": {
+                    "failed": 6,
+                    "broken": 0,
+                    "skipped": 0,
+                    "passed": 8,
+                    "unknown": 0,
+                    "total": 14
+                }
+            },
+            {
+                "buildOrder": 4900,
+                "reportUrl": "../4900/index.html",
+                "reportName": "FULL_DEV_SMOKE",
+                "data": {
+                    "failed": 2,
+                    "broken": 0,
+                    "skipped": 0,
+                    "passed": 12,
+                    "unknown": 0,
+                    "total": 14
+                }
+            },
+            {
+                "buildOrder": 4892,
+                "reportUrl": "../4892/index.html",
+                "reportName": "FULL_DEV_SMOKE",
+                "data": {
+                    "failed": 2,
+                    "broken": 0,
+                    "skipped": 0,
+                    "passed": 12,
+                    "unknown": 0,
+                    "total": 14
+                }
+            },
+            {
+                "buildOrder": 4891,
+                "reportUrl": "../4891/index.html",
+                "reportName": "FULL_DEV_SMOKE",
+                "data": {
+                    "failed": 12,
+                    "broken": 0,
+                    "skipped": 0,
+                    "passed": 2,
+                    "unknown": 0,
+                    "total": 14
+                }
+            },
+            {
+                "buildOrder": 4873,
+                "reportUrl": "../4873/index.html",
+                "reportName": "FULL_DEV_SMOKE",
+                "data": {
+                    "failed": 2,
+                    "broken": 0,
+                    "skipped": 0,
+                    "passed": 4,
+                    "unknown": 0,
+                    "total": 6
+                }
+            },
+            {
+                "buildOrder": 4865,
+                "reportUrl": "../4865/index.html",
+                "reportName": "FULL_DEV_SMOKE",
+                "data": {
+                    "failed": 2,
+                    "broken": 0,
+                    "skipped": 0,
+                    "passed": 4,
+                    "unknown": 0,
+                    "total": 6
+                }
+            },
+            {
+                "buildOrder": 4863,
+                "reportUrl": "../4863/index.html",
+                "reportName": "FULL_DEV_SMOKE",
+                "data": {
+                    "failed": 2,
+                    "broken": 0,
+                    "skipped": 0,
+                    "passed": 4,
+                    "unknown": 0,
+                    "total": 6
+                }
+            },
+            {
+                "buildOrder": 4852,
+                "reportUrl": "../4852/index.html",
+                "reportName": "FULL_DEV_SMOKE",
+                "data": {
+                    "failed": 6,
+                    "broken": 0,
+                    "skipped": 0,
+                    "passed": 8,
+                    "unknown": 0,
+                    "total": 14
+                }
+            },
+            {
+                "buildOrder": 4846,
+                "reportUrl": "../4846/index.html",
+                "reportName": "FULL_DEV_SMOKE",
+                "data": {
+                    "failed": 2,
+                    "broken": 0,
+                    "skipped": 0,
+                    "passed": 12,
+                    "unknown": 0,
+                    "total": 14
+                }
+            },
+            {
+                "buildOrder": 4842,
+                "reportUrl": "../4842/index.html",
+                "reportName": "FULL_DEV_SMOKE",
+                "data": {
+                    "failed": 2,
+                    "broken": 0,
+                    "skipped": 0,
+                    "passed": 4,
+                    "unknown": 0,
+                    "total": 6
+                }
+            },
+            {
+                "buildOrder": 4840,
+                "reportUrl": "../4840/index.html",
+                "reportName": "FULL_DEV_SMOKE",
+                "data": {
+                    "failed": 2,
+                    "broken": 0,
+                    "skipped": 0,
+                    "passed": 4,
+                    "unknown": 0,
+                    "total": 6
+                }
+            },
+            {
+                "buildOrder": 4839,
+                "reportUrl": "../4839/index.html",
+                "reportName": "FULL_DEV_SMOKE",
+                "data": {
+                    "failed": 2,
+                    "broken": 0,
+                    "skipped": 0,
+                    "passed": 4,
+                    "unknown": 0,
+                    "total": 6
+                }
+            },
+            {
+                "buildOrder": 4838,
+                "reportUrl": "../4838/index.html",
+                "reportName": "FULL_DEV_SMOKE",
+                "data": {
+                    "failed": 2,
+                    "broken": 0,
+                    "skipped": 0,
+                    "passed": 4,
+                    "unknown": 0,
+                    "total": 6
+                }
+            },
+            {
+                "buildOrder": 4834,
+                "reportUrl": "../4834/index.html",
+                "reportName": "FULL_DEV_SMOKE",
+                "data": {
+                    "failed": 2,
+                    "broken": 0,
+                    "skipped": 0,
+                    "passed": 4,
+                    "unknown": 0,
+                    "total": 6
+                }
+            },
+            {
+                "buildOrder": 4833,
+                "reportUrl": "../4833/index.html",
+                "reportName": "FULL_DEV_SMOKE",
+                "data": {
+                    "failed": 2,
+                    "broken": 0,
+                    "skipped": 0,
+                    "passed": 4,
+                    "unknown": 0,
+                    "total": 6
+                }
+            },
+            {
+                "buildOrder": 4823,
+                "reportUrl": "../4823/index.html",
+                "reportName": "FULL_DEV_SMOKE",
+                "data": {
+                    "failed": 2,
+                    "broken": 0,
+                    "skipped": 0,
+                    "passed": 4,
+                    "unknown": 0,
+                    "total": 6
+                }
+            },
+            {
+                "buildOrder": 4820,
+                "reportUrl": "../4820/index.html",
+                "reportName": "FULL_DEV_SMOKE",
+                "data": {
+                    "failed": 2,
+                    "broken": 0,
+                    "skipped": 0,
+                    "passed": 4,
+                    "unknown": 0,
+                    "total": 6
+                }
+            },
+            {
+                "buildOrder": 4819,
+                "reportUrl": "../4819/index.html",
+                "reportName": "FULL_DEV_SMOKE",
+                "data": {
+                    "failed": 2,
+                    "broken": 0,
+                    "skipped": 0,
+                    "passed": 4,
+                    "unknown": 0,
+                    "total": 6
+                }
+            },
+            {
+                "buildOrder": 4818,
+                "reportUrl": "../4818/index.html",
+                "reportName": "FULL_DEV_SMOKE",
+                "data": {
+                    "failed": 0,
+                    "broken": 0,
+                    "skipped": 0,
+                    "passed": 0,
+                    "unknown": 0,
+                    "total": 0
+                }
+            },
+            {
+                "buildOrder": 4800,
+                "reportUrl": "../4800/index.html",
+                "reportName": "FULL_DEV_SMOKE",
+                "data": {
+                    "failed": 0,
+                    "broken": 0,
+                    "skipped": 0,
+                    "passed": 0,
+                    "unknown": 0,
+                    "total": 0
+                }
+            }
+        ],
+        "categories-trend": [
+            {
+                "buildOrder": 4906,
+                "reportUrl": "../4906/index.html",
+                "reportName": "FULL_DEV_SMOKE",
+                "data": {
+                    "Product defects": 6
+                }
+            },
+            {
+                "buildOrder": 4900,
+                "reportUrl": "../4900/index.html",
+                "reportName": "FULL_DEV_SMOKE",
+                "data": {
+                    "Product defects": 2
+                }
+            },
+            {
+                "buildOrder": 4892,
+                "reportUrl": "../4892/index.html",
+                "reportName": "FULL_DEV_SMOKE",
+                "data": {
+                    "Product defects": 2
+                }
+            },
+            {
+                "buildOrder": 4891,
+                "reportUrl": "../4891/index.html",
+                "reportName": "FULL_DEV_SMOKE",
+                "data": {
+                    "Product defects": 12
+                }
+            },
+            {
+                "buildOrder": 4873,
+                "reportUrl": "../4873/index.html",
+                "reportName": "FULL_DEV_SMOKE",
+                "data": {
+                    "Product defects": 2
+                }
+            },
+            {
+                "buildOrder": 4865,
+                "reportUrl": "../4865/index.html",
+                "reportName": "FULL_DEV_SMOKE",
+                "data": {
+                    "Product defects": 2
+                }
+            },
+            {
+                "buildOrder": 4863,
+                "reportUrl": "../4863/index.html",
+                "reportName": "FULL_DEV_SMOKE",
+                "data": {
+                    "Product defects": 2
+                }
+            },
+            {
+                "buildOrder": 4852,
+                "reportUrl": "../4852/index.html",
+                "reportName": "FULL_DEV_SMOKE",
+                "data": {
+                    "Product defects": 6
+                }
+            },
+            {
+                "buildOrder": 4846,
+                "reportUrl": "../4846/index.html",
+                "reportName": "FULL_DEV_SMOKE",
+                "data": {
+                    "Product defects": 2
+                }
+            },
+            {
+                "buildOrder": 4842,
+                "reportUrl": "../4842/index.html",
+                "reportName": "FULL_DEV_SMOKE",
+                "data": {
+                    "Product defects": 2
+                }
+            },
+            {
+                "buildOrder": 4840,
+                "reportUrl": "../4840/index.html",
+                "reportName": "FULL_DEV_SMOKE",
+                "data": {
+                    "Product defects": 2
+                }
+            },
+            {
+                "buildOrder": 4839,
+                "reportUrl": "../4839/index.html",
+                "reportName": "FULL_DEV_SMOKE",
+                "data": {
+                    "Product defects": 2
+                }
+            },
+            {
+                "buildOrder": 4838,
+                "reportUrl": "../4838/index.html",
+                "reportName": "FULL_DEV_SMOKE",
+                "data": {
+                    "Product defects": 2
+                }
+            },
+            {
+                "buildOrder": 4834,
+                "reportUrl": "../4834/index.html",
+                "reportName": "FULL_DEV_SMOKE",
+                "data": {
+                    "Product defects": 2
+                }
+            },
+            {
+                "buildOrder": 4833,
+                "reportUrl": "../4833/index.html",
+                "reportName": "FULL_DEV_SMOKE",
+                "data": {
+                    "Product defects": 2
+                }
+            },
+            {
+                "buildOrder": 4823,
+                "reportUrl": "../4823/index.html",
+                "reportName": "FULL_DEV_SMOKE",
+                "data": {
+                    "Product defects": 2
+                }
+            },
+            {
+                "buildOrder": 4820,
+                "reportUrl": "../4820/index.html",
+                "reportName": "FULL_DEV_SMOKE",
+                "data": {
+                    "Product defects": 2
+                }
+            },
+            {
+                "buildOrder": 4819,
+                "reportUrl": "../4819/index.html",
+                "reportName": "FULL_DEV_SMOKE",
+                "data": {
+                    "Product defects": 2
+                }
+            },
+            {
+                "buildOrder": 4818,
+                "reportUrl": "../4818/index.html",
+                "reportName": "FULL_DEV_SMOKE",
+                "data": {}
+            },
+            {
+                "buildOrder": 4800,
+                "reportUrl": "../4800/index.html",
+                "reportName": "FULL_DEV_SMOKE",
+                "data": {}
+            }
+        ],
+        "duration-trend": [
+            {
+                "buildOrder": 4906,
+                "reportUrl": "../4906/index.html",
+                "reportName": "FULL_DEV_SMOKE",
+                "data": {
+                    "duration": 551832
+                }
+            },
+            {
+                "buildOrder": 4900,
+                "reportUrl": "../4900/index.html",
+                "reportName": "FULL_DEV_SMOKE",
+                "data": {
+                    "duration": 883157
+                }
+            },
+            {
+                "buildOrder": 4892,
+                "reportUrl": "../4892/index.html",
+                "reportName": "FULL_DEV_SMOKE",
+                "data": {
+                    "duration": 885351
+                }
+            },
+            {
+                "buildOrder": 4891,
+                "reportUrl": "../4891/index.html",
+                "reportName": "FULL_DEV_SMOKE",
+                "data": {
+                    "duration": 514811
+                }
+            },
+            {
+                "buildOrder": 4873,
+                "reportUrl": "../4873/index.html",
+                "reportName": "FULL_DEV_SMOKE",
+                "data": {
+                    "duration": 415602
+                }
+            },
+            {
+                "buildOrder": 4865,
+                "reportUrl": "../4865/index.html",
+                "reportName": "FULL_DEV_SMOKE",
+                "data": {
+                    "duration": 424743
+                }
+            },
+            {
+                "buildOrder": 4863,
+                "reportUrl": "../4863/index.html",
+                "reportName": "FULL_DEV_SMOKE",
+                "data": {
+                    "duration": 432467
+                }
+            },
+            {
+                "buildOrder": 4852,
+                "reportUrl": "../4852/index.html",
+                "reportName": "FULL_DEV_SMOKE",
+                "data": {
+                    "duration": 555576
+                }
+            },
+            {
+                "buildOrder": 4846,
+                "reportUrl": "../4846/index.html",
+                "reportName": "FULL_DEV_SMOKE",
+                "data": {
+                    "duration": 849765
+                }
+            },
+            {
+                "buildOrder": 4842,
+                "reportUrl": "../4842/index.html",
+                "reportName": "FULL_DEV_SMOKE",
+                "data": {
+                    "duration": 413831
+                }
+            },
+            {
+                "buildOrder": 4840,
+                "reportUrl": "../4840/index.html",
+                "reportName": "FULL_DEV_SMOKE",
+                "data": {
+                    "duration": 427315
+                }
+            },
+            {
+                "buildOrder": 4839,
+                "reportUrl": "../4839/index.html",
+                "reportName": "FULL_DEV_SMOKE",
+                "data": {
+                    "duration": 397904
+                }
+            },
+            {
+                "buildOrder": 4838,
+                "reportUrl": "../4838/index.html",
+                "reportName": "FULL_DEV_SMOKE",
+                "data": {
+                    "duration": 410601
+                }
+            },
+            {
+                "buildOrder": 4834,
+                "reportUrl": "../4834/index.html",
+                "reportName": "FULL_DEV_SMOKE",
+                "data": {
+                    "duration": 422228
+                }
+            },
+            {
+                "buildOrder": 4833,
+                "reportUrl": "../4833/index.html",
+                "reportName": "FULL_DEV_SMOKE",
+                "data": {
+                    "duration": 418100
+                }
+            },
+            {
+                "buildOrder": 4823,
+                "reportUrl": "../4823/index.html",
+                "reportName": "FULL_DEV_SMOKE",
+                "data": {
+                    "duration": 434598
+                }
+            },
+            {
+                "buildOrder": 4820,
+                "reportUrl": "../4820/index.html",
+                "reportName": "FULL_DEV_SMOKE",
+                "data": {
+                    "duration": 441161
+                }
+            },
+            {
+                "buildOrder": 4819,
+                "reportUrl": "../4819/index.html",
+                "reportName": "FULL_DEV_SMOKE",
+                "data": {
+                    "duration": 432454
+                }
+            },
+            {
+                "buildOrder": 4818,
+                "reportUrl": "../4818/index.html",
+                "reportName": "FULL_DEV_SMOKE",
+                "data": {}
+            },
+            {
+                "buildOrder": 4800,
+                "reportUrl": "../4800/index.html",
+                "reportName": "FULL_DEV_SMOKE",
+                "data": {}
+            }
+        ],
+        "retry-trend": [
+            {
+                "buildOrder": 4906,
+                "reportUrl": "../4906/index.html",
+                "reportName": "FULL_DEV_SMOKE",
+                "data": {
+                    "run": 14,
+                    "retry": 0
+                }
+            },
+            {
+                "buildOrder": 4900,
+                "reportUrl": "../4900/index.html",
+                "reportName": "FULL_DEV_SMOKE",
+                "data": {
+                    "run": 14,
+                    "retry": 0
+                }
+            },
+            {
+                "buildOrder": 4892,
+                "reportUrl": "../4892/index.html",
+                "reportName": "FULL_DEV_SMOKE",
+                "data": {
+                    "run": 14,
+                    "retry": 0
+                }
+            },
+            {
+                "buildOrder": 4891,
+                "reportUrl": "../4891/index.html",
+                "reportName": "FULL_DEV_SMOKE",
+                "data": {
+                    "run": 14,
+                    "retry": 0
+                }
+            },
+            {
+                "buildOrder": 4873,
+                "reportUrl": "../4873/index.html",
+                "reportName": "FULL_DEV_SMOKE",
+                "data": {
+                    "run": 6,
+                    "retry": 0
+                }
+            },
+            {
+                "buildOrder": 4865,
+                "reportUrl": "../4865/index.html",
+                "reportName": "FULL_DEV_SMOKE",
+                "data": {
+                    "run": 6,
+                    "retry": 0
+                }
+            },
+            {
+                "buildOrder": 4863,
+                "reportUrl": "../4863/index.html",
+                "reportName": "FULL_DEV_SMOKE",
+                "data": {
+                    "run": 6,
+                    "retry": 0
+                }
+            },
+            {
+                "buildOrder": 4852,
+                "reportUrl": "../4852/index.html",
+                "reportName": "FULL_DEV_SMOKE",
+                "data": {
+                    "run": 14,
+                    "retry": 0
+                }
+            },
+            {
+                "buildOrder": 4846,
+                "reportUrl": "../4846/index.html",
+                "reportName": "FULL_DEV_SMOKE",
+                "data": {
+                    "run": 14,
+                    "retry": 0
+                }
+            },
+            {
+                "buildOrder": 4842,
+                "reportUrl": "../4842/index.html",
+                "reportName": "FULL_DEV_SMOKE",
+                "data": {
+                    "run": 6,
+                    "retry": 0
+                }
+            },
+            {
+                "buildOrder": 4840,
+                "reportUrl": "../4840/index.html",
+                "reportName": "FULL_DEV_SMOKE",
+                "data": {
+                    "run": 6,
+                    "retry": 0
+                }
+            },
+            {
+                "buildOrder": 4839,
+                "reportUrl": "../4839/index.html",
+                "reportName": "FULL_DEV_SMOKE",
+                "data": {
+                    "run": 6,
+                    "retry": 0
+                }
+            },
+            {
+                "buildOrder": 4838,
+                "reportUrl": "../4838/index.html",
+                "reportName": "FULL_DEV_SMOKE",
+                "data": {
+                    "run": 6,
+                    "retry": 0
+                }
+            },
+            {
+                "buildOrder": 4834,
+                "reportUrl": "../4834/index.html",
+                "reportName": "FULL_DEV_SMOKE",
+                "data": {
+                    "run": 6,
+                    "retry": 0
+                }
+            },
+            {
+                "buildOrder": 4833,
+                "reportUrl": "../4833/index.html",
+                "reportName": "FULL_DEV_SMOKE",
+                "data": {
+                    "run": 6,
+                    "retry": 0
+                }
+            },
+            {
+                "buildOrder": 4823,
+                "reportUrl": "../4823/index.html",
+                "reportName": "FULL_DEV_SMOKE",
+                "data": {
+                    "run": 6,
+                    "retry": 0
+                }
+            },
+            {
+                "buildOrder": 4820,
+                "reportUrl": "../4820/index.html",
+                "reportName": "FULL_DEV_SMOKE",
+                "data": {
+                    "run": 6,
+                    "retry": 0
+                }
+            },
+            {
+                "buildOrder": 4819,
+                "reportUrl": "../4819/index.html",
+                "reportName": "FULL_DEV_SMOKE",
+                "data": {
+                    "run": 6,
+                    "retry": 0
+                }
+            },
+            {
+                "buildOrder": 4818,
+                "reportUrl": "../4818/index.html",
+                "reportName": "FULL_DEV_SMOKE",
+                "data": {
+                    "run": 0,
+                    "retry": 0
+                }
+            },
+            {
+                "buildOrder": 4800,
+                "reportUrl": "../4800/index.html",
+                "reportName": "FULL_DEV_SMOKE",
+                "data": {
+                    "run": 0,
+                    "retry": 0
+                }
+            }
+        ]
     },
     "analytics": {
         "flaky_tests": [
-            "TS_91-UserCanDoPartialPaymentWithFirstCard @partialpayment"
+            "TS_22.1-RegisteredCheckoutTest @log_in_before_placing_order",
+            "TS_23-RegisteredCheckoutTest @log_in_before_placing_order @mrt_registercheckout",
+            "TS_22.1-RegisteredCheckout @log_in_before_placing_order",
+            "TS_23-RegisteredCheckoutmrt @log_in_before_placing_order @mrt_registercheckout"
         ],
         "slow_tests": [
             {
-                "uuid": "7da0deaa-a66a-4db9-85e0-f832d3d095c5",
-                "name": "TS_20.2-CanPlaceOrderAsRegisteredUser_2 @can_place_order_as_registered_user",
-                "module": "OrderHistoryTest @fsa_storefront @order_history_test @fourth_fsa-group ",
+                "uuid": "a4f07eb9-aece-482c-9499-c35e84c7ceb2",
+                "name": "TS_22-RegisteredCheckoutTest @log_in_before_placing_order",
+                "module": "RegisteredCheckout @wdh_storefront @registeredCheckout @third_wdh-group @wdh_reg_smoke",
                 "status": "passed",
-                "duration_sec": 396.78,
+                "duration_sec": 403.63,
                 "error_msg": "No Error",
-                "timestamp": 1773214668118,
+                "timestamp": 1768476713077,
                 "env": "DEV_SMOKE",
-                "tags": []
+                "tags": [
+                    "language",
+                    "framework",
+                    "titlePath",
+                    "host",
+                    "thread",
+                    "parentSuite",
+                    "suite",
+                    "subSuite",
+                    "tag",
+                    "tag",
+                    "tag"
+                ]
             },
             {
-                "uuid": "72761cb2-a03d-4867-ba40-1692995dbefc",
-                "name": "TS_20.1-CanPlaceOrderAsRegisteredUser_1 @can_place_order_as_registered_user",
-                "module": "OrderHistoryTest @fsa_storefront @order_history_test @fourth_fsa-group ",
-                "status": "passed",
-                "duration_sec": 392.14,
-                "error_msg": "No Error",
-                "timestamp": 1773214654578,
-                "env": "DEV_SMOKE",
-                "tags": []
-            },
-            {
-                "uuid": "5d38ef6c-0512-45c8-bd84-01532e25713c",
-                "name": "TS_91-UserCanDoPartialPaymentWithFirstCard @partialpayment",
-                "module": "UserCanDoPartialPayment @fsa_storefront @partial_payment @fourth_fsa-group",
-                "status": "failed",
-                "duration_sec": 349.5,
-                "error_msg": "Error: Assert(OrderStatus).toHaveText(Ordered)\n\nexpect(locator).toHaveText(expected) failed\n\nLocator: locator('//div[contains(@class,\\'c-order-history__card\\')]//span//span').filter({ hasText: 'dev-11273007' }).locator('//following::div[11]//span[2]')\nExpected: \"Ordered\"\nTimeout: 15000ms\nError: element(s) not found\n\nCall log:\n  - Assert(OrderStatus).toHaveText(Ordered) with timeout 15000ms\n  - waiting for locator('//div[contains(@class,\\'c-order-history__card\\')]//span//span').filter({ hasText: 'dev-11273007' }).locator('//following::div[11]//span[2]')\n",
-                "timestamp": 1773213730228,
-                "env": "DEV_SMOKE",
-                "tags": []
-            },
-            {
-                "uuid": "80a47384-05a4-42c4-8436-def0270d88ce",
-                "name": "TS_91-UserCanDoPartialPaymentWithFirstCard @partialpayment",
-                "module": "UserCanDoPartialPayment @fsa_storefront @partial_payment @fourth_fsa-group",
-                "status": "passed",
-                "duration_sec": 327.0,
-                "error_msg": "No Error",
-                "timestamp": 1773214080693,
-                "env": "DEV_SMOKE",
-                "tags": []
-            },
-            {
-                "uuid": "69155be9-9dd3-4525-89f5-67f8baba0ba1",
+                "uuid": "ad8b60f7-88cd-4d5b-950f-656cf27dd026",
                 "name": "TS_23-RegisteredCheckoutmrt @log_in_before_placing_order @mrt_registercheckout",
                 "module": "RegisteredCheckout @fsa_storefront @registeredCheckout @fourth_fsa-group @fsa_reg_smoke",
                 "status": "passed",
-                "duration_sec": 316.19,
+                "duration_sec": 349.49,
                 "error_msg": "No Error",
-                "timestamp": 1773214043102,
+                "timestamp": 1768476714549,
                 "env": "DEV_SMOKE",
-                "tags": []
+                "tags": [
+                    "language",
+                    "framework",
+                    "titlePath",
+                    "host",
+                    "thread",
+                    "parentSuite",
+                    "suite",
+                    "subSuite",
+                    "tag",
+                    "tag",
+                    "tag"
+                ]
             },
             {
-                "uuid": "e8a46673-5334-4e7c-85f8-d6005ec98520",
+                "uuid": "a40ff78d-a5c2-416b-af32-878353b6fa37",
+                "name": "TS_22.1-RegisteredCheckoutTest @log_in_before_placing_order",
+                "module": "RegisteredCheckout @hsa_storefront @registeredCheckout @fourth_hsa-group @hsa_reg_smoke",
+                "status": "passed",
+                "duration_sec": 346.8,
+                "error_msg": "No Error",
+                "timestamp": 1768476713231,
+                "env": "DEV_SMOKE",
+                "tags": [
+                    "language",
+                    "framework",
+                    "titlePath",
+                    "host",
+                    "thread",
+                    "parentSuite",
+                    "suite",
+                    "subSuite",
+                    "tag",
+                    "tag",
+                    "tag"
+                ]
+            },
+            {
+                "uuid": "4ae0b822-6284-475b-a6e8-960654759799",
+                "name": "TS_23-RegisteredCheckoutTest @log_in_before_placing_order @mrt_registercheckout",
+                "module": "RegisteredCheckout @hsa_storefront @registeredCheckout @fourth_hsa-group @hsa_reg_smoke",
+                "status": "passed",
+                "duration_sec": 343.11,
+                "error_msg": "No Error",
+                "timestamp": 1768476713319,
+                "env": "DEV_SMOKE",
+                "tags": [
+                    "language",
+                    "framework",
+                    "titlePath",
+                    "host",
+                    "thread",
+                    "parentSuite",
+                    "suite",
+                    "subSuite",
+                    "tag",
+                    "tag",
+                    "tag"
+                ]
+            },
+            {
+                "uuid": "83f72c66-bef2-413b-933f-1bb06ffdbf58",
                 "name": "TS_22.1-RegisteredCheckout @log_in_before_placing_order",
                 "module": "RegisteredCheckout @fsa_storefront @registeredCheckout @fourth_fsa-group @fsa_reg_smoke",
                 "status": "passed",
-                "duration_sec": 313.14,
+                "duration_sec": 339.67,
                 "error_msg": "No Error",
-                "timestamp": 1773213730121,
+                "timestamp": 1768476714528,
                 "env": "DEV_SMOKE",
-                "tags": []
+                "tags": [
+                    "language",
+                    "framework",
+                    "titlePath",
+                    "host",
+                    "thread",
+                    "parentSuite",
+                    "suite",
+                    "subSuite",
+                    "tag",
+                    "tag",
+                    "tag"
+                ]
             },
             {
-                "uuid": "9b550af7-5e56-45b7-9188-813b9ece7f4a",
-                "name": "TS_90-UserCanDoPartialPayment @partialpayment",
-                "module": "UserCanDoPartialPayment @fsa_storefront @partial_payment @fourth_fsa-group",
+                "uuid": "515e3d19-8075-4596-a874-8bd7b9b29f95",
+                "name": "TS_16-GuestCheckoutTest @fsa_storefront @place_order_as_guest_validate_user_details",
+                "module": "GuestCheckout @fsa_storefront  @fsa-guestCheckout @third_fsa-group @fsa_guest_smoke",
                 "status": "passed",
-                "duration_sec": 312.86,
+                "duration_sec": 326.65,
                 "error_msg": "No Error",
-                "timestamp": 1773213730227,
+                "timestamp": 1768476713292,
                 "env": "DEV_SMOKE",
-                "tags": []
+                "tags": [
+                    "language",
+                    "framework",
+                    "titlePath",
+                    "host",
+                    "thread",
+                    "parentSuite",
+                    "suite",
+                    "subSuite",
+                    "tag",
+                    "tag",
+                    "tag"
+                ]
             },
             {
-                "uuid": "fed2da7c-8eca-4c93-a199-63f9188f766d",
-                "name": "TS_101-EditSavedAddressAtCheckout @edit_saved_address_at_checkout",
-                "module": "EditAddressAtCheckout @fsa_storefront @fsa-editAddressAtCheckout @fourth_fsa-group",
-                "status": "passed",
-                "duration_sec": 307.33,
-                "error_msg": "No Error",
-                "timestamp": 1773214653905,
+                "uuid": "29ff712f-d243-4780-bd18-c7ca7eeabcc4",
+                "name": "TS_16-GuestCheckoutTest @place_order_as_guest_validate_user_details",
+                "module": "GuestCheckout @hsa_storefront @guestCheckout @third_hsa-group @hsa_guest_smoke",
+                "status": "failed",
+                "duration_sec": 324.72,
+                "error_msg": "Error: \u26a0\ufe0f Maintenance page detected after saving information.",
+                "timestamp": 1768476713953,
                 "env": "DEV_SMOKE",
-                "tags": []
+                "tags": [
+                    "language",
+                    "framework",
+                    "titlePath",
+                    "host",
+                    "thread",
+                    "parentSuite",
+                    "suite",
+                    "subSuite",
+                    "tag",
+                    "tag",
+                    "tag"
+                ]
             },
             {
-                "uuid": "34728a66-1d88-478f-980f-0c898dbdd958",
-                "name": "TS_23-RegisteredOnCheckoutTest @login_at_the_time_of_placing_order",
-                "module": "RegisteredOnCheckout @fsa_storefront @registeredOnCheckout @fourth_fsa-group ",
+                "uuid": "cb46079a-f9d7-4708-83d5-8c3856458ae3",
+                "name": "TS_22-RegisteredCheckoutTest @log_in_before_placing_order",
+                "module": "RegisteredCheckout @wdh_storefront @registeredCheckout @third_wdh-group @wdh_reg_smoke",
                 "status": "passed",
-                "duration_sec": 295.26,
+                "duration_sec": 276.44,
                 "error_msg": "No Error",
-                "timestamp": 1773214359306,
+                "timestamp": 1768476713049,
                 "env": "DEV_SMOKE",
-                "tags": []
+                "tags": [
+                    "language",
+                    "framework",
+                    "titlePath",
+                    "host",
+                    "thread",
+                    "parentSuite",
+                    "suite",
+                    "subSuite",
+                    "tag",
+                    "tag",
+                    "tag"
+                ]
             },
             {
-                "uuid": "ce131c9a-40a4-46ce-8103-7ca781a32744",
-                "name": "TS_47-UserCanPlaceOrderWithPromoCode @fsa-storefront",
-                "module": "RegisteredCheckoutWithPromo @fsa_storefront @fourth_fsa-group",
+                "uuid": "ce96b8ed-9734-4528-af38-c777150e8b40",
+                "name": "TS_16-GuestCheckoutTest @fsa_storefront @place_order_as_guest_validate_user_details",
+                "module": "GuestCheckout @fsa_storefront  @fsa-guestCheckout @third_fsa-group @fsa_guest_smoke",
                 "status": "passed",
-                "duration_sec": 291.76,
+                "duration_sec": 243.33,
                 "error_msg": "No Error",
-                "timestamp": 1773214295210,
+                "timestamp": 1768476713346,
                 "env": "DEV_SMOKE",
-                "tags": []
+                "tags": [
+                    "language",
+                    "framework",
+                    "titlePath",
+                    "host",
+                    "thread",
+                    "parentSuite",
+                    "suite",
+                    "subSuite",
+                    "tag",
+                    "tag",
+                    "tag"
+                ]
+            },
+            {
+                "uuid": "c2478b6a-b9f6-4049-8735-63ecd98ff29a",
+                "name": "TS_16-GuestCheckoutTest @place_order_as_guest_validate_user_details",
+                "module": "GuestCheckout @hsa_storefront @guestCheckout @third_hsa-group @hsa_guest_smoke",
+                "status": "failed",
+                "duration_sec": 241.77,
+                "error_msg": "Error: \u26a0\ufe0f Maintenance page detected after saving information.",
+                "timestamp": 1768476713955,
+                "env": "DEV_SMOKE",
+                "tags": [
+                    "language",
+                    "framework",
+                    "titlePath",
+                    "host",
+                    "thread",
+                    "parentSuite",
+                    "suite",
+                    "subSuite",
+                    "tag",
+                    "tag",
+                    "tag"
+                ]
             }
         ],
         "retry_impact": [
-            "TS_91-UserCanDoPartialPaymentWithFirstCard @partialpayment"
+            "TS_22.1-RegisteredCheckoutTest @log_in_before_placing_order",
+            "TS_23-RegisteredCheckoutTest @log_in_before_placing_order @mrt_registercheckout",
+            "TS_22.1-RegisteredCheckout @log_in_before_placing_order",
+            "TS_23-RegisteredCheckoutmrt @log_in_before_placing_order @mrt_registercheckout"
         ],
         "module_stability": [
             {
-                "module": "RegisteredCheckout",
-                "total": 3,
-                "passed": 3,
-                "failed": 0,
-                "avg_duration_sec": 296.58,
-                "failure_rate": 0.0
-            },
-            {
-                "module": "SOM_userType",
-                "total": 2,
-                "passed": 0,
-                "failed": 2,
-                "avg_duration_sec": 98.16,
-                "failure_rate": 100.0
-            },
-            {
-                "module": "RegisteredOnCheckout",
-                "total": 1,
-                "passed": 1,
-                "failed": 0,
-                "avg_duration_sec": 295.26,
-                "failure_rate": 0.0
-            },
-            {
-                "module": "NormalOrder",
-                "total": 2,
-                "passed": 0,
-                "failed": 2,
-                "avg_duration_sec": 133.36,
-                "failure_rate": 100.0
-            },
-            {
-                "module": "SFCC_ProductDetails",
-                "total": 2,
-                "passed": 0,
-                "failed": 2,
-                "avg_duration_sec": 96.79,
-                "failure_rate": 100.0
-            },
-            {
-                "module": "SFCC_PaymentDetails",
-                "total": 2,
-                "passed": 0,
-                "failed": 2,
-                "avg_duration_sec": 97.58,
-                "failure_rate": 100.0
-            },
-            {
-                "module": "UserCanDoPartialPayment",
-                "total": 3,
-                "passed": 2,
-                "failed": 1,
-                "avg_duration_sec": 329.79,
-                "failure_rate": 33.33
-            },
-            {
-                "module": "OrderStatusTest",
-                "total": 1,
-                "passed": 1,
-                "failed": 0,
-                "avg_duration_sec": 290.85,
-                "failure_rate": 0.0
-            },
-            {
-                "module": "OrderHistoryTest",
-                "total": 2,
-                "passed": 2,
-                "failed": 0,
-                "avg_duration_sec": 394.46,
-                "failure_rate": 0.0
-            },
-            {
-                "module": "SOM_AddPayment",
-                "total": 2,
-                "passed": 0,
-                "failed": 2,
-                "avg_duration_sec": 98.27,
-                "failure_rate": 100.0
-            },
-            {
-                "module": "SOM_OrderAmount_SOM_ProductSku",
+                "module": "GuestCheckout",
                 "total": 4,
-                "passed": 0,
-                "failed": 4,
-                "avg_duration_sec": 80.7,
-                "failure_rate": 100.0
-            },
-            {
-                "module": "NoResultSearch",
-                "total": 1,
-                "passed": 1,
-                "failed": 0,
-                "avg_duration_sec": 66.92,
-                "failure_rate": 0.0
-            },
-            {
-                "module": "RegisteredCheckoutWithPromo",
-                "total": 1,
-                "passed": 1,
-                "failed": 0,
-                "avg_duration_sec": 291.76,
-                "failure_rate": 0.0
-            },
-            {
-                "module": "SFCC_PaymentStatus",
-                "total": 2,
-                "passed": 0,
+                "passed": 2,
                 "failed": 2,
-                "avg_duration_sec": 96.16,
-                "failure_rate": 100.0
+                "avg_duration_sec": 284.12,
+                "failure_rate": 50.0
             },
             {
-                "module": "RegisteredCheckoutBillingNotSameAsShipping",
-                "total": 1,
-                "passed": 1,
-                "failed": 0,
-                "avg_duration_sec": 251.94,
-                "failure_rate": 0.0
-            },
-            {
-                "module": "EditAddressAtCheckout",
-                "total": 1,
-                "passed": 1,
-                "failed": 0,
-                "avg_duration_sec": 307.33,
-                "failure_rate": 0.0
+                "module": "RegisteredCheckout",
+                "total": 10,
+                "passed": 6,
+                "failed": 4,
+                "avg_duration_sec": 285.29,
+                "failure_rate": 40.0
             }
         ],
         "risk_matrix": [
             {
+                "module": "GuestCheckout",
+                "risk_score": 14206.0
+            },
+            {
                 "module": "RegisteredCheckout",
-                "risk_score": 0.0
-            },
-            {
-                "module": "SOM_userType",
-                "risk_score": 9816.0
-            },
-            {
-                "module": "RegisteredOnCheckout",
-                "risk_score": 0.0
-            },
-            {
-                "module": "NormalOrder",
-                "risk_score": 13336.0
-            },
-            {
-                "module": "SFCC_ProductDetails",
-                "risk_score": 9679.0
-            },
-            {
-                "module": "SFCC_PaymentDetails",
-                "risk_score": 9758.0
-            },
-            {
-                "module": "UserCanDoPartialPayment",
-                "risk_score": 10991.9
-            },
-            {
-                "module": "OrderStatusTest",
-                "risk_score": 0.0
-            },
-            {
-                "module": "OrderHistoryTest",
-                "risk_score": 0.0
-            },
-            {
-                "module": "SOM_AddPayment",
-                "risk_score": 9827.0
-            },
-            {
-                "module": "SOM_OrderAmount_SOM_ProductSku",
-                "risk_score": 8070.0
-            },
-            {
-                "module": "NoResultSearch",
-                "risk_score": 0.0
-            },
-            {
-                "module": "RegisteredCheckoutWithPromo",
-                "risk_score": 0.0
-            },
-            {
-                "module": "SFCC_PaymentStatus",
-                "risk_score": 9616.0
-            },
-            {
-                "module": "RegisteredCheckoutBillingNotSameAsShipping",
-                "risk_score": 0.0
-            },
-            {
-                "module": "EditAddressAtCheckout",
-                "risk_score": 0.0
+                "risk_score": 11411.6
             }
         ],
         "stability_score": [
             {
-                "test": "TS_22.1-RiskifiedRegisteredCheckout @reskified_Log_user",
+                "test": "TS_16-GuestCheckoutTest @place_order_as_guest_validate_user_details",
+                "stability_score": 0.0
+            },
+            {
+                "test": "TS_22.1-RegisteredCheckoutTest @log_in_before_placing_order",
+                "stability_score": 0.5
+            },
+            {
+                "test": "TS_23-RegisteredCheckoutTest @log_in_before_placing_order @mrt_registercheckout",
+                "stability_score": 0.5
+            },
+            {
+                "test": "TS_16-GuestCheckoutTest @fsa_storefront @place_order_as_guest_validate_user_details",
                 "stability_score": 1.0
             },
             {
-                "test": "TS_01-SOM_registeredUserType @registered_user @som_oci_smoke @som_oci_sentinel",
-                "stability_score": 0.0
-            },
-            {
-                "test": "TS_23-RegisteredOnCheckoutTest @login_at_the_time_of_placing_order",
-                "stability_score": 1.0
-            },
-            {
-                "test": "TS_94-NormalOrder @normal_order",
-                "stability_score": 0.0
-            },
-            {
-                "test": "TS_23-SFCC_ProductDetails_Matches_FSA_ProductDetails @product_details",
-                "stability_score": 0.0
-            },
-            {
-                "test": "TS_25-SFCC_Payment_Details_Matches_FSA_Payment_Details @payment_details",
-                "stability_score": 0.0
-            },
-            {
-                "test": "TS_91-UserCanDoPartialPaymentWithFirstCard @partialpayment",
+                "test": "TS_22.1-RegisteredCheckout @log_in_before_placing_order",
                 "stability_score": 0.5
             },
             {
                 "test": "TS_23-RegisteredCheckoutmrt @log_in_before_placing_order @mrt_registercheckout",
-                "stability_score": 1.0
+                "stability_score": 0.5
             },
             {
-                "test": "TS_21-CanPlaceOrderAsGuest @can_place_order_as_guest",
-                "stability_score": 1.0
-            },
-            {
-                "test": "TS_20.1-CanPlaceOrderAsRegisteredUser_1 @can_place_order_as_registered_user",
-                "stability_score": 1.0
-            },
-            {
-                "test": "TS_20.2-CanPlaceOrderAsRegisteredUser_2 @can_place_order_as_registered_user",
-                "stability_score": 1.0
-            },
-            {
-                "test": "TS_90-UserCanDoPartialPayment @partialpayment",
-                "stability_score": 1.0
-            },
-            {
-                "test": "TS_13-SOM_Add_Payment_Status_FraudCheck @payment_fraud_check @som_oci_smoke @som_oci_sentinel",
-                "stability_score": 0.0
-            },
-            {
-                "test": "TS_06-SOM_orderAmount_productSKU matches with FSA_OrderAmount_ProductSKU @order_amount",
-                "stability_score": 0.0
-            },
-            {
-                "test": "TS_32-NoResultSearchTest @search_product_with_no_search_result",
-                "stability_score": 1.0
-            },
-            {
-                "test": "TS_47-UserCanPlaceOrderWithPromoCode @fsa-storefront",
-                "stability_score": 1.0
-            },
-            {
-                "test": "TS_07-SOM_verifyStore_&_verifyAddress of placed order @store_address",
-                "stability_score": 0.0
-            },
-            {
-                "test": "TS_22.1-RegisteredCheckout @log_in_before_placing_order",
-                "stability_score": 1.0
-            },
-            {
-                "test": "TS_22-SFCC_payment_status @payment_status",
-                "stability_score": 0.0
-            },
-            {
-                "test": "TS_24-RegUserWithDifferentAddresses @billing_shipping_address_should_not_same",
-                "stability_score": 1.0
-            },
-            {
-                "test": "TS_101-EditSavedAddressAtCheckout @edit_saved_address_at_checkout",
+                "test": "TS_22-RegisteredCheckoutTest @log_in_before_placing_order",
                 "stability_score": 1.0
             }
         ]

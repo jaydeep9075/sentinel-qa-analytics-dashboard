@@ -115,12 +115,16 @@ export default function AIChatInput({ onChartGenerated }: AIChatInputProps) {
         </h3>
         <div className="flex flex-wrap gap-2">
           {[
-            "Pie chart of test status",
-            "Heatmap of failures by module",
-            "Line chart of execution time trend",
-            "Bar chart of top 10 slowest tests",
-            "Scatter plot of duration vs failures",
-            "Stacked area chart of test results",
+            "Find tests that both passed and failed in the last 5 runs",
+            "Show top 10 slowest tests by average duration",
+            "Show failure percentage per module",
+            "Group similar error messages",
+            "Compare current run vs previous run failures",
+            "Compare DEV vs QA failure rates",
+            "Show tests that passed only after retry",
+            "Calculate stability score per test",
+            "Create risk score = failure_rate * duration",
+            "Find slow tests that rarely fail",
           ].map((example, i) => (
             <button
               key={i}

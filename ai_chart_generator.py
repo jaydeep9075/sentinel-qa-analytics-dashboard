@@ -2,7 +2,6 @@ import json
 import pandas as pd
 import numpy as np
 import re
-import ollama
 import uuid
 from datetime import datetime
 import os
