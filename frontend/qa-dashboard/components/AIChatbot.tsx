@@ -1,11 +1,11 @@
 "use client";
 
 import { useState, useRef, useEffect } from "react";
-import { sendChat } from "@/lib/api";
+import axios from "axios"; // Using axios for cleaner error handling
 
 export default function AIChatbot() {
   const [messages, setMessages] = useState<{ role: "user" | "ai"; content: string }[]>([
-    { role: "ai", content: "Hello! I am your QA Analytics Assistant. Ask me any question about your test metrics today!" }
+    { role: "ai", content: "Hello! I am Sentinel. I have analyzed your local test results from LanceDB. Ask me about flakiness, slow tests, or build trends!" }
   ]);
   const [input, setInput] = useState("");
   const [isLoading, setIsLoading] = useState(false);
@@ -20,79 +20,57 @@ export default function AIChatbot() {
     if (!input.trim() || isLoading) return;
 
     const userMsg = input.trim();
-    setInput("");
     setMessages((prev) => [...prev, { role: "user", content: userMsg }]);
+    setInput("");
     setIsLoading(true);
 
     try {
-      const response = await sendChat(userMsg);
-      const aiReply = response.data.response || "No response generated.";
-      setMessages((prev) => [...prev, { role: "ai", content: aiReply }]);
+      // ✅ Ensure this matches your FastAPI URL
+      const { data } = await axios.post("http://localhost:8000/ai/chat", {
+        message: userMsg
+      });
+
+      setMessages((prev) => [...prev, { role: "ai", content: data.response }]);
     } catch (error: any) {
-      const errorMsg = error.response?.data?.detail || "Sorry, I am having trouble connecting to the server right now.";
-      setMessages((prev) => [...prev, { role: "ai", content: `Error: ${errorMsg}` }]);
+      setMessages((prev) => [...prev, { role: "ai", content: "Error: Could not reach the Sentinel Brain." }]);
     } finally {
       setIsLoading(false);
     }
   };
 
   return (
-    <div className="flex flex-col h-[500px] bg-[#1a1a1a] flex-1 rounded-xl border border-[#2a2a2a] overflow-hidden">
-      {/* Header */}
-      <div className="px-6 py-4 bg-[#141414] border-b border-[#2a2a2a]">
-        <h2 className="text-lg font-semibold text-white flex items-center">
-          <span className="w-2 h-2 rounded-full bg-green-500 mr-3 animate-pulse"></span>
-          AI Test Assistant
-        </h2>
-        <p className="text-xs text-gray-400 mt-1">Talk naturally to your testing data</p>
+    <div className="flex flex-col h-[600px] bg-[#0d0d0d] rounded-xl border border-[#2a2a2a] shadow-2xl overflow-hidden">
+      <div className="px-6 py-4 bg-[#141414] border-b border-[#2a2a2a] flex justify-between items-center">
+        <div>
+          <h2 className="text-sm font-bold text-white tracking-widest uppercase flex items-center">
+            <span className="w-2 h-2 rounded-full bg-blue-500 mr-2 animate-pulse"></span>
+            Sentinel RAG Assistant
+          </h2>
+        </div>
       </div>
 
-      {/* Chat Area */}
-      <div className="flex-1 overflow-y-auto p-4 sm:p-6 space-y-4">
+      <div className="flex-1 overflow-y-auto p-6 space-y-4 custom-scrollbar">
         {messages.map((msg, idx) => (
           <div key={idx} className={`flex ${msg.role === "user" ? "justify-end" : "justify-start"}`}>
-            <div className={`max-w-[85%] rounded-2xl px-5 py-3 ${
-              msg.role === "user"
-                ? "bg-blue-600 text-white rounded-br-none"
-                : "bg-[#2a2a2a] text-gray-200 rounded-bl-none border border-[#333]"
-            }`}>
-              <p className="text-sm sm:text-base whitespace-pre-wrap leading-relaxed">{msg.content}</p>
+            <div className={`max-w-[85%] rounded-lg px-4 py-2 text-sm ${msg.role === "user" ? "bg-blue-600 text-white" : "bg-[#1a1a1a] text-gray-300 border border-[#2a2a2a]"
+              }`}>
+              {msg.content}
             </div>
           </div>
         ))}
-        {isLoading && (
-          <div className="flex justify-start">
-            <div className="max-w-[85%] w-16 rounded-2xl rounded-bl-none px-5 py-4 bg-[#2a2a2a] flex items-center justify-center space-x-1.5">
-              <div className="w-2 h-2 bg-gray-500 rounded-full animate-bounce"></div>
-              <div className="w-2 h-2 bg-gray-500 rounded-full animate-bounce" style={{ animationDelay: '150ms' }}></div>
-              <div className="w-2 h-2 bg-gray-500 rounded-full animate-bounce" style={{ animationDelay: '300ms' }}></div>
-            </div>
-          </div>
-        )}
+        {isLoading && <div className="text-xs text-gray-500 animate-pulse">Sentinel is querying LanceDB...</div>}
         <div ref={bottomRef} />
       </div>
 
-      {/* Input Area */}
-      <div className="p-4 bg-[#141414] border-t border-[#2a2a2a]">
-        <form onSubmit={handleSend} className="relative">
-          <input
-            type="text"
-            value={input}
-            onChange={(e) => setInput(e.target.value)}
-            placeholder="Ask about slow tests, flakiness..."
-            className="w-full bg-[#0a0a0a] border border-[#333] text-gray-200 text-sm rounded-xl pl-4 pr-12 py-3 focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 transition-all"
-          />
-          <button
-            type="submit"
-            disabled={isLoading || !input.trim()}
-            className="absolute right-2 top-2 p-1.5 text-blue-500 hover:text-blue-400 disabled:opacity-50 disabled:cursor-not-allowed transition-all"
-          >
-            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className="w-6 h-6">
-              <path d="M3.478 2.405a.75.75 0 00-.926.94l2.432 7.905H13.5a.75.75 0 010 1.5H4.984l-2.432 7.905a.75.75 0 00.926.94 60.519 60.519 0 0018.445-8.986.75.75 0 000-1.218A60.517 60.517 0 003.478 2.405z" />
-            </svg>
-          </button>
-        </form>
-      </div>
+      <form onSubmit={handleSend} className="p-4 bg-[#141414] border-t border-[#2a2a2a]">
+        <input
+          type="text"
+          value={input}
+          onChange={(e) => setInput(e.target.value)}
+          placeholder="e.g., Which tests failed in the last build?"
+          className="w-full bg-black border border-[#333] text-white text-sm rounded-md px-4 py-3 focus:outline-none focus:border-blue-500"
+        />
+      </form>
     </div>
   );
 }
