@@ -1,0 +1,20 @@
+{
+    "sessions": [
+        {
+            "role": "user",
+            "content": "hii",
+            "timestamp": "2026-03-26T14:30:29.988912"
+        },
+        {
+            "role": "user",
+            "content": "hii",
+            "timestamp": "2026-03-26T14:34:21.845377"
+        }
+    ],
+    "current_context": {
+        "last_table": null,
+        "last_build_id": null,
+        "environment": "ALL",
+        "focus_area": null
+    }
+}

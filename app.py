@@ -1,109 +1,169 @@
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
-import json
+import lancedb
+import duckdb
 import pandas as pd
 import os
-from typing import List, Optional
-from ai_chart_generator import generator
+import uuid
+import datetime
+import json
+from google import genai
+from context_manager import SentinelContextManager
 
 app = FastAPI()
 
-# CORS middleware
+# ✅ CORS Configuration
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000"],
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# Request/Response models
-class ChartRequest(BaseModel):
-    prompt: str
+# ✅ Initialization & Persistence Setup
+DB_PATH = "./sentinel_data"
+os.makedirs(DB_PATH, exist_ok=True)
+db = lancedb.connect(DB_PATH)
+ctx_manager = SentinelContextManager()
 
-class ChartResponse(BaseModel):
-    success: bool
-    chart_id: Optional[str] = None
-    config: Optional[dict] = None
-    error: Optional[str] = None
-
-# File paths
-BASE_DIR = os.path.dirname(__file__)
-MASTER_FILE = os.path.join(BASE_DIR, "qa_analytics_master.json")
-
-def load_data():
-    with open(MASTER_FILE, "r", encoding="utf-8") as f:
-        return json.load(f)
-
-# Original endpoints
-@app.get("/kpis")
-def get_kpis():
-    data = load_data()
-    df = pd.DataFrame(data["tests"])
+# --- Robust DB Initialization ---
+def initialize_tables():
+    table_name = "saved_charts"
+    existing_tables = db.list_tables()
     
-    return {
-        "total": len(df),
-        "passed": int((df.status == "passed").sum()),
-        "failed": int((df.status == "failed").sum()),
-        "avg_duration": round(df.duration_sec.mean(), 2),
-    }
+    if table_name not in existing_tables:
+        try:
+            db.create_table(table_name, data=[{
+                "id": "initial", 
+                "prompt": "initial", 
+                "chart_type": "none", 
+                "config": "{}", 
+                "created_at": str(datetime.datetime.now())
+            }])
+            print(f"✅ Created table: {table_name}")
+        except Exception as e:
+            # Handle the case where list_tables lied and the table exists
+            if "already exists" in str(e).lower():
+                print(f"ℹ️ Table {table_name} detected via exception handler.")
+            else:
+                print(f"❌ Table creation error: {e}")
+    else:
+        print(f"ℹ️ Table {table_name} verified.")
 
-@app.get("/status-distribution")
-def status_distribution():
-    data = load_data()
-    df = pd.DataFrame(data["tests"])
-    return df.groupby("status").size().to_dict()
+initialize_tables()
 
-@app.get("/module-stability")
-def module_stability():
-    data = load_data()
-    return data["analytics"]["module_stability"]
+# --- AI Configuration ---
+GEMINI_KEY = "AIzaSyDVie3B1xMTyOa5-uqTwqA0-UpkXkOfeVc"
+client = genai.Client(api_key=GEMINI_KEY)
 
-@app.get("/slow-tests")
-def slow_tests():
-    data = load_data()
-    return data["analytics"]["slow_tests"]
+class ChatReq(BaseModel):
+    message: str
 
-@app.get("/history-trend")
-def history_trend():
-    data = load_data()
-    return data["trends"]["history-trend"]
+def run_local_query(sql: str):
+    con = duckdb.connect()
+    con.execute("INSTALL lance; LOAD lance;")
+    return con.execute(sql).df()
 
-@app.get("/failures")
-def failures():
-    data = load_data()
-    df = pd.DataFrame(data["tests"])
-    failures = df[df.status == "failed"]
-    return failures.to_dict(orient="records")
-
-# New AI endpoints
-@app.post("/ai/generate-chart", response_model=ChartResponse)
-async def generate_chart(request: ChartRequest):
-    """Generate a chart based on user prompt"""
-    try:
-        result = generator.generate_chart(request.prompt)
-        return ChartResponse(**result)
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+# --- 1. Persistence Endpoints ---
 
 @app.get("/ai/generated-charts")
-async def get_generated_charts():
-    """Get all generated charts"""
-    try:
-        charts = generator.get_all_charts()
-        return {"charts": charts}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+def get_charts():
+    table = db.open_table("saved_charts")
+    df = table.to_pandas()
+    # Filter out the init row and convert JSON strings back to dicts
+    charts = df[df.id != "initial"].to_dict(orient="records")
+    for c in charts:
+        if isinstance(c['config'], str):
+            try:
+                c['config'] = json.loads(c['config'])
+            except:
+                pass
+    return {"charts": sorted(charts, key=lambda x: x['created_at'], reverse=True)}
 
 @app.delete("/ai/chart/{chart_id}")
-async def delete_chart(chart_id: str):
-    """Delete a generated chart"""
+def delete_chart(chart_id: str):
+    table = db.open_table("saved_charts")
+    table.delete(f"id = '{chart_id}'")
+    return {"success": True}
+
+# --- 2. Analytics Endpoints ---
+
+@app.get("/kpis")
+def get_kpis():
     try:
-        generator.delete_chart(chart_id)
-        return {"success": True}
+        df = run_local_query(f"SELECT status, duration FROM '{DB_PATH}/local_test_results.lance'")
+        return {
+            "total": len(df),
+            "passed": int((df.status == 'passed').sum()),
+            "failed": int((df.status == 'failed').sum()),
+            "avg_duration": round(df.duration.mean(), 2) if not df.empty else 0
+        }
+    except Exception:
+        return {"total": 0, "passed": 0, "failed": 0, "avg_duration": 0}
+
+# --- 3. Optimized AI RAG Chat ---
+
+@app.post("/ai/chat")
+async def api_chat(req: ChatReq):
+    user_msg = req.message.lower()
+    ctx_manager.add_message("user", user_msg)
+    
+    try:
+        if any(word in user_msg for word in ["slow", "top", "fastest", "average"]):
+            sql = f"SELECT test_name, AVG(duration) as avg_dur FROM '{DB_PATH}/local_test_results.lance' GROUP BY test_name ORDER BY avg_dur DESC LIMIT 10"
+            df = run_local_query(sql)
+        else:
+            table = db.open_table("local_test_results")
+            df = table.search(user_msg).limit(5).to_pandas()
+        data_context = df.to_markdown(index=False)
+    except:
+        data_context = "No specific test data available."
+
+    system_prompt = f"Context:\n{data_context}\n\nUser Question: {req.message}\nAnswer as Sentinel QA AI."
+    
+    try:
+        response = client.models.generate_content(model="gemini-2.0-flash", contents=system_prompt)
+        ai_text = response.text
+        ctx_manager.add_message("assistant", ai_text)
+        return {"response": ai_text}
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        return {"response": f"AI Error: {str(e)}"}
+
+# --- 4. Chart Generation with Persistence ---
+
+@app.post("/ai/generate-chart")
+async def api_gen_chart(req: ChatReq):
+    user_prompt = req.message 
+    
+    try:
+        df = run_local_query(f"SELECT * FROM '{DB_PATH}/local_test_results.lance'")
+        data_sample = df.head(5).to_markdown(index=False)
+        
+        prompt = f"""
+        Columns: {list(df.columns)}
+        Sample Data: {data_sample}
+        User Request: {user_prompt}
+        Return ONLY a JSON object for ApexCharts. Do not include markdown or backticks.
+        """
+        
+        res = client.models.generate_content(model="gemini-2.0-flash", contents=prompt)
+        clean_json = res.text.replace("```json", "").replace("```", "").strip()
+        chart_config = json.loads(clean_json)
+
+        new_chart_id = str(uuid.uuid4())
+        db.open_table("saved_charts").add([{
+            "id": new_chart_id,
+            "prompt": user_prompt,
+            "chart_type": chart_config.get('chart', {}).get('type', 'bar'),
+            "config": clean_json,
+            "created_at": str(datetime.datetime.now())
+        }])
+        
+        return {"success": True, "config": chart_config, "id": new_chart_id}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Generation failed: {str(e)}")
 
 if __name__ == "__main__":
     import uvicorn

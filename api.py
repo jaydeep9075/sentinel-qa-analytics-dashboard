@@ -1,71 +1,93 @@
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-import json
+from pydantic import BaseModel
+import lancedb
+import duckdb
 import pandas as pd
 import os
+from google import genai
+from context_manager import SentinelContextManager
 
 app = FastAPI()
 
-# ✅ CORS (must come AFTER app creation and BEFORE routes)
+# ✅ CORS Configuration
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000"],
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# ✅ safer file path
-BASE_DIR = os.path.dirname(__file__)
-MASTER_FILE = os.path.join(BASE_DIR, "qa_analytics_master.json")
+# ✅ Initialization
+DB_PATH = "./sentinel_data"
+db = lancedb.connect(DB_PATH)
+ctx_manager = SentinelContextManager()
+# Use your provided key
+GEMINI_KEY = "AIzaSyBTvl5EsJblAJrJiuSWJAKeWOcfRDQxczA"
+client = genai.Client(api_key=GEMINI_KEY)
 
+class ChatReq(BaseModel):
+    message: str
 
-def load_data():
-    with open(MASTER_FILE, "r", encoding="utf-8") as f:
-        return json.load(f)
+def run_local_query(sql: str):
+    con = duckdb.connect()
+    con.execute("INSTALL lance; LOAD lance;")
+    return con.execute(sql).df()
 
-
+# --- KPI Endpoints (Powered by LanceDB) ---
 @app.get("/kpis")
 def get_kpis():
-    data = load_data()
-    df = pd.DataFrame(data["tests"])
-
+    df = run_local_query(f"SELECT status, duration FROM '{DB_PATH}/local_test_results.lance'")
     return {
         "total": len(df),
-        "passed": int((df.status == "passed").sum()),
-        "failed": int((df.status == "failed").sum()),
-        "avg_duration": round(df.duration_sec.mean(), 2),
+        "passed": int((df.status == 'passed').sum()),
+        "failed": int((df.status == 'failed').sum()),
+        "avg_duration": round(df.duration.mean(), 2) if not df.empty else 0
     }
 
+# --- The AI RAG Chat Integration ---
+@app.post("/ai/chat")
+async def api_chat(req: ChatReq):
+    user_msg = req.message.lower()
+    
+    # 1. Update Memory
+    ctx_manager.add_message("user", user_msg)
+    
+    # 2. Hybrid RAG Logic
+    # If the user asks for numbers, use DuckDB. If they ask "Why", use Vector Search.
+    if any(word in user_msg for word in ["slow", "top", "fastest"]):
+        sql = f"SELECT test_name, AVG(duration) as d FROM '{DB_PATH}/local_test_results.lance' GROUP BY test_name ORDER BY d DESC LIMIT 5"
+        data_context = run_local_query(sql).to_string()
+    else:
+        table = db.open_table("local_test_results")
+        results = table.search(user_msg).limit(3).to_pandas()
+        data_context = results[['test_name', 'status', 'error_message']].to_string()
 
-@app.get("/status-distribution")
-def status_distribution():
-    data = load_data()
-    df = pd.DataFrame(data["tests"])
-    return df.groupby("status").size().to_dict()
+    # 3. Ask Gemini to explain the retrieved data (RAG)
+    system_prompt = f"Data Context:\n{data_context}\n\nUser Question: {user_msg}\nAnswer as Sentinel QA AI."
+    
+    try:
+        response = client.models.generate_content(model="gemini-2.0-flash", contents=system_prompt)
+        ai_text = response.text
+        ctx_manager.add_message("assistant", ai_text)
+        return {"response": ai_text}
+    except Exception as e:
+        return {"response": f"AI Error: {str(e)}"}
 
-
-@app.get("/module-stability")
-def module_stability():
-    data = load_data()
-    return data["analytics"]["module_stability"]
-
-
-@app.get("/slow-tests")
-def slow_tests():
-    data = load_data()
-    return data["analytics"]["slow_tests"]
-
-
-@app.get("/history-trend")
-def history_trend():
-    data = load_data()
-    return data["trends"]["history-trend"]
-
-
-@app.get("/failures")
-def failures():
-    data = load_data()
-    df = pd.DataFrame(data["tests"])
-    failures = df[df.status == "failed"]
-    return failures.to_dict(orient="records")
+# --- Chart Generation (Merging your Gemini logic) ---
+@app.post("/ai/generate-chart")
+async def api_gen_chart(req: ChatReq):
+    df = run_local_query(f"SELECT * FROM '{DB_PATH}/local_test_results.lance'")
+    columns = list(df.columns)
+    
+    prompt = f"DataFrame columns: {columns}. User request: {req.message}. Return ONLY python code for create_chart(df) returning ApexCharts JSON."
+    
+    res = client.models.generate_content(model="gemini-2.0-flash", contents=prompt)
+    code = res.text.replace("```python", "").replace("```", "").strip()
+    
+    local_vars = {}
+    exec(code, {'pd': pd}, local_vars)
+    chart_config = local_vars['create_chart'](df)
+    
+    return {"success": True, "config": chart_config}
