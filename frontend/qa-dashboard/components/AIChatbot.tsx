@@ -1,11 +1,11 @@
 "use client";
 
 import { useState, useRef, useEffect } from "react";
-import axios from "axios"; // Using axios for cleaner error handling
+import axios from "axios";
 
 export default function AIChatbot() {
   const [messages, setMessages] = useState<{ role: "user" | "ai"; content: string }[]>([
-    { role: "ai", content: "Hello! I am Sentinel. I have analyzed your local test results from LanceDB. Ask me about flakiness, slow tests, or build trends!" }
+    { role: "ai", content: "System Online. I am Sentinel. Accessing LanceDB test metadata. How can I assist with your QA analytics today?" }
   ]);
   const [input, setInput] = useState("");
   const [isLoading, setIsLoading] = useState(false);
@@ -25,50 +25,55 @@ export default function AIChatbot() {
     setIsLoading(true);
 
     try {
-      // ✅ Ensure this matches your FastAPI URL
-      const { data } = await axios.post("http://localhost:8000/ai/chat", {
-        message: userMsg
-      });
-
+      const { data } = await axios.post("http://localhost:8000/ai/chat", { message: userMsg });
       setMessages((prev) => [...prev, { role: "ai", content: data.response }]);
-    } catch (error: any) {
-      setMessages((prev) => [...prev, { role: "ai", content: "Error: Could not reach the Sentinel Brain." }]);
+    } catch (error) {
+      setMessages((prev) => [...prev, { role: "ai", content: "Error: Neural link to Sentinel backend failed." }]);
     } finally {
       setIsLoading(false);
     }
   };
 
   return (
-    <div className="flex flex-col h-[600px] bg-[#0d0d0d] rounded-xl border border-[#2a2a2a] shadow-2xl overflow-hidden">
-      <div className="px-6 py-4 bg-[#141414] border-b border-[#2a2a2a] flex justify-between items-center">
-        <div>
-          <h2 className="text-sm font-bold text-white tracking-widest uppercase flex items-center">
-            <span className="w-2 h-2 rounded-full bg-blue-500 mr-2 animate-pulse"></span>
-            Sentinel RAG Assistant
-          </h2>
+    <div className="flex flex-col h-full bg-[#0a0a0a] rounded-2xl border border-white/10 shadow-2xl overflow-hidden relative">
+      <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-purple-600 to-transparent"></div>
+
+      {/* Header */}
+      <div className="px-6 py-4 bg-[#0f0f0f] border-b border-white/5 flex items-center justify-between">
+        <span className="text-xs font-bold tracking-widest text-purple-400 uppercase">Agentic RAG Assistant</span>
+        <div className="flex gap-1">
+          <div className="w-2 h-2 rounded-full bg-green-500 animate-pulse"></div>
         </div>
       </div>
 
-      <div className="flex-1 overflow-y-auto p-6 space-y-4 custom-scrollbar">
+      {/* Messages */}
+      <div className="flex-1 overflow-y-auto p-6 space-y-6 scrollbar-hide">
         {messages.map((msg, idx) => (
           <div key={idx} className={`flex ${msg.role === "user" ? "justify-end" : "justify-start"}`}>
-            <div className={`max-w-[85%] rounded-lg px-4 py-2 text-sm ${msg.role === "user" ? "bg-blue-600 text-white" : "bg-[#1a1a1a] text-gray-300 border border-[#2a2a2a]"
+            <div className={`max-w-[85%] rounded-2xl px-5 py-3 text-sm leading-relaxed ${msg.role === "user"
+              ? "bg-blue-600 text-white rounded-tr-none shadow-lg shadow-blue-900/20"
+              : "bg-[#161616] text-gray-300 border border-white/5 rounded-tl-none"
               }`}>
               {msg.content}
             </div>
           </div>
         ))}
-        {isLoading && <div className="text-xs text-gray-500 animate-pulse">Sentinel is querying LanceDB...</div>}
+        {isLoading && (
+          <div className="flex items-center gap-2 text-[10px] text-purple-500 font-mono italic">
+            <span className="animate-spin text-lg italic">◌</span> QUERYING LANCE_VECTOR_DB...
+          </div>
+        )}
         <div ref={bottomRef} />
       </div>
 
-      <form onSubmit={handleSend} className="p-4 bg-[#141414] border-t border-[#2a2a2a]">
+      {/* Input */}
+      <form onSubmit={handleSend} className="p-4 bg-[#0f0f0f] border-t border-white/5">
         <input
           type="text"
           value={input}
           onChange={(e) => setInput(e.target.value)}
-          placeholder="e.g., Which tests failed in the last build?"
-          className="w-full bg-black border border-[#333] text-white text-sm rounded-md px-4 py-3 focus:outline-none focus:border-blue-500"
+          placeholder="Ask about flakiness, trends, or specific errors..."
+          className="w-full bg-black border border-white/10 text-white text-sm rounded-xl px-5 py-4 focus:outline-none focus:border-purple-500/50 transition-all placeholder:text-gray-700"
         />
       </form>
     </div>

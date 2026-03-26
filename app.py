@@ -22,40 +22,28 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# ✅ Initialization & Persistence Setup
+# ✅ Initialization
 DB_PATH = "./sentinel_data"
 os.makedirs(DB_PATH, exist_ok=True)
 db = lancedb.connect(DB_PATH)
 ctx_manager = SentinelContextManager()
 
-# --- Robust DB Initialization ---
-def initialize_tables():
-    table_name = "saved_charts"
-    existing_tables = db.list_tables()
-    
-    if table_name not in existing_tables:
-        try:
-            db.create_table(table_name, data=[{
-                "id": "initial", 
-                "prompt": "initial", 
-                "chart_type": "none", 
-                "config": "{}", 
-                "created_at": str(datetime.datetime.now())
+# ✅ Schema Pinning: Pre-defining the structure to save tokens
+TEST_SCHEMA_INFO = "Columns: [test_name, status, duration, error_message, module, timestamp]"
+
+def init_db():
+    try:
+        if "saved_charts" not in db.list_tables():
+            db.create_table("saved_charts", data=[{
+                "id": "initial", "prompt": "initial", "chart_type": "none", 
+                "config": "{}", "created_at": str(datetime.datetime.now())
             }])
-            print(f"✅ Created table: {table_name}")
-        except Exception as e:
-            # Handle the case where list_tables lied and the table exists
-            if "already exists" in str(e).lower():
-                print(f"ℹ️ Table {table_name} detected via exception handler.")
-            else:
-                print(f"❌ Table creation error: {e}")
-    else:
-        print(f"ℹ️ Table {table_name} verified.")
+    except Exception as e:
+        if "already exists" not in str(e): print(f"DB Init Warning: {e}")
 
-initialize_tables()
+init_db()
 
-# --- AI Configuration ---
-GEMINI_KEY = "AIzaSyDVie3B1xMTyOa5-uqTwqA0-UpkXkOfeVc"
+GEMINI_KEY = "AIzaSyC3OQz4WV23WrocKomVN7vD-k5pGq8eyPE"
 client = genai.Client(api_key=GEMINI_KEY)
 
 class ChatReq(BaseModel):
@@ -72,56 +60,48 @@ def run_local_query(sql: str):
 def get_charts():
     table = db.open_table("saved_charts")
     df = table.to_pandas()
-    # Filter out the init row and convert JSON strings back to dicts
     charts = df[df.id != "initial"].to_dict(orient="records")
     for c in charts:
         if isinstance(c['config'], str):
-            try:
-                c['config'] = json.loads(c['config'])
-            except:
-                pass
+            try: c['config'] = json.loads(c['config'])
+            except: pass
     return {"charts": sorted(charts, key=lambda x: x['created_at'], reverse=True)}
 
 @app.delete("/ai/chart/{chart_id}")
 def delete_chart(chart_id: str):
-    table = db.open_table("saved_charts")
-    table.delete(f"id = '{chart_id}'")
+    db.open_table("saved_charts").delete(f"id = '{chart_id}'")
     return {"success": True}
 
-# --- 2. Analytics Endpoints ---
-
-@app.get("/kpis")
-def get_kpis():
-    try:
-        df = run_local_query(f"SELECT status, duration FROM '{DB_PATH}/local_test_results.lance'")
-        return {
-            "total": len(df),
-            "passed": int((df.status == 'passed').sum()),
-            "failed": int((df.status == 'failed').sum()),
-            "avg_duration": round(df.duration.mean(), 2) if not df.empty else 0
-        }
-    except Exception:
-        return {"total": 0, "passed": 0, "failed": 0, "avg_duration": 0}
-
-# --- 3. Optimized AI RAG Chat ---
+# --- 2. Optimized AI Chat (Token Efficient) ---
 
 @app.post("/ai/chat")
 async def api_chat(req: ChatReq):
     user_msg = req.message.lower()
     ctx_manager.add_message("user", user_msg)
     
+    # Efficient Retrieval: Only get what is needed
     try:
-        if any(word in user_msg for word in ["slow", "top", "fastest", "average"]):
-            sql = f"SELECT test_name, AVG(duration) as avg_dur FROM '{DB_PATH}/local_test_results.lance' GROUP BY test_name ORDER BY avg_dur DESC LIMIT 10"
+        if any(word in user_msg for word in ["slow", "top", "avg"]):
+            sql = f"SELECT test_name, duration FROM '{DB_PATH}/local_test_results.lance' ORDER BY duration DESC LIMIT 5"
             df = run_local_query(sql)
         else:
             table = db.open_table("local_test_results")
-            df = table.search(user_msg).limit(5).to_pandas()
+            df = table.search(user_msg).limit(3).to_pandas()[['test_name', 'status', 'error_message']]
+        
+        # Markdown is the most token-efficient way to represent structured data
         data_context = df.to_markdown(index=False)
     except:
-        data_context = "No specific test data available."
+        data_context = "No data found."
 
-    system_prompt = f"Context:\n{data_context}\n\nUser Question: {req.message}\nAnswer as Sentinel QA AI."
+    # System Instruction is pinned to save tokens on every turn
+    system_prompt = f"""
+    Role: Sentinel QA AI. 
+    Context Schema: {TEST_SCHEMA_INFO}
+    Data:
+    {data_context}
+    
+    Task: Answer concisely based ONLY on the data above.
+    """
     
     try:
         response = client.models.generate_content(model="gemini-2.0-flash", contents=system_prompt)
@@ -131,39 +111,29 @@ async def api_chat(req: ChatReq):
     except Exception as e:
         return {"response": f"AI Error: {str(e)}"}
 
-# --- 4. Chart Generation with Persistence ---
+# --- 3. Chart Generation ---
 
 @app.post("/ai/generate-chart")
 async def api_gen_chart(req: ChatReq):
-    user_prompt = req.message 
-    
     try:
         df = run_local_query(f"SELECT * FROM '{DB_PATH}/local_test_results.lance'")
-        data_sample = df.head(5).to_markdown(index=False)
         
-        prompt = f"""
-        Columns: {list(df.columns)}
-        Sample Data: {data_sample}
-        User Request: {user_prompt}
-        Return ONLY a JSON object for ApexCharts. Do not include markdown or backticks.
-        """
+        # Send only a 3-row sample to save tokens
+        prompt = f"Schema: {TEST_SCHEMA_INFO}. Sample: {df.head(3).to_json()}. User Request: {req.message}. Return ONLY raw ApexCharts JSON."
         
         res = client.models.generate_content(model="gemini-2.0-flash", contents=prompt)
         clean_json = res.text.replace("```json", "").replace("```", "").strip()
         chart_config = json.loads(clean_json)
 
-        new_chart_id = str(uuid.uuid4())
+        new_id = str(uuid.uuid4())
         db.open_table("saved_charts").add([{
-            "id": new_chart_id,
-            "prompt": user_prompt,
-            "chart_type": chart_config.get('chart', {}).get('type', 'bar'),
-            "config": clean_json,
-            "created_at": str(datetime.datetime.now())
+            "id": new_id, "prompt": req.message, "chart_type": "bar", 
+            "config": clean_json, "created_at": str(datetime.datetime.now())
         }])
         
-        return {"success": True, "config": chart_config, "id": new_chart_id}
+        return {"success": True, "config": chart_config, "id": new_id}
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Generation failed: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 if __name__ == "__main__":
     import uvicorn

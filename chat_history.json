@@ -9,6 +9,31 @@
             "role": "user",
             "content": "hii",
             "timestamp": "2026-03-26T14:34:21.845377"
+        },
+        {
+            "role": "user",
+            "content": "how many failed tests cases",
+            "timestamp": "2026-03-26T15:41:01.919721"
+        },
+        {
+            "role": "user",
+            "content": "hello",
+            "timestamp": "2026-03-26T15:51:31.499444"
+        },
+        {
+            "role": "assistant",
+            "content": "Hello! How can I assist you today?",
+            "timestamp": "2026-03-26T15:52:05.556625"
+        },
+        {
+            "role": "user",
+            "content": "hii",
+            "timestamp": "2026-03-26T16:11:33.857686"
+        },
+        {
+            "role": "user",
+            "content": "hii",
+            "timestamp": "2026-03-26T16:13:35.695625"
         }
     ],
     "current_context": {

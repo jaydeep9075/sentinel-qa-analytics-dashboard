@@ -10,48 +10,78 @@ interface AIChatInputProps {
 export default function AIChatInput({ onChartGenerated }: AIChatInputProps) {
   const [prompt, setPrompt] = useState("");
   const [loading, setLoading] = useState(false);
+  const [status, setStatus] = useState<string | null>(null);
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!prompt.trim()) return;
+  const shortcuts = [
+    "Bar chart of failure reasons",
+    "Slowest 5 tests this week",
+    "Test duration trend line"
+  ];
+
+  const handleSubmit = async (e?: React.FormEvent, manualPrompt?: string) => {
+    e?.preventDefault();
+    const activePrompt = manualPrompt || prompt;
+    if (!activePrompt.trim()) return;
 
     setLoading(true);
+    setStatus("Analyzing LanceDB...");
+
     try {
-      // ✅ Hits the Chart Generation endpoint
       const { data } = await axios.post("http://localhost:8000/ai/generate-chart", {
-        message: prompt
+        message: activePrompt
       });
 
       if (data.success) {
         setPrompt("");
-        onChartGenerated(); // Refresh the gallery to show the new chart
+        setStatus("Chart synthesized successfully!");
+        onChartGenerated();
+        setTimeout(() => setStatus(null), 3000);
       }
     } catch (err) {
-      console.error("Chart generation failed");
+      setStatus("Generation failed. Check console.");
     } finally {
       setLoading(false);
     }
   };
 
   return (
-    <div className="bg-[#141414] p-6 rounded-xl border border-[#2a2a2a]">
-      <h3 className="text-white font-semibold mb-4">AI Visualizer</h3>
-      <form onSubmit={handleSubmit} className="space-y-4">
+    <div className="space-y-6">
+      <div className="space-y-2">
         <textarea
-          rows={3}
-          className="w-full bg-black border border-[#333] rounded-lg p-3 text-sm text-gray-300 focus:border-blue-500 outline-none"
-          placeholder="Describe a chart (e.g., 'Bar chart of failures per module')"
+          rows={4}
+          className="w-full bg-[#050505] border border-white/10 rounded-xl p-4 text-sm text-gray-300 focus:border-blue-500/50 focus:ring-1 focus:ring-blue-500/50 outline-none transition-all resize-none"
+          placeholder="Describe the visualization you need..."
           value={prompt}
           onChange={(e) => setPrompt(e.target.value)}
         />
-        <button
-          type="submit"
-          disabled={loading}
-          className="w-full py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700 disabled:opacity-50"
-        >
-          {loading ? "AI is drawing..." : "Generate Custom Visualization"}
-        </button>
-      </form>
+
+        {/* Quick Shortcuts */}
+        <div className="flex flex-wrap gap-2">
+          {shortcuts.map((s) => (
+            <button
+              key={s}
+              onClick={() => handleSubmit(undefined, s)}
+              className="text-[10px] uppercase tracking-wider font-bold px-3 py-1.5 bg-white/5 hover:bg-white/10 border border-white/5 rounded-full text-gray-400 hover:text-blue-400 transition-colors"
+            >
+              + {s}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      <button
+        onClick={(e) => handleSubmit(e)}
+        disabled={loading}
+        className="w-full py-4 bg-gradient-to-r from-blue-600 to-indigo-600 text-white rounded-xl text-sm font-bold shadow-lg shadow-blue-900/20 hover:from-blue-500 hover:to-indigo-500 disabled:opacity-50 disabled:cursor-not-allowed transition-all uppercase tracking-widest"
+      >
+        {loading ? "Processing Metadata..." : "Generate Visualization"}
+      </button>
+
+      {status && (
+        <div className={`text-center text-xs font-mono ${status.includes("failed") ? "text-red-500" : "text-blue-400"} animate-pulse`}>
+          {status}
+        </div>
+      )}
     </div>
   );
 }
