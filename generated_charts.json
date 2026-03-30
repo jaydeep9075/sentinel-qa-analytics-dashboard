@@ -503,5 +503,177 @@
       }
     },
     "created_at": "2026-03-18T16:21:11.623298"
+  },
+  {
+    "id": "8c176df0-d790-407e-af86-0da9e45d94f9",
+    "prompt": "Test duration trend line",
+    "chart_type": "bar",
+    "config": {
+      "chart": {
+        "type": "bar",
+        "height": 350
+      },
+      "title": {
+        "text": "Top 10 Slowest Tests",
+        "align": "center"
+      },
+      "series": [
+        {
+          "name": "Duration (s)",
+          "data": [
+            296.263,
+            243.717,
+            184.14,
+            158.008,
+            129.072,
+            128.66,
+            127.317,
+            124.213,
+            118.851,
+            113.982
+          ]
+        }
+      ],
+      "xaxis": {
+        "categories": [
+          "Achievements Page Test Validate and Create activity for Achievements Page should have data on achievements section",
+          "Achievements Page Test Golf Account Master Audit Calculate Longest Going-for-Green Streak (APP shots) per Activity",
+          "Coach Profile Test Validate Coach Profile should have data on achievements section",
+          "Achievements Page Test Validate and Create activity for Achievements Page should have data on achievements section",
+          "Coach Profile Test Validate Coach Profile should have data on achievements section",
+          "Coach Profile Test Validate Coach Profile should have data on achievements section",
+          "Player Profile Test Validate Player Profile should have data on achievements section",
+          "Teams Dashboard Tests Validate Teams Dashboard (Coach) functionality should navigate to teams page and verify page loads successfullly ",
+          "Player Profile Test Validate Player Profile should have data on achievements section",
+          "Player to Player Connection Script Validate the connections for player to player Validate the Connections Page UI for player 1 and send a request to player 2."
+        ],
+        "title": {
+          "text": "Test Name"
+        }
+      },
+      "yaxis": {
+        "title": {
+          "text": "Seconds"
+        }
+      }
+    },
+    "created_at": "2026-03-27T17:19:29.059752"
+  },
+  {
+    "id": "13ddda0b-8751-4fae-87c8-d81423a5cb17",
+    "prompt": "generate the pie chart of number of tests passed/failed distribution \n",
+    "chart_type": "pie",
+    "config": {
+      "chart": {
+        "type": "pie",
+        "height": 350
+      },
+      "title": {
+        "text": "Test Status Distribution",
+        "align": "center"
+      },
+      "series": [
+        954,
+        265
+      ],
+      "labels": [
+        "passed",
+        "failed"
+      ]
+    },
+    "created_at": "2026-03-27T17:25:13.061800"
+  },
+  {
+    "id": "8010b5b6-2466-43c6-a0c5-db43d117fdea",
+    "prompt": "give chart of most repeted test name with nunmber of times it repeted ",
+    "chart_type": "bar",
+    "config": {
+      "chart": {
+        "type": "bar",
+        "height": 350
+      },
+      "title": {
+        "text": "Test Status Distribution",
+        "align": "center"
+      },
+      "series": [
+        {
+          "name": "Tests",
+          "data": [
+            954,
+            265
+          ]
+        }
+      ],
+      "xaxis": {
+        "categories": [
+          "passed",
+          "failed"
+        ]
+      }
+    },
+    "created_at": "2026-03-27T17:38:07.266918"
+  },
+  {
+    "id": "ef989210-9a70-40f6-bff8-fd52a435f22d",
+    "prompt": "make line chart on different timestamp with different datas\n",
+    "chart_type": "line",
+    "config": {
+      "chart": {
+        "type": "line",
+        "height": 350
+      },
+      "title": {
+        "text": "Test Status Distribution",
+        "align": "center"
+      },
+      "series": [
+        {
+          "name": "Tests",
+          "data": [
+            954,
+            265
+          ]
+        }
+      ],
+      "xaxis": {
+        "categories": [
+          "passed",
+          "failed"
+        ]
+      }
+    },
+    "created_at": "2026-03-27T18:01:15.817552"
+  },
+  {
+    "id": "633e425e-7229-4b7e-a3e9-620afbb5aac0",
+    "prompt": "make line chart on different timestamp with different dates\n",
+    "chart_type": "line",
+    "config": {
+      "chart": {
+        "type": "line",
+        "height": 350
+      },
+      "title": {
+        "text": "Test Status Distribution",
+        "align": "center"
+      },
+      "series": [
+        {
+          "name": "Tests",
+          "data": [
+            954,
+            265
+          ]
+        }
+      ],
+      "xaxis": {
+        "categories": [
+          "passed",
+          "failed"
+        ]
+      }
+    },
+    "created_at": "2026-03-27T18:03:36.732835"
   }
 ]

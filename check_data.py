@@ -1,75 +1,73 @@
+import lancedb
+import duckdb
+import pandas as pd
 import json
 import os
-import uuid
-import datetime
-import logging
-import requests
-import pandas as pd
-import numpy as np
-import duckdb
-import lancedb
-from fastapi import FastAPI, HTTPException
-from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
-import uvicorn
-import re
 
-# Configure logging
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
-
-app = FastAPI()
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["http://localhost:3000", "http://127.0.0.1:3000", "*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
-# ========== DATA LOADING (same as main backend) ==========
 DB_PATH = "./sentinel_data"
-_flat_df = None
 
-def get_table_list():
+print("=" * 80)
+print("🔍 LANCE DB DIAGNOSTIC – FULL DATA INSPECTION")
+print("=" * 80)
+
+# Connect to LanceDB
+db = lancedb.connect(DB_PATH)
+
+# Get list of tables (handles tuple response)
+result = db.list_tables()
+if hasattr(result, 'tables'):
+    tables = result.tables
+elif isinstance(result, tuple):
+    tables = result[0]
+else:
+    tables = result
+
+print(f"\n📂 Tables found ({len(tables)}):")
+for t in tables:
     try:
-        db = lancedb.connect(DB_PATH)
-        result = db.list_tables()
-        if hasattr(result, 'tables'):
-            return result.tables
-        elif isinstance(result, tuple):
-            return result[0]
-        elif isinstance(result, list):
-            return result
-        else:
-            return list(result) if result else []
+        table = db.open_table(t)
+        rows = table.count_rows()
+        print(f"   • {t}: {rows:,} rows")
     except Exception as e:
-        logger.error(f"Error getting table list: {e}")
-        return []
+        print(f"   • {t}: error - {e}")
 
-def flatten_test_data():
-    global _flat_df
-    if _flat_df is not None:
-        return _flat_df
+# ============================================================
+# Detailed inspection of local_test_results
+# ============================================================
+print("\n" + "=" * 80)
+print("📊 Detailed inspection of local_test_results")
+print("=" * 80)
 
+if "local_test_results" in tables:
+    print("\n1. Raw table structure (first row):")
     try:
+        table = db.open_table("local_test_results")
+        df_raw = table.to_pandas()
+        print(f"   Row count: {len(df_raw):,}")
+        print(f"   Columns: {list(df_raw.columns)}")
+        print("\n   Sample of raw data (first 2 rows):")
+        print(df_raw.head(2).to_string())
+    except Exception as e:
+        print(f"   Error reading raw table: {e}")
+
+    print("\n2. Flattened test results (nested 'tests' JSON expanded):")
+    try:
+        # Use DuckDB to query the Lance table (similar to app.py)
         con = duckdb.connect()
         con.execute("INSTALL lance; LOAD lance;")
         lance_file = f"{DB_PATH}/local_test_results.lance"
         if not os.path.exists(lance_file):
             lance_file = f"{DB_PATH}/local_test_results"
             if not os.path.exists(lance_file):
-                logger.error("local_test_results not found")
-                return pd.DataFrame()
+                print("   ❌ local_test_results file not found")
+                exit(1)
         df_raw = con.execute(f"SELECT * FROM '{lance_file}'").df()
         con.close()
     except Exception as e:
-        logger.error(f"DuckDB error: {e}")
-        return pd.DataFrame()
+        print(f"   ❌ DuckDB query failed: {e}")
+        exit(1)
 
-    if df_raw.empty:
-        return pd.DataFrame()
-
+    # Flatten manually
     rows = []
     for _, row in df_raw.iterrows():
         tests_json = row.get('tests')
@@ -108,233 +106,66 @@ def flatten_test_data():
                 'executed_at': row.get('executed_at'),
             })
 
-    _flat_df = pd.DataFrame(rows)
-    logger.info(f"Flattened {len(_flat_df)} individual test records")
-    return _flat_df
+    df_flat = pd.DataFrame(rows)
+    print(f"   Total flattened test records: {len(df_flat):,}")
+    if not df_flat.empty:
+        print(f"   Columns: {list(df_flat.columns)}")
+        print("\n   First 5 flattened records:")
+        print(df_flat.head(5).to_string())
 
-def get_data_safely():
-    df = flatten_test_data()
-    if df.empty:
-        return df
-    df.columns = [c.lower() for c in df.columns]
-    return df
+        print("\n📈 Status distribution:")
+        if 'status' in df_flat.columns:
+            status_counts = df_flat['status'].value_counts()
+            for status, count in status_counts.items():
+                print(f"   • {status}: {count}")
 
-# ========== OLLAMA HELPER ==========
-OLLAMA_URL = "http://localhost:11434"
-OLLAMA_MODEL = "qwen2.5-coder:7b"  # Use the model you have installed
+        print("\n⏱️ Duration statistics (seconds):")
+        if 'duration' in df_flat.columns:
+            print(f"   • Mean: {df_flat['duration'].mean():.2f}")
+            print(f"   • Max:  {df_flat['duration'].max():.2f}")
+            print(f"   • Min:  {df_flat['duration'].min():.2f}")
 
-def call_ollama(prompt: str, temperature: float = 0.3, timeout: int = 120) -> str:
-    """Call Ollama to generate a response."""
+        print("\n📦 Top 10 modules by test count:")
+        if 'module' in df_flat.columns:
+            top_modules = df_flat['module'].value_counts().head(10)
+            for module, count in top_modules.items():
+                print(f"   • {module}: {count}")
+
+        print("\n📝 Sample of failed tests (first 5):")
+        if 'status' in df_flat.columns:
+            failed = df_flat[df_flat['status'] == 'failed']
+            if not failed.empty:
+                for _, row in failed.head(5).iterrows():
+                    print(f"   - {row['test_name']} (duration {row['duration']:.2f}s)")
+            else:
+                print("   No failed tests found.")
+    else:
+        print("   ❌ No data after flattening.")
+else:
+    print("\n⚠️ 'local_test_results' table not found in the database.")
+
+# ============================================================
+# Check other tables for completeness (optional)
+# ============================================================
+print("\n" + "=" * 80)
+print("📋 Quick look at other tables")
+print("=" * 80)
+for t in tables:
+    if t == "local_test_results":
+        continue
     try:
-        resp = requests.post(
-            f"{OLLAMA_URL}/api/generate",
-            json={
-                "model": OLLAMA_MODEL,
-                "prompt": prompt,
-                "stream": False,
-                "temperature": temperature,
-                "options": {"num_predict": 1500}
-            },
-            timeout=timeout
-        )
-        if resp.status_code == 200:
-            return resp.json().get("response", "")
-        return f"Error: {resp.status_code}"
-    except requests.exceptions.Timeout:
-        return "Error: AI took too long to respond."
-    except Exception as e:
-        return f"Error: {str(e)}"
-
-# ========== CHART GENERATOR ==========
-class ChartGenerator:
-    def __init__(self):
-        self.charts_storage = "generated_charts.json"
-        self.df = get_data_safely()
-        self.load_charts_storage()
-
-    def load_charts_storage(self):
-        if os.path.exists(self.charts_storage):
-            try:
-                with open(self.charts_storage, 'r') as f:
-                    self.charts = json.load(f)
-            except:
-                self.charts = []
+        table = db.open_table(t)
+        rows = table.count_rows()
+        print(f"\n{t} ({rows} rows):")
+        if rows > 0:
+            df = table.to_pandas()
+            print(f"   Columns: {list(df.columns)}")
+            print("   First 2 rows:")
+            print(df.head(2).to_string())
         else:
-            self.charts = []
-
-    def save_charts_storage(self):
-        with open(self.charts_storage, 'w') as f:
-            json.dump(self.charts, f, indent=2)
-
-    def generate_chart(self, prompt: str):
-        if self.df.empty:
-            # Return a placeholder chart
-            placeholder = self._placeholder_chart()
-            chart_id = str(uuid.uuid4())
-            entry = {
-                "id": chart_id,
-                "prompt": prompt,
-                "chart_type": "bar",
-                "config": placeholder,
-                "created_at": datetime.datetime.now().isoformat()
-            }
-            self.charts.append(entry)
-            self.save_charts_storage()
-            return {"success": True, "id": chart_id, "config": placeholder}
-
-        # Try to use Ollama for chart generation
-        chart_config = self._generate_with_ollama(prompt)
-        if not chart_config:
-            # Fallback to simple chart
-            chart_config = self._simple_chart(prompt)
-
-        chart_id = str(uuid.uuid4())
-        entry = {
-            "id": chart_id,
-            "prompt": prompt,
-            "chart_type": chart_config.get("chart", {}).get("type", "bar"),
-            "config": chart_config,
-            "created_at": datetime.datetime.now().isoformat()
-        }
-        self.charts.append(entry)
-        self.save_charts_storage()
-        return {"success": True, "id": chart_id, "config": chart_config}
-
-    def _generate_with_ollama(self, prompt):
-        # Build a summary of the data
-        summary = {
-            "total_tests": len(self.df),
-            "columns": list(self.df.columns),
-            "status_counts": self.df['status'].value_counts().to_dict() if 'status' in self.df.columns else {},
-            "duration_stats": {
-                "mean": self.df['duration'].mean(),
-                "max": self.df['duration'].max(),
-                "min": self.df['duration'].min()
-            } if 'duration' in self.df.columns else {},
-            "sample": self.df.head(10).to_dict(orient='records')
-        }
-
-        ai_prompt = f"""You are a data visualization expert. Based on the following test data summary, generate an ApexCharts JSON configuration for the user's request: "{prompt}"
-
-Data Summary:
-{json.dumps(summary, indent=2)}
-
-Generate a JSON object with the following structure:
-{{
-    "chart": {{"type": "bar|line|pie|...", "height": 350}},
-    "title": {{"text": "Chart Title", "align": "center"}},
-    "series": [{{"name": "Series Name", "data": [values]}}],
-    "xaxis": {{"categories": ["labels"]}},
-    "yaxis": {{"title": {{"text": "Y Axis Label"}}}}
-}}
-For pie charts, use "series": [values] and "labels": ["labels"].
-
-Return ONLY the JSON, no additional text."""
-
-        response = call_ollama(ai_prompt, temperature=0.2)
-        if response.startswith("Error:"):
-            logger.error(f"Ollama error: {response}")
-            return None
-
-        # Extract JSON
-        json_match = re.search(r'\{.*\}', response, re.DOTALL)
-        if not json_match:
-            return None
-        try:
-            config = json.loads(json_match.group())
-            # Validate minimal structure
-            if "series" not in config:
-                return None
-            return config
-        except json.JSONDecodeError:
-            return None
-
-    def _simple_chart(self, prompt):
-        # Create a simple chart based on the data
-        prompt_lower = prompt.lower()
-        if 'pie' in prompt_lower and 'status' in self.df.columns:
-            status_counts = self.df['status'].value_counts()
-            return {
-                "chart": {"type": "pie", "height": 350},
-                "title": {"text": "Test Status Distribution", "align": "center"},
-                "series": status_counts.values.tolist(),
-                "labels": status_counts.index.tolist()
-            }
-        elif 'status' in self.df.columns:
-            status_counts = self.df['status'].value_counts()
-            return {
-                "chart": {"type": "bar", "height": 350},
-                "title": {"text": "Test Status Distribution", "align": "center"},
-                "series": [{"name": "Tests", "data": status_counts.values.tolist()}],
-                "xaxis": {"categories": status_counts.index.tolist()}
-            }
-        elif 'duration' in self.df.columns:
-            top_slow = self.df.nlargest(10, 'duration')
-            return {
-                "chart": {"type": "bar", "height": 350},
-                "title": {"text": "Top 10 Slowest Tests", "align": "center"},
-                "series": [{"name": "Duration (s)", "data": top_slow['duration'].tolist()}],
-                "xaxis": {
-                    "categories": top_slow['test_name'].tolist() if 'test_name' in self.df.columns else [f"Test {i}" for i in range(len(top_slow))],
-                    "title": {"text": "Test Name"}
-                },
-                "yaxis": {"title": {"text": "Seconds"}}
-            }
-        else:
-            return {
-                "chart": {"type": "bar", "height": 350},
-                "title": {"text": f"Data Overview ({len(self.df)} records)", "align": "center"},
-                "series": [{"name": "Count", "data": list(range(min(20, len(self.df))))}],
-                "xaxis": {"categories": [f"Record {i}" for i in range(min(20, len(self.df)))]}
-            }
-
-    def _placeholder_chart(self):
-        return {
-            "chart": {"type": "bar", "height": 350},
-            "title": {"text": "No Data Available", "align": "center"},
-            "series": [{"name": "Count", "data": [0]}],
-            "xaxis": {"categories": ["No data"]}
-        }
-
-    def get_all_charts(self):
-        return self.charts
-
-    def delete_chart(self, chart_id):
-        self.charts = [c for c in self.charts if c["id"] != chart_id]
-        self.save_charts_storage()
-
-# ========== FASTAPI ENDPOINTS ==========
-generator = ChartGenerator()
-
-class ChartReq(BaseModel):
-    message: str
-
-@app.post("/ai/generate-chart")
-async def generate_chart(req: ChartReq):
-    try:
-        result = generator.generate_chart(req.message)
-        return result
+            print("   (empty)")
     except Exception as e:
-        logger.exception("Chart generation failed")
-        raise HTTPException(status_code=500, detail=str(e))
+        print(f"   Error: {e}")
 
-@app.get("/ai/generated-charts")
-async def get_charts():
-    return {"charts": generator.get_all_charts()}
-
-@app.delete("/ai/chart/{chart_id}")
-async def delete_chart(chart_id: str):
-    generator.delete_chart(chart_id)
-    return {"success": True}
-
-@app.get("/health")
-async def health():
-    return {"status": "ok", "data_available": not generator.df.empty, "data_rows": len(generator.df)}
-
-if __name__ == "__main__":
-    print("\n" + "="*70)
-    print("🎨 CHART SERVICE (Ollama) STARTING ON PORT 8001")
-    print("="*70)
-    df = get_data_safely()
-    print(f"Data loaded: {len(df)} records")
-    uvicorn.run(app, host="0.0.0.0", port=8001)
+print("\n" + "=" * 80)
+print("✅ Diagnostic complete.")
