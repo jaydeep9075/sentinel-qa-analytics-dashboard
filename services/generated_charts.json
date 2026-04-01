@@ -1,0 +1,192 @@
+[
+  {
+    "id": "db22d241-4b17-4d80-a664-d996bc58a2b6",
+    "prompt": "make pie chart of test status pass failed and overall percentage",
+    "chart_type": "pie",
+    "config": {
+      "chart": {
+        "type": "pie",
+        "height": 350
+      },
+      "title": {
+        "text": "Test Status Distribution",
+        "align": "center"
+      },
+      "series": [
+        954,
+        265
+      ],
+      "labels": [
+        "passed",
+        "failed"
+      ],
+      "colors": [
+        "#00E396",
+        "#FF4560",
+        "#FEB019"
+      ]
+    },
+    "created_at": "2026-04-01T12:23:46.801711"
+  },
+  {
+    "id": "6e2b9e74-10d5-41bb-805a-c1d001973e44",
+    "prompt": "give me the heatmap of top 15 slowest tests as per duration \n",
+    "chart_type": "bar",
+    "config": {
+      "chart": {
+        "type": "bar",
+        "height": 350
+      },
+      "title": {
+        "text": "Top 15 Slowest Tests",
+        "align": "center"
+      },
+      "series": [
+        {
+          "name": "Duration (seconds)",
+          "data": [
+            296.263,
+            243.717,
+            184.14,
+            158.008,
+            129.072,
+            128.66,
+            127.317,
+            124.213,
+            118.851,
+            113.982,
+            110.702,
+            110.13,
+            104.209,
+            100.711,
+            99.761
+          ]
+        }
+      ],
+      "xaxis": {
+        "categories": [
+          "Achievements Page Test Validate and Create activity for Achievements Page should have data on achievements section",
+          "Achievements Page Test Golf Account Master Audit Calculate Longest Going-for-Green Streak (APP shots) per Activity",
+          "Coach Profile Test Validate Coach Profile should have data on achievements section",
+          "Achievements Page Test Validate and Create activity for Achievements Page should have data on achievements section",
+          "Coach Profile Test Validate Coach Profile should have data on achievements section",
+          "Coach Profile Test Validate Coach Profile should have data on achievements section",
+          "Player Profile Test Validate Player Profile should have data on achievements section",
+          "Teams Dashboard Tests Validate Teams Dashboard (Coach) functionality should navigate to teams page and verify page loads successfullly ",
+          "Player Profile Test Validate Player Profile should have data on achievements section",
+          "Player to Player Connection Script Validate the connections for player to player Validate the Connections Page UI for player 1 and send a request to player 2.",
+          "Coach Profile Test Validate Coach Profile should have valid data on coach profile",
+          "Player to Coach Connection Script Validate the connections for player to coach (Following) Validate the Connections Page UI on a macbook-16 screen for player and send a request to coach.",
+          "Player to Coach Connection Script Validate the connections for player to coach (Following) Validate the request on the Connections Page macbook-16 screen for coach, sent by player, and accept it.",
+          "Player Feeds Page Test Validate Feed Page for Player Profile should create round highlights using share button",
+          "Achievements Page Test Validate and Create activity for Achievements Page should have data on achievements section"
+        ],
+        "title": {
+          "text": "Test Name"
+        }
+      },
+      "yaxis": {
+        "title": {
+          "text": "Seconds"
+        }
+      },
+      "colors": [
+        "#FF4560"
+      ]
+    },
+    "created_at": "2026-04-01T12:20:48.838434"
+  },
+  {
+    "id": "93c5d9fe-92d7-4fe6-9ecc-1485840e3fed",
+    "prompt": "Test duration trend line",
+    "chart_type": "bar",
+    "config": {
+      "chart": {
+        "type": "bar",
+        "height": 350
+      },
+      "title": {
+        "text": "Top 10 Slowest Tests",
+        "align": "center"
+      },
+      "series": [
+        {
+          "name": "Duration (seconds)",
+          "data": [
+            296.263,
+            243.717,
+            184.14,
+            158.008,
+            129.072,
+            128.66,
+            127.317,
+            124.213,
+            118.851,
+            113.982
+          ]
+        }
+      ],
+      "xaxis": {
+        "categories": [
+          "Achievements Page Test Validate and Create activity for Achievements Page should have data on achievements section",
+          "Achievements Page Test Golf Account Master Audit Calculate Longest Going-for-Green Streak (APP shots) per Activity",
+          "Coach Profile Test Validate Coach Profile should have data on achievements section",
+          "Achievements Page Test Validate and Create activity for Achievements Page should have data on achievements section",
+          "Coach Profile Test Validate Coach Profile should have data on achievements section",
+          "Coach Profile Test Validate Coach Profile should have data on achievements section",
+          "Player Profile Test Validate Player Profile should have data on achievements section",
+          "Teams Dashboard Tests Validate Teams Dashboard (Coach) functionality should navigate to teams page and verify page loads successfullly ",
+          "Player Profile Test Validate Player Profile should have data on achievements section",
+          "Player to Player Connection Script Validate the connections for player to player Validate the Connections Page UI for player 1 and send a request to player 2."
+        ],
+        "title": {
+          "text": "Test Name"
+        }
+      },
+      "yaxis": {
+        "title": {
+          "text": "Seconds"
+        }
+      },
+      "colors": [
+        "#FF4560"
+      ]
+    },
+    "created_at": "2026-04-01T12:18:23.171660"
+  },
+  {
+    "id": "ca884661-05e2-454f-8718-a18e67dca2df",
+    "prompt": "Bar chart of failure reasons",
+    "chart_type": "bar",
+    "config": {
+      "chart": {
+        "type": "bar",
+        "height": 350
+      },
+      "title": {
+        "text": "Test Status Distribution",
+        "align": "center"
+      },
+      "series": [
+        {
+          "name": "Tests",
+          "data": [
+            954,
+            265
+          ]
+        }
+      ],
+      "xaxis": {
+        "categories": [
+          "passed",
+          "failed"
+        ]
+      },
+      "colors": [
+        "#00E396",
+        "#FF4560"
+      ]
+    },
+    "created_at": "2026-04-01T12:16:39.260823"
+  }
+]
