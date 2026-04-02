@@ -19,7 +19,6 @@ def init_data():
     state.duck_conn = duckdb.connect()
     state.embedder = EmbeddingGenerator()
 
-    # Get table names correctly
     raw_result = state.lance_db.list_tables()
     if hasattr(raw_result, 'tables'):
         raw_tables = raw_result.tables
@@ -43,17 +42,7 @@ def init_data():
         except Exception as e:
             logger.error(f"Error loading test_cases: {e}")
 
-    # Build mapping from test case title to ID (for joining later)
-    title_to_id = {}
-    if "test_cases" in state.duck_conn.execute("SHOW TABLES").fetchall():
-        try:
-            mapping_df = state.duck_conn.execute("SELECT id, title FROM test_cases").df()
-            title_to_id = dict(zip(mapping_df['title'], mapping_df['id']))
-            logger.info(f"Built title→id mapping with {len(title_to_id)} entries")
-        except Exception as e:
-            logger.warning(f"Could not build title→id mapping: {e}")
-
-    # Load test_results and flatten (with test_case_id)
+    # Load test_results and flatten – store only test_name (no ID mapping)
     if "structured_test_results" in tables:
         try:
             df_results = state.lance_db.open_table("structured_test_results").to_pandas()
@@ -83,22 +72,12 @@ def init_data():
                             if isinstance(err, dict):
                                 err = err.get("message", "")
 
-                            # Get test name (full_title)
-                            test_name = t.get("full_title", "")
-                            # Look up test_case_id from mapping
-                            test_case_id = title_to_id.get(test_name)
-
-                            # If still not found, create a pseudo ID (fallback)
-                            if not test_case_id and test_name:
-                                test_case_id = f"pseudo_{hash(test_name) % 10**8}"
-
                             rows.append({
                                 "result_id": row.get("id"),
-                                "test_case_id": test_case_id,
+                                "test_name": t.get("full_title", ""),   # ← plain string
                                 "build_id": row.get("build_id"),
                                 "project_id": row.get("project_id"),
                                 "executed_at": row.get("executed_at"),
-                                "test_name": test_name,
                                 "status": t.get("status", "").lower(),
                                 "duration": dur,
                                 "error": err,
@@ -107,13 +86,10 @@ def init_data():
                 if rows:
                     flattened = pd.DataFrame(rows)
                     state.duck_conn.register("flattened_tests", flattened)
-                    logger.info(f"Flattened {len(flattened)} test executions (test_case_id populated for {flattened['test_case_id'].notna().sum()} rows)")
-                    # Verify
+                    logger.info(f"Flattened {len(flattened)} test executions")
                     try:
                         result = state.duck_conn.execute("SHOW TABLES").fetchall()
-                        logger.info(f"Tables in DuckDB after flattening: {[t[0] for t in result]}")
-                        sample = state.duck_conn.execute("SELECT test_case_id, test_name, status FROM flattened_tests LIMIT 3").fetchall()
-                        logger.info(f"Sample flattened_tests: {sample}")
+                        logger.info(f"Tables in DuckDB: {[t[0] for t in result]}")
                     except Exception as e:
                         logger.error(f"Could not verify tables: {e}")
                 else:
@@ -125,10 +101,7 @@ def init_data():
             import traceback
             traceback.print_exc()
 
-    # Do NOT create chat_history/chart_history here – memory.py handles it.
-
 def get_schema_info():
-    """Return dictionary of table schemas in DuckDB."""
     schemas = {}
     if state.duck_conn:
         tables = state.duck_conn.execute("SHOW TABLES").fetchall()
@@ -138,7 +111,6 @@ def get_schema_info():
     return schemas
 
 def execute_sql(query: str):
-    """Execute SQL and return (DataFrame, error) tuple."""
     try:
         df = state.duck_conn.execute(query).df()
         return df, None

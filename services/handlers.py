@@ -7,7 +7,6 @@ from . import config, data_loader, memory, llm_client
 
 logger = logging.getLogger(__name__)
 
-# Simple in-memory cache for SQL queries (token efficient)
 _sql_cache = {}
 
 def _convert_timestamp(obj):
@@ -61,8 +60,8 @@ Available tables and columns (with sample values):
 
 **Rules:**
 - Use `test_cases` for test case definitions (module_name, priority, title).
-- Use `flattened_tests` for test execution results (status, duration, error, test_case_id).
-- To join test_cases with flattened_tests, use: ON test_cases.id = flattened_tests.test_case_id
+- Use `flattened_tests` for test execution results (status, duration, error, test_name).
+- To join test_cases with flattened_tests, use: test_cases.title = flattened_tests.test_name
 - For "priority vs failure count", join and group by priority.
 - For "how many tests in module X" -> SELECT COUNT(*) FROM test_cases WHERE module_name = '...'
 - For pass rate -> SELECT SUM(CASE WHEN status='passed' THEN 1 ELSE 0 END)*1.0/COUNT(*) FROM flattened_tests
@@ -143,7 +142,6 @@ Answer concisely.
     return response
 
 async def handle_chart(user_prompt: str, session_id: str):
-    # Check cache first
     cache_key = user_prompt.lower().strip()
     if cache_key in _sql_cache:
         cached = _sql_cache[cache_key]
@@ -155,16 +153,29 @@ async def handle_chart(user_prompt: str, session_id: str):
     schemas = _get_schema_with_samples()
     schema_str = json.dumps(schemas, indent=2)
 
-    # Enhanced SQL prompt with join instructions
     sql_prompt = f"""You are a data analyst. Generate a DuckDB SQL query.
 
 Available tables and columns (with samples):
 {schema_str}
 
 **Join instructions:**
-- To join test_cases and flattened_tests, use: test_cases.id = flattened_tests.test_case_id
-- For "priority vs failure count", join and GROUP BY priority, COUNT failures.
-- For "scatter plot priority vs failure count", return priority and failure count.
+- To join test_cases and flattened_tests, use: test_cases.title = flattened_tests.test_name
+- For "priority vs failure count": 
+    SELECT tc.priority, COUNT(ft.status) as failure_count
+    FROM test_cases tc
+    JOIN flattened_tests ft ON tc.title = ft.test_name
+    WHERE ft.status = 'failed'
+    GROUP BY tc.priority
+- For heatmap: SELECT tc.module_name, tc.priority, COUNT(ft.status) as failures
+  FROM test_cases tc
+  JOIN flattened_tests ft ON tc.title = ft.test_name
+  WHERE ft.status = 'failed'
+  GROUP BY tc.module_name, tc.priority
+- For pass rate per module: SELECT tc.module_name, 
+    SUM(CASE WHEN ft.status='passed' THEN 1 ELSE 0 END)*1.0/COUNT(*) as pass_rate
+  FROM test_cases tc
+  JOIN flattened_tests ft ON tc.title = ft.test_name
+  GROUP BY tc.module_name
 
 User request: "{user_prompt}"
 
@@ -179,7 +190,6 @@ Return only SQL. If impossible, return "N/A".
     sql = re.sub(r"```sql\n?|```", "", sql).strip()
     df, sql_error = data_loader.execute_sql(sql)
 
-    # Self-healing: if error or empty, try to fix with LLM
     max_retries = 2
     for attempt in range(max_retries):
         if sql_error or df.empty:
@@ -188,6 +198,7 @@ Error: {sql_error or 'Empty result'}
 Original request: {user_prompt}
 Attempted SQL: {sql}
 Please provide a corrected DuckDB SQL query that will return non-empty data.
+Use the correct join: test_cases.title = flattened_tests.test_name
 Return only SQL.
 """
             corrected_sql = llm.generate(correction_prompt, temperature=0.2)
@@ -207,20 +218,32 @@ Return only SQL.
     if df.empty:
         return None, "No data found for chart"
 
-    # Cache the successful SQL
     _sql_cache[cache_key] = sql
-    # Trim cache size if needed
     if len(_sql_cache) > 100:
-        # remove oldest 20
         for k in list(_sql_cache.keys())[:20]:
             del _sql_cache[k]
 
     return _generate_chart_from_df(df, user_prompt, session_id, sql)
 
 def _generate_chart_from_df(df: pd.DataFrame, user_prompt: str, session_id: str, sql: str):
-    """Generate Plotly chart from DataFrame and store it."""
     data_sample = df.head(100).to_dict(orient="records")
     data_sample_serializable = _convert_timestamp(data_sample)
+
+    is_heatmap = 'heatmap' in user_prompt.lower()
+    chart_type_hint = ""
+    if is_heatmap:
+        chart_type_hint = """
+Use plotly.express.density_heatmap or plotly.graph_objects.Heatmap.
+Example:
+import plotly.express as px
+fig = px.density_heatmap(data, x='module_name', y='priority', z='failures', title='Risk Heatmap')
+"""
+    else:
+        chart_type_hint = """
+Example for scatter:
+import plotly.express as px
+fig = px.scatter(data, x='priority', y='failure_count', title='Priority vs Failures')
+"""
 
     chart_prompt = f"""Generate Plotly Python code for the chart described.
 
@@ -230,9 +253,7 @@ Data (first 100 rows):
 {json.dumps(data_sample_serializable, indent=2)}
 
 Return only Python code. Define variable `fig`. Use plotly.express or plotly.graph_objects.
-Example for scatter: 
-import plotly.express as px
-fig = px.scatter(data, x='priority', y='failure_count', title='Priority vs Failures')
+{chart_type_hint}
 """
     llm = llm_client.LLMClient()
     code = llm.generate(chart_prompt, temperature=0.2)
