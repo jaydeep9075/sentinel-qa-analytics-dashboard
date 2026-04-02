@@ -7,6 +7,9 @@ from . import config, data_loader, memory, llm_client
 
 logger = logging.getLogger(__name__)
 
+# Simple in-memory cache for SQL queries (token efficient)
+_sql_cache = {}
+
 def _convert_timestamp(obj):
     if isinstance(obj, dict):
         return {k: _convert_timestamp(v) for k, v in obj.items()}
@@ -19,6 +22,27 @@ def _convert_timestamp(obj):
     else:
         return obj
 
+def _get_schema_with_samples():
+    """Return schema including sample distinct values for key columns."""
+    if not data_loader.state.duck_conn:
+        return {}
+    tables = data_loader.state.duck_conn.execute("SHOW TABLES").fetchall()
+    schema = {}
+    for (tbl,) in tables:
+        cols = data_loader.state.duck_conn.execute(f"DESCRIBE {tbl}").fetchall()
+        col_info = []
+        for col_name, col_type, _, _, _, _ in cols:
+            samples = []
+            if "varchar" in col_type.lower() or "text" in col_type.lower():
+                try:
+                    samples = data_loader.state.duck_conn.execute(f"SELECT DISTINCT {col_name} FROM {tbl} LIMIT 5").fetchall()
+                    samples = [s[0] for s in samples if s[0] is not None]
+                except:
+                    pass
+            col_info.append({"name": col_name, "type": col_type, "sample_values": samples})
+        schema[tbl] = col_info
+    return schema
+
 async def handle_chat(user_message: str, session_id: str):
     history = memory.get_chat_history(session_id, limit=config.MAX_HISTORY_TURNS)
     context = ""
@@ -27,22 +51,21 @@ async def handle_chat(user_message: str, session_id: str):
         content = h["prompt"] if role == "user" else h["response"]
         context += f"{role.capitalize()}: {content}\n"
 
-    schemas = data_loader.get_schema_info()
+    schemas = _get_schema_with_samples()
     schema_str = json.dumps(schemas, indent=2)
 
     decision_prompt = f"""You are a QA analytics assistant. Given the user request and available data, decide the best action.
 
-Available tables and columns:
+Available tables and columns (with sample values):
 {schema_str}
 
 **Rules:**
-- Use `test_cases` table for questions about test case definitions (counts per module, test case details).
-- Use `flattened_tests` table for questions about test execution results (pass/fail, duration, errors).
+- Use `test_cases` for test case definitions (module_name, priority, title).
+- Use `flattened_tests` for test execution results (status, duration, error, test_case_id).
+- To join test_cases with flattened_tests, use: ON test_cases.id = flattened_tests.test_case_id
+- For "priority vs failure count", join and group by priority.
 - For "how many tests in module X" -> SELECT COUNT(*) FROM test_cases WHERE module_name = '...'
-- For "how many failed tests" -> SELECT COUNT(*) FROM flattened_tests WHERE status = 'failed'
-- For "pass rate" -> SELECT SUM(CASE WHEN status='passed' THEN 1 ELSE 0 END)*1.0/COUNT(*) FROM flattened_tests
-- For "module with highest test count" -> SELECT module_name, COUNT(*) FROM test_cases GROUP BY module_name ORDER BY COUNT(*) DESC LIMIT 1
-- For "failed/passed per module" you may need to join tables, but be careful.
+- For pass rate -> SELECT SUM(CASE WHEN status='passed' THEN 1 ELSE 0 END)*1.0/COUNT(*) FROM flattened_tests
 
 User request: "{user_message}"
 Conversation history:
@@ -52,9 +75,7 @@ Return a JSON object with exactly two keys:
 - "action": one of "sql", "vector", "answer"
 - "data": for "sql", provide a DuckDB SQL query; for "vector", provide a search query string; for "answer", provide the direct answer.
 
-If using SQL, ensure the query is valid and returns only necessary columns. If the request cannot be answered, return "answer" with "I don't have enough information."
-
-Output ONLY the JSON, no other text.
+Output ONLY the JSON.
 """
     llm = llm_client.LLMClient()
     decision_str = llm.generate(decision_prompt, temperature=0.1)
@@ -84,22 +105,14 @@ Output ONLY the JSON, no other text.
             for col in df_copy.select_dtypes(include=['datetime64']).columns:
                 df_copy[col] = df_copy[col].dt.isoformat()
             data_json = df_copy.head(100).to_json(orient="records")
-            answer_prompt = f"""Based on the following data, answer the user's request concisely and in a well‑formatted way.
+            answer_prompt = f"""Based on the following data, answer the user's request concisely and well‑formatted.
 
 User request: {user_message}
 
 Data (as JSON):
 {data_json}
 
-Instructions:
-- Use bullet points or numbered lists for multiple items.
-- Add blank lines between sections.
-- Use bold for key numbers (if possible with markdown).
-- Keep the answer clear and scannable.
-- If the data contains counts or statuses, present them in a table or list.
-- Do not include extra commentary about formatting; just produce the formatted answer.
-
-Provide the final answer:
+Use bullet points or markdown tables. Provide final answer.
 """
             response = llm.generate(answer_prompt, temperature=0.2)
             if not response:
@@ -110,14 +123,14 @@ Provide the final answer:
             response = "I couldn't find relevant information."
         else:
             context = "\n\n".join([d["text"][:500] for d in docs])
-            answer_prompt = f"""Using the following retrieved context, answer the user's question.
+            answer_prompt = f"""Using the retrieved context, answer the user's question.
 
 Context:
 {context}
 
 User question: {user_message}
 
-Answer concisely and naturally.
+Answer concisely.
 """
             response = llm.generate(answer_prompt, temperature=0.2)
             if not response:
@@ -130,23 +143,32 @@ Answer concisely and naturally.
     return response
 
 async def handle_chart(user_prompt: str, session_id: str):
-    schemas = data_loader.get_schema_info()
+    # Check cache first
+    cache_key = user_prompt.lower().strip()
+    if cache_key in _sql_cache:
+        cached = _sql_cache[cache_key]
+        logger.info(f"Using cached SQL for '{cache_key}'")
+        df, err = data_loader.execute_sql(cached)
+        if not err and not df.empty:
+            return _generate_chart_from_df(df, user_prompt, session_id, cached)
+
+    schemas = _get_schema_with_samples()
     schema_str = json.dumps(schemas, indent=2)
 
-    # Improved SQL prompt with explicit examples
-    sql_prompt = f"""You are a data analyst. Generate a DuckDB SQL query to fetch the data needed for the chart described by the user.
+    # Enhanced SQL prompt with join instructions
+    sql_prompt = f"""You are a data analyst. Generate a DuckDB SQL query.
 
-Available tables and columns:
+Available tables and columns (with samples):
 {schema_str}
 
-**Important rules:**
-- For "number of tests per module", use: SELECT module_name, COUNT(*) AS count FROM test_cases GROUP BY module_name ORDER BY module_name
-- For test status distribution, use: SELECT status, COUNT(*) FROM flattened_tests GROUP BY status
-- For pass rate over time, use: SELECT executed_at, SUM(CASE WHEN status='passed' THEN 1 ELSE 0 END)*1.0/COUNT(*) as pass_rate FROM flattened_tests GROUP BY executed_at ORDER BY executed_at
-- If the user asks for a line chart but the x-axis is categorical (like module names), it's still acceptable to use a line chart with those categories.
-- Return only the SQL query, no explanation. If the request cannot be answered, return "N/A".
+**Join instructions:**
+- To join test_cases and flattened_tests, use: test_cases.id = flattened_tests.test_case_id
+- For "priority vs failure count", join and GROUP BY priority, COUNT failures.
+- For "scatter plot priority vs failure count", return priority and failure count.
 
 User request: "{user_prompt}"
+
+Return only SQL. If impossible, return "N/A".
 """
     llm = llm_client.LLMClient()
     sql = llm.generate(sql_prompt, temperature=0.1)
@@ -156,59 +178,79 @@ User request: "{user_prompt}"
 
     sql = re.sub(r"```sql\n?|```", "", sql).strip()
     df, sql_error = data_loader.execute_sql(sql)
-    if sql_error:
-        logger.error(f"SQL error: {sql_error}")
-        return None, f"SQL error: {sql_error}"
-    
-    # FALLBACK: If empty result and request is about module counts, try known query
-    if df.empty:
-        logger.warning(f"Empty result for SQL: {sql}")
-        if "module" in user_prompt.lower() and ("count" in user_prompt.lower() or "number" in user_prompt.lower()):
-            fallback_sql = "SELECT module_name, COUNT(*) AS count FROM test_cases GROUP BY module_name ORDER BY module_name"
-            df, fallback_error = data_loader.execute_sql(fallback_sql)
-            if fallback_error:
-                logger.error(f"Fallback SQL error: {fallback_error}")
-                return None, "No data found for chart"
-            if df.empty:
-                return None, "No data found for chart"
-            logger.info("Using fallback SQL for module counts")
-        else:
-            return None, "No data found for chart"
 
-    # Convert DataFrame to serializable dict, handling timestamps
+    # Self-healing: if error or empty, try to fix with LLM
+    max_retries = 2
+    for attempt in range(max_retries):
+        if sql_error or df.empty:
+            correction_prompt = f"""The previous SQL query failed.
+Error: {sql_error or 'Empty result'}
+Original request: {user_prompt}
+Attempted SQL: {sql}
+Please provide a corrected DuckDB SQL query that will return non-empty data.
+Return only SQL.
+"""
+            corrected_sql = llm.generate(correction_prompt, temperature=0.2)
+            if corrected_sql:
+                corrected_sql = re.sub(r"```sql\n?|```", "", corrected_sql).strip()
+                df, sql_error = data_loader.execute_sql(corrected_sql)
+                sql = corrected_sql
+                logger.info(f"Retry {attempt+1}: using corrected SQL")
+            else:
+                break
+        else:
+            break
+
+    if sql_error:
+        logger.error(f"SQL error after retries: {sql_error}")
+        return None, f"SQL error: {sql_error}"
+    if df.empty:
+        return None, "No data found for chart"
+
+    # Cache the successful SQL
+    _sql_cache[cache_key] = sql
+    # Trim cache size if needed
+    if len(_sql_cache) > 100:
+        # remove oldest 20
+        for k in list(_sql_cache.keys())[:20]:
+            del _sql_cache[k]
+
+    return _generate_chart_from_df(df, user_prompt, session_id, sql)
+
+def _generate_chart_from_df(df: pd.DataFrame, user_prompt: str, session_id: str, sql: str):
+    """Generate Plotly chart from DataFrame and store it."""
     data_sample = df.head(100).to_dict(orient="records")
     data_sample_serializable = _convert_timestamp(data_sample)
-    chart_prompt = f"""You are a data visualization expert. Generate a Plotly Python code that creates the chart described.
+
+    chart_prompt = f"""Generate Plotly Python code for the chart described.
 
 User request: "{user_prompt}"
 
 Data (first 100 rows):
 {json.dumps(data_sample_serializable, indent=2)}
 
-Return only the Python code, no explanation. The code should define a variable `fig` containing the Plotly figure. Use `import plotly.graph_objects as go` or `plotly.express as px`. Ensure the code is self‑contained and uses the data provided.
-
-Example for line chart:
+Return only Python code. Define variable `fig`. Use plotly.express or plotly.graph_objects.
+Example for scatter: 
 import plotly.express as px
-fig = px.line(data, x='module_name', y='count', title='Tests per Module')
+fig = px.scatter(data, x='priority', y='failure_count', title='Priority vs Failures')
 """
+    llm = llm_client.LLMClient()
     code = llm.generate(chart_prompt, temperature=0.2)
     if not code:
         return None, "Chart generation failed"
 
     code = re.sub(r"```python\n?|```", "", code).strip()
     try:
-        logger.info(f"Chart code execution - generated code length: {len(code)}")
+        logger.info(f"Chart code execution - length: {len(code)}")
         import plotly.express as px
         import plotly.graph_objects as go
         namespace = {"px": px, "go": go, "data": df, "pd": pd}
         exec(code, namespace)
         fig = namespace.get("fig")
-        logger.info(f"Fig object: {fig}")
         if fig is None:
             raise ValueError("No 'fig' variable defined")
         chart_json = fig.to_json()
         logger.info(f"Chart JSON length: {len(chart_json)}")
-        # Store chart
         result = memory.store_chart(session_id, user_prompt, chart_json, {"sql": sql})
         logger.info(f"store_chart returned: {result}")
         return chart_json, None
@@ -216,4 +258,4 @@ fig = px.line(data, x='module_name', y='count', title='Tests per Module')
         logger.error(f"Chart code execution error: {e}")
         import traceback
         traceback.print_exc()
-        return None, f"Chart generation execution failed: {str(e)}"
+        return None, f"Chart generation failed: {str(e)}"
