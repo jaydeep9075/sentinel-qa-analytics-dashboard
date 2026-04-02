@@ -13,9 +13,9 @@ export default function AIChatInput({ onChartGenerated }: AIChatInputProps) {
   const [status, setStatus] = useState<string | null>(null);
 
   const shortcuts = [
-    "Bar chart of failure reasons",
-    "Slowest 5 tests this week",
-    "Test duration trend line",
+    "Bar chart of test status distribution",
+    "Pie chart of passed vs failed",
+    "Slowest 5 tests",
   ];
 
   const handleSubmit = async (e?: React.FormEvent, manualPrompt?: string) => {
@@ -38,9 +38,7 @@ export default function AIChatInput({ onChartGenerated }: AIChatInputProps) {
       }
     } catch (err: any) {
       console.error("Chart generation error:", err);
-      setStatus(
-        "Failed to generate chart. Check if the chart service is running on port 8001.",
-      );
+      setStatus(`Failed: ${err.message}`);
       setTimeout(() => setStatus(null), 5000);
     } finally {
       setLoading(false);
@@ -81,7 +79,7 @@ export default function AIChatInput({ onChartGenerated }: AIChatInputProps) {
 
       {status && (
         <div
-          className={`text-center text-xs font-mono ${status.includes("failed") ? "text-red-500" : "text-blue-400"} animate-pulse`}
+          className={`text-center text-xs font-mono ${status.includes("failed") || status.includes("Failed") ? "text-red-500" : "text-blue-400"} animate-pulse`}
         >
           {status}
         </div>

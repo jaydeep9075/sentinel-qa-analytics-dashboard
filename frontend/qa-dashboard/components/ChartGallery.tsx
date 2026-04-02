@@ -1,7 +1,8 @@
 "use client";
 
+import { useState, useEffect } from "react";
 import useSWR from "swr";
-import { getGeneratedCharts, deleteChart, CHART_API_BASE } from "@/lib/api";
+import { getSessionCharts, deleteChart } from "@/lib/api";
 import AIGeneratedChart from "./AIGeneratedChart";
 import {
   DndContext,
@@ -21,7 +22,6 @@ import {
 } from "@dnd-kit/sortable";
 import { useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
-import { useState } from "react";
 
 interface Chart {
   id: string;
@@ -30,6 +30,20 @@ interface Chart {
   config: any;
   created_at: string;
 }
+
+// Wrapper fetcher that returns the list of charts
+const fetchCharts = async () => {
+  const result = await getSessionCharts();
+  // result is an array of chart objects with { id, config, ... }
+  // Convert to the shape expected by the component
+  return result.map((item: any) => ({
+    id: item.id,
+    prompt: item.prompt || "Chart",
+    chart_type: item.config?.chart?.type || "bar",
+    config: item.config,
+    created_at: item.created_at,
+  }));
+};
 
 function SortableItem({
   chart,
@@ -120,15 +134,23 @@ function SortableItem({
 
 export default function ChartGallery() {
   const [layout, setLayout] = useState<"grid" | "list">("grid");
+  const [localOrder, setLocalOrder] = useState<Chart[]>([]);
 
   const {
     data: charts,
     error,
     isLoading,
     mutate,
-  } = useSWR("generated-charts", getGeneratedCharts, {
+  } = useSWR("session-charts", fetchCharts, {
     refreshInterval: 5000,
   });
+
+  // Update local order when data changes
+  useEffect(() => {
+    if (charts) {
+      setLocalOrder(charts);
+    }
+  }, [charts]);
 
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 8 } }),
@@ -157,7 +179,7 @@ export default function ChartGallery() {
       </div>
     );
 
-  const chartList = charts?.charts || [];
+  const chartList = localOrder || [];
 
   return (
     <div>
@@ -190,19 +212,19 @@ export default function ChartGallery() {
         onDragEnd={({ active, over }) => {
           if (over && active.id !== over.id) {
             const oldIndex = chartList.findIndex(
-              (item: any) => item.id === active.id,
+              (item: Chart) => item.id === active.id,
             );
             const newIndex = chartList.findIndex(
-              (item: any) => item.id === over.id,
+              (item: Chart) => item.id === over.id,
             );
             const newOrder = arrayMove(chartList, oldIndex, newIndex);
-            // We don't persist order to backend – just local reorder for this session
-            mutate({ ...charts, charts: newOrder }, false);
+            setLocalOrder(newOrder);
+            // Order is only local; we don't persist it to the backend
           }
         }}
       >
         <SortableContext
-          items={chartList.map((c: any) => c.id)}
+          items={chartList.map((c) => c.id)}
           strategy={
             layout === "grid"
               ? rectSortingStrategy
