@@ -260,13 +260,19 @@ def _generate_chart_from_df(df: pd.DataFrame, user_prompt: str, session_id: str,
 Use plotly.express.density_heatmap or plotly.graph_objects.Heatmap.
 Example:
 import plotly.express as px
-fig = px.density_heatmap(data, x='module_name', y='priority', z='failures', title='Risk Heatmap')
+fig = px.density_heatmap(data, x='module_name', y='priority', z='failures', 
+                         title='Risk Heatmap',
+                         color_continuous_scale='Viridis')
+fig.update_layout(template='plotly_dark', title_x=0.5)
 """
     else:
         chart_type_hint = """
-Example for scatter:
+Example for bar chart:
 import plotly.express as px
-fig = px.scatter(data, x='priority', y='failure_count', title='Priority vs Failures')
+fig = px.bar(data, x='module_name', y='failure_count', 
+             title='Failures by Module',
+             color_discrete_sequence=['#3b82f6'])
+fig.update_layout(template='plotly_dark', title_x=0.5)
 """
 
     chart_prompt = f"""Generate Plotly Python code for a professional chart as described.
@@ -281,23 +287,24 @@ STRICT REQUIREMENTS:
 2. ALWAYS set title, xaxis_title, yaxis_title
 3. For bar charts: use px.bar()
 4. For line charts: use px.line()
-5. For pie charts: use px.pie() with ONLY these parameters: names, values, title, hole
+5. For pie charts: use px.pie() with ONLY: names, values, title, hole
 6. For heatmaps: use px.density_heatmap()
-7. Add proper color scheme (use 'Viridis' or 'Blues')
+7. For colors, use ONLY: 'Viridis', 'Blues', 'Set2', or color_discrete_sequence=['#3b82f6']
 8. Format numbers with commas for thousands
 9. Rotate x-axis labels if needed (tickangle=45)
-10. Set proper figure size: width=800, height=500
-11. DO NOT use hovertemplate, customdata, or other advanced parameters
+10. DO NOT use: 'Blues_d', 'Blues_r', hovertemplate, customdata
+11. ALWAYS add: fig.update_layout(template='plotly_dark', title_x=0.5)
 
 Example format:
 ```python
 import plotly.express as px
 fig = px.bar(data, x='module_name', y='failure_count', 
              title='Failures by Module',
-             labels={{'module_name': 'Module Name', 'failure_count': 'Number of Failures'}})
-fig.update_layout(title_x=0.5, width=800, height=500)
+             labels={{'module_name': 'Module Name', 'failure_count': 'Number of Failures'}},
+             color_discrete_sequence=['#3b82f6'])
+fig.update_layout(template='plotly_dark', title_x=0.5)
 
-Return only Python code. Define variable `fig`. Use plotly.express or plotly.graph_objects.
+Return only Python code. Define variable `fig`.
 {chart_type_hint}
 """
     llm = llm_client.LLMClient()
@@ -307,14 +314,29 @@ Return only Python code. Define variable `fig`. Use plotly.express or plotly.gra
 
     code = re.sub(r"```python\n?|```", "", code).strip()
     
-    # ADD THIS: Clean invalid parameters for pie charts
+    # Clean invalid color scales
+    code = re.sub(r"'Blues_d'", "'Blues'", code)
+    code = re.sub(r'"Blues_d"', '"Blues"', code)
+    code = re.sub(r"'Blues_r'", "'Blues'", code)
+    code = re.sub(r'"Blues_r"', '"Blues"', code)
+    
+    # Clean invalid parameters for pie charts
     if 'pie' in code.lower():
-        # Remove hovertemplate parameter
         code = re.sub(r',\s*hovertemplate\s*=\s*[^,)]+', '', code)
         code = re.sub(r'hovertemplate\s*=\s*[^,)]+,\s*', '', code)
-        # Remove customdata parameter
         code = re.sub(r',\s*customdata\s*=\s*[^,)]+', '', code)
         code = re.sub(r'customdata\s*=\s*[^,)]+,\s*', '', code)
+    
+    # Ensure dark mode template
+    if "template='plotly_dark'" not in code and 'template="plotly_dark"' not in code:
+        if "fig.update_layout(" in code:
+            code = code.replace("fig.update_layout(", "fig.update_layout(template='plotly_dark', ")
+        else:
+            code += "\nfig.update_layout(template='plotly_dark')"
+    
+    # Remove fixed width/height for responsiveness
+    code = re.sub(r',?\s*width\s*=\s*\d+\s*,?', '', code)
+    code = re.sub(r',?\s*height\s*=\s*\d+\s*,?', '', code)
     
     try:
         logger.info(f"Chart code execution - length: {len(code)}")
@@ -325,14 +347,30 @@ Return only Python code. Define variable `fig`. Use plotly.express or plotly.gra
         fig = namespace.get("fig")
         if fig is None:
             raise ValueError("No 'fig' variable defined")
+        
+        # Apply dark mode and responsive settings
+        fig.update_layout(
+            template='plotly_dark',
+            autosize=True,
+            margin=dict(l=40, r=40, t=50, b=40),
+            paper_bgcolor='rgba(0,0,0,0)',
+            plot_bgcolor='rgba(0,0,0,0)',
+            font=dict(color='#e5e7eb')
+        )
+        
         if not fig.layout.title or not fig.layout.title.text:
             fig.update_layout(title=user_prompt[:50])
+        
         if hasattr(fig, 'layout') and hasattr(fig.layout, 'xaxis'):
             if not fig.layout.xaxis.title.text:
                 fig.update_xaxes(title_text=df.columns[0] if len(df.columns) > 0 else "X Axis")
+            fig.update_xaxes(title_font=dict(color='#9ca3af'), tickfont=dict(color='#9ca3af'))
+        
         if hasattr(fig, 'layout') and hasattr(fig.layout, 'yaxis'):
             if not fig.layout.yaxis.title.text:
                 fig.update_yaxes(title_text=df.columns[1] if len(df.columns) > 1 else "Y Axis")
+            fig.update_yaxes(title_font=dict(color='#9ca3af'), tickfont=dict(color='#9ca3af'))
+        
         chart_json = fig.to_json()
         logger.info(f"Chart JSON length: {len(chart_json)}")
         result = memory.store_chart(session_id, user_prompt, chart_json, {"sql": sql})
