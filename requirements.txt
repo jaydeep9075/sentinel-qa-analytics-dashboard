@@ -1,13 +1,44 @@
+# Core Framework
 fastapi==0.115.6
 uvicorn[standard]==0.34.0
-lancedb==0.12.0
-duckdb==1.1.3
+pydantic==2.7.1
+python-multipart==0.0.9
+
+# Data Processing
 pandas==2.2.3
 numpy==1.26.4
-plotly==5.24.1
-python-dotenv==1.0.1
+duckdb==1.1.3
+lancedb==0.12.0
+pyarrow==17.0.0
+
+# AI & LLM
 google-generativeai==0.8.3
 sentence-transformers==3.0.1
-pyarrow==17.0.0
+requests==2.31.0
+openai==1.37.1
+anthropic==0.24.2
+
+# Visualization
+plotly==5.24.1
+kaleido==0.2.1
+
+# Configuration
+python-dotenv==1.0.1
+
+# Database (for universal ingester)
 pymysql==1.1.1
 sqlalchemy==2.0.36
+
+# Utilities
+typing-extensions==4.12.2
+
+# Add these at the end for better compatibility
+torch==2.1.0  # Required by sentence-transformers (if not auto-installed)
+transformers==4.36.0  # Optional, for better sentence-transformers performance
+
+
+#version independent installation command 
+#pip install fastapi uvicorn pydantic python-multipart pandas numpy duckdb lancedb pyarrow google-generativeai sentence-transformers requests openai anthropic plotly kaleido python-dotenv pymysql sqlalchemy typing-extensions
+
+# single command with venv
+#python -m venv venv && venv\Scripts\activate && pip install fastapi uvicorn pydantic python-multipart pandas numpy duckdb lancedb pyarrow google-generativeai sentence-transformers requests openai anthropic plotly kaleido python-dotenv pymysql sqlalchemy typing-extensions

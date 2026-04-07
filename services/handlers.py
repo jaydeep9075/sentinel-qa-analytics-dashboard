@@ -225,7 +225,31 @@ Return only SQL.
 
     return _generate_chart_from_df(df, user_prompt, session_id, sql)
 
+def _detect_chart_type(prompt: str) -> str:
+    prompt_lower = prompt.lower()
+    if "line" in prompt_lower or "trend" in prompt_lower or "over time" in prompt_lower:
+        return "line"
+    elif "pie" in prompt_lower or "distribution" in prompt_lower or "percentage" in prompt_lower:
+        return "pie"
+    elif "heatmap" in prompt_lower or "matrix" in prompt_lower:
+        return "heatmap"
+    elif "bar" in prompt_lower or "top" in prompt_lower:
+        return "bar"
+    else:
+        return "auto"
+
 def _generate_chart_from_df(df: pd.DataFrame, user_prompt: str, session_id: str, sql: str):
+    # adding validation of data structure before chart generation.
+    if df.empty:
+        return None, "No data available for chart"
+    chart_type = _detect_chart_type(user_prompt)
+    if chart_type == "pie" and len(df.columns) < 2:
+        return None, "Pie chart requires at least 2 columns (category and value)"
+    elif chart_type == "line" and len(df) < 2:
+        return None, "Line chart requires at least 2 data points"
+    df = df.dropna()
+    if df.empty:
+        return None, "Data contains only null values"
     data_sample = df.head(100).to_dict(orient="records")
     data_sample_serializable = _convert_timestamp(data_sample)
 
@@ -245,22 +269,53 @@ import plotly.express as px
 fig = px.scatter(data, x='priority', y='failure_count', title='Priority vs Failures')
 """
 
-    chart_prompt = f"""Generate Plotly Python code for the chart described.
+    chart_prompt = f"""Generate Plotly Python code for a professional chart as described.
 
 User request: "{user_prompt}"
 
 Data (first 100 rows):
 {json.dumps(data_sample_serializable, indent=2)}
 
+STRICT REQUIREMENTS:
+1. Use plotly.express (px) for simplicity
+2. ALWAYS set title, xaxis_title, yaxis_title
+3. For bar charts: use px.bar()
+4. For line charts: use px.line()
+5. For pie charts: use px.pie() with ONLY these parameters: names, values, title, hole
+6. For heatmaps: use px.density_heatmap()
+7. Add proper color scheme (use 'Viridis' or 'Blues')
+8. Format numbers with commas for thousands
+9. Rotate x-axis labels if needed (tickangle=45)
+10. Set proper figure size: width=800, height=500
+11. DO NOT use hovertemplate, customdata, or other advanced parameters
+
+Example format:
+```python
+import plotly.express as px
+fig = px.bar(data, x='module_name', y='failure_count', 
+             title='Failures by Module',
+             labels={{'module_name': 'Module Name', 'failure_count': 'Number of Failures'}})
+fig.update_layout(title_x=0.5, width=800, height=500)
+
 Return only Python code. Define variable `fig`. Use plotly.express or plotly.graph_objects.
 {chart_type_hint}
 """
     llm = llm_client.LLMClient()
-    code = llm.generate(chart_prompt, temperature=0.2)
+    code = llm.generate(chart_prompt, temperature=0.4)
     if not code:
         return None, "Chart generation failed"
 
     code = re.sub(r"```python\n?|```", "", code).strip()
+    
+    # ADD THIS: Clean invalid parameters for pie charts
+    if 'pie' in code.lower():
+        # Remove hovertemplate parameter
+        code = re.sub(r',\s*hovertemplate\s*=\s*[^,)]+', '', code)
+        code = re.sub(r'hovertemplate\s*=\s*[^,)]+,\s*', '', code)
+        # Remove customdata parameter
+        code = re.sub(r',\s*customdata\s*=\s*[^,)]+', '', code)
+        code = re.sub(r'customdata\s*=\s*[^,)]+,\s*', '', code)
+    
     try:
         logger.info(f"Chart code execution - length: {len(code)}")
         import plotly.express as px
@@ -270,6 +325,14 @@ Return only Python code. Define variable `fig`. Use plotly.express or plotly.gra
         fig = namespace.get("fig")
         if fig is None:
             raise ValueError("No 'fig' variable defined")
+        if not fig.layout.title or not fig.layout.title.text:
+            fig.update_layout(title=user_prompt[:50])
+        if hasattr(fig, 'layout') and hasattr(fig.layout, 'xaxis'):
+            if not fig.layout.xaxis.title.text:
+                fig.update_xaxes(title_text=df.columns[0] if len(df.columns) > 0 else "X Axis")
+        if hasattr(fig, 'layout') and hasattr(fig.layout, 'yaxis'):
+            if not fig.layout.yaxis.title.text:
+                fig.update_yaxes(title_text=df.columns[1] if len(df.columns) > 1 else "Y Axis")
         chart_json = fig.to_json()
         logger.info(f"Chart JSON length: {len(chart_json)}")
         result = memory.store_chart(session_id, user_prompt, chart_json, {"sql": sql})

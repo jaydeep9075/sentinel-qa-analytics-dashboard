@@ -2,6 +2,7 @@
 
 import { useState, useRef, useEffect } from "react";
 import { sendChatMessage } from "@/lib/api";
+import ReactMarkdown from "react-markdown";
 
 export default function AIChatbot() {
   const [messages, setMessages] = useState<
@@ -58,7 +59,32 @@ export default function AIChatbot() {
                   : "bg-[#161616] text-gray-300 border border-white/5 rounded-tl-none"
               }`}
             >
-              {msg.content}
+              {msg.role === "ai" ? (
+                <ReactMarkdown
+                  components={{
+                    // Custom styling for markdown elements
+                    ol: ({ node, ...props }) => (
+                      <ol className="list-decimal pl-5 my-2" {...props} />
+                    ),
+                    ul: ({ node, ...props }) => (
+                      <ul className="list-disc pl-5 my-2" {...props} />
+                    ),
+                    li: ({ node, ...props }) => (
+                      <li className="my-1" {...props} />
+                    ),
+                    strong: ({ node, ...props }) => (
+                      <strong className="font-semibold" {...props} />
+                    ),
+                    p: ({ node, ...props }) => (
+                      <p className="my-1" {...props} />
+                    ),
+                  }}
+                >
+                  {msg.content}
+                </ReactMarkdown>
+              ) : (
+                msg.content
+              )}
             </div>
           </div>
         ))}
