@@ -42,40 +42,167 @@ def _get_schema_with_samples():
         schema[tbl] = col_info
     return schema
 
+# async def handle_chat(user_message: str, session_id: str):
+#     history = memory.get_chat_history(session_id, limit=config.MAX_HISTORY_TURNS)
+#     context = ""
+#     for h in reversed(history):
+#         role = h["type"]
+#         content = h["prompt"] if role == "user" else h["response"]
+#         context += f"{role.capitalize()}: {content}\n"
+
+#     schemas = _get_schema_with_samples()
+#     schema_str = json.dumps(schemas, indent=2)
+
+#     decision_prompt = f"""You are a QA analytics assistant. Given the user request and available data, decide the best action.
+
+# Available tables and columns (with sample values):
+# {schema_str}
+
+# **Rules:**
+# - Use `test_cases` for test case definitions (module_name, priority, title).
+# - Use `flattened_tests` for test execution results (status, duration, error, test_name).
+# - To join test_cases with flattened_tests, use: test_cases.title = flattened_tests.test_name
+# - For "priority vs failure count", join and group by priority.
+# - For "how many tests in module X" -> SELECT COUNT(*) FROM test_cases WHERE module_name = '...'
+# - For pass rate -> SELECT SUM(CASE WHEN status='passed' THEN 1 ELSE 0 END)*1.0/COUNT(*) FROM flattened_tests
+
+# User request: "{user_message}"
+# Conversation history:
+# {context}
+
+# Return a JSON object with exactly two keys:
+# - "action": one of "sql", "vector", "answer"
+# - "data": for "sql", provide a DuckDB SQL query; for "vector", provide a search query string; for "answer", provide the direct answer.
+
+# Output ONLY the JSON.
+# """
+#     llm = llm_client.LLMClient()
+#     decision_str = llm.generate(decision_prompt, temperature=0.1)
+#     if not decision_str:
+#         return "I'm having trouble processing your request."
+
+#     cleaned = re.sub(r'```json\s*', '', decision_str)
+#     cleaned = re.sub(r'```\s*', '', cleaned)
+#     decision_str = cleaned.strip()
+
+#     try:
+#         decision = json.loads(decision_str)
+#     except Exception as e:
+#         decision = {"action": "answer", "data": "I couldn't understand your request."}
+
+#     action = decision.get("action")
+#     data = decision.get("data")
+
+#     if action == "sql":
+#         df, sql_error = data_loader.execute_sql(data)
+#         if sql_error:
+#             response = f"SQL error: {sql_error}"
+#         elif df.empty:
+#             response = "No data found for your request."
+#         else:
+#             df_copy = df.copy()
+#             for col in df_copy.select_dtypes(include=['datetime64']).columns:
+#                 df_copy[col] = df_copy[col].dt.isoformat()
+#             data_json = df_copy.head(100).to_json(orient="records")
+#             answer_prompt = f"""Based on the following data, answer the user's request concisely and well‑formatted.
+
+# User request: {user_message}
+
+# Data (as JSON):
+# {data_json}
+
+# Use bullet points or markdown tables. Provide final answer.
+# """
+#             response = llm.generate(answer_prompt, temperature=0.2)
+#             if not response:
+#                 response = f"Found {len(df)} rows, but could not generate a summary."
+#     elif action == "vector":
+#         docs = data_loader.vector_search(data, top_k=5)
+#         if not docs:
+#             response = "I couldn't find relevant information."
+#         else:
+#             context = "\n\n".join([d["text"][:500] for d in docs])
+#             answer_prompt = f"""Using the retrieved context, answer the user's question.
+
+# Context:
+# {context}
+
+# User question: {user_message}
+
+# Answer concisely.
+# """
+#             response = llm.generate(answer_prompt, temperature=0.2)
+#             if not response:
+#                 response = "I found some information but couldn't generate a response."
+#     else:
+#         response = data
+
+#     memory.store_chat_message(session_id, "user", user_message)
+#     memory.store_chat_message(session_id, "assistant", response)
+#     return response
 async def handle_chat(user_message: str, session_id: str):
+    # Get conversation history with better context handling
     history = memory.get_chat_history(session_id, limit=config.MAX_HISTORY_TURNS)
+    
+    # Build context with better structure
     context = ""
-    for h in reversed(history):
+    previous_answers = {}
+    for h in reversed(history[-5:]):  # Last 5 messages for context
         role = h["type"]
         content = h["prompt"] if role == "user" else h["response"]
         context += f"{role.capitalize()}: {content}\n"
+        
+        # Store previous answers for follow-up questions
+        if role == "assistant":
+            # Extract key info from previous answers
+            if "modules" in content.lower():
+                previous_answers["modules_mentioned"] = True
+            if "failed" in content.lower():
+                previous_answers["failures_mentioned"] = True
 
     schemas = _get_schema_with_samples()
     schema_str = json.dumps(schemas, indent=2)
 
-    decision_prompt = f"""You are a QA analytics assistant. Given the user request and available data, decide the best action.
+    # ENHANCED DECISION PROMPT with business logic
+    decision_prompt = f"""You are a QA analytics assistant. Analyze the user request and return JSON.
 
-Available tables and columns (with sample values):
-{schema_str}
+Available tables:
+- test_cases: module_name, priority, title
+- flattened_tests: status, duration, error, test_name
+Join: test_cases.title = flattened_tests.test_name
 
-**Rules:**
-- Use `test_cases` for test case definitions (module_name, priority, title).
-- Use `flattened_tests` for test execution results (status, duration, error, test_name).
-- To join test_cases with flattened_tests, use: test_cases.title = flattened_tests.test_name
-- For "priority vs failure count", join and group by priority.
-- For "how many tests in module X" -> SELECT COUNT(*) FROM test_cases WHERE module_name = '...'
-- For pass rate -> SELECT SUM(CASE WHEN status='passed' THEN 1 ELSE 0 END)*1.0/COUNT(*) FROM flattened_tests
-
-User request: "{user_message}"
-Conversation history:
+**PREVIOUS CONVERSATION:**
 {context}
 
-Return a JSON object with exactly two keys:
-- "action": one of "sql", "vector", "answer"
-- "data": for "sql", provide a DuckDB SQL query; for "vector", provide a search query string; for "answer", provide the direct answer.
+**CURRENT USER REQUEST:** "{user_message}"
 
-Output ONLY the JSON.
+**BUSINESS LOGIC RULES FOR RELEASE DECISIONS:**
+When user asks "is this good for release" or similar:
+1. Calculate pass rate = (passed / total) * 100
+2. Check critical failures count
+3. Provide verdict based on:
+   - Pass rate >= 95% AND no critical failures → "✅ GOOD FOR RELEASE"
+   - Pass rate >= 80% AND < 95% → "⚠️ CONSIDER WITH CAUTION"  
+   - Pass rate < 80% OR any critical failures → "❌ NOT READY FOR RELEASE"
+
+**SQL QUERY PATTERNS (USE THESE EXACT PATTERNS):**
+- "how many tests failed" → SELECT COUNT(*) FROM flattened_tests WHERE status='failed'
+- "how many tests passed" → SELECT COUNT(*) FROM flattened_tests WHERE status='passed'
+- "pass rate" → SELECT ROUND(SUM(CASE WHEN status='passed' THEN 1 ELSE 0 END)*100.0/COUNT(*), 2) as pass_rate FROM flattened_tests
+- "list all modules" → SELECT DISTINCT module_name FROM test_cases ORDER BY module_name
+- "number of modules" → SELECT COUNT(DISTINCT module_name) as module_count FROM test_cases
+- "module with most tests" → SELECT module_name, COUNT(*) as test_count FROM test_cases GROUP BY module_name ORDER BY test_count DESC LIMIT 1
+- "failed tests list" → SELECT test_name, error FROM flattened_tests WHERE status='failed' LIMIT 10
+
+**IMPORTANT RULES:**
+1. For ANY question about data (counts, lists, modules, failures), use action="sql"
+2. For release readiness questions, use action="sql" to get metrics first
+3. For follow-up questions (like "what about X module"), use action="sql" with module filter
+4. Only use "answer" for greetings or when no data needed
+
+Return JSON: {{"action":"sql","data":"SQL_QUERY"}} or {{"action":"answer","data":"text"}}
 """
+    
     llm = llm_client.LLMClient()
     decision_str = llm.generate(decision_prompt, temperature=0.1)
     if not decision_str:
@@ -88,13 +215,33 @@ Output ONLY the JSON.
     try:
         decision = json.loads(decision_str)
     except Exception as e:
-        decision = {"action": "answer", "data": "I couldn't understand your request."}
+        # Fallback: try to extract SQL from response
+        if "SELECT" in decision_str.upper():
+            decision = {"action": "sql", "data": decision_str}
+        else:
+            decision = {"action": "answer", "data": "I couldn't understand your request."}
 
     action = decision.get("action")
     data = decision.get("data")
 
-    if action == "sql":
+    # ENHANCED SQL HANDLING with fallback
+    if action == "sql" or (action == "answer" and "SELECT" in data.upper()):
+        if "SELECT" in data.upper():
+            action = "sql"
+        
         df, sql_error = data_loader.execute_sql(data)
+        
+        # FALLBACK: If SQL fails, try alternative queries
+        if sql_error and "how many tests failed" in user_message.lower():
+            data = "SELECT COUNT(*) FROM flattened_tests WHERE status='failed'"
+            df, sql_error = data_loader.execute_sql(data)
+        elif sql_error and "how many tests passed" in user_message.lower():
+            data = "SELECT COUNT(*) FROM flattened_tests WHERE status='passed'"
+            df, sql_error = data_loader.execute_sql(data)
+        elif sql_error and "pass rate" in user_message.lower():
+            data = "SELECT ROUND(SUM(CASE WHEN status='passed' THEN 1 ELSE 0 END)*100.0/COUNT(*), 2) as pass_rate FROM flattened_tests"
+            df, sql_error = data_loader.execute_sql(data)
+        
         if sql_error:
             response = f"SQL error: {sql_error}"
         elif df.empty:
@@ -103,19 +250,63 @@ Output ONLY the JSON.
             df_copy = df.copy()
             for col in df_copy.select_dtypes(include=['datetime64']).columns:
                 df_copy[col] = df_copy[col].dt.isoformat()
-            data_json = df_copy.head(100).to_json(orient="records")
-            answer_prompt = f"""Based on the following data, answer the user's request concisely and well‑formatted.
+            data_json = df_copy.head(50).to_json(orient="records")
+            
+            # ENHANCED ANSWER PROMPT with business logic
+            is_release_question = any(phrase in user_message.lower() for phrase in ['release', 'good to go', 'ready for'])
+            
+            if is_release_question and 'pass_rate' in df.columns:
+                pass_rate = df.iloc[0]['pass_rate']
+                if pass_rate >= 95:
+                    verdict = "✅ GOOD FOR RELEASE"
+                    recommendation = "Quality meets release criteria. Proceed with deployment."
+                elif pass_rate >= 80:
+                    verdict = "⚠️ CONSIDER WITH CAUTION"
+                    recommendation = f"Pass rate is {pass_rate}%. Review failures before release."
+                else:
+                    verdict = "❌ NOT READY FOR RELEASE"
+                    recommendation = f"Pass rate is only {pass_rate}%. Fix critical issues before release."
+                
+                response = f"""📊 **Release Readiness Report**
+
+**Pass Rate:** {pass_rate}%
+
+**Verdict:** {verdict}
+
+**Recommendation:** {recommendation}"""
+            
+            else:
+                answer_prompt = f"""Based on the data, answer the user's request.
 
 User request: {user_message}
 
 Data (as JSON):
 {data_json}
 
-Use bullet points or markdown tables. Provide final answer.
+Total rows: {len(df)}
+
+**RESPONSE FORMAT RULES:**
+- For counts: "📊 [description]: [number]"
+- For lists: Use numbered list (1., 2., 3.)
+- For modules: List all with numbers
+- For pass rate: Include percentage and brief assessment
+- Be direct and specific. Don't say "based on the data"
+
+Provide final answer:
 """
-            response = llm.generate(answer_prompt, temperature=0.2)
-            if not response:
-                response = f"Found {len(df)} rows, but could not generate a summary."
+                response = llm.generate(answer_prompt, temperature=0.2)
+                if not response:
+                    if len(df) == 1 and len(df.columns) == 1:
+                        response = f"📊 Result: {df.iloc[0, 0]}"
+                    elif 'module_name' in df.columns:
+                        modules = "\n".join([f"{i+1}. {row['module_name']}" for i, row in df.iterrows()])
+                        response = f"📁 **Available Modules:**\n{modules}"
+                    elif 'test_name' in df.columns:
+                        tests = "\n".join([f"{i+1}. {row['test_name']}" for i, row in df.iterrows()])
+                        response = f"📋 **Failed Tests:**\n{tests}"
+                    else:
+                        response = f"Found {len(df)} rows matching your request."
+    
     elif action == "vector":
         docs = data_loader.vector_search(data, top_k=5)
         if not docs:
@@ -139,6 +330,29 @@ Answer concisely.
 
     memory.store_chat_message(session_id, "user", user_message)
     memory.store_chat_message(session_id, "assistant", response)
+    return response
+
+
+def validate_response(response: str, user_message: str) -> str:
+    """Validate and clean up response for consistency"""
+    
+    # Fix common issues
+    if "could not determine" in response.lower() and "how many" in user_message.lower():
+        return "I need to query the database for that. Please try rephrasing your question."
+    
+    if "cannot" in response.lower() and "module" in user_message.lower():
+        return "Let me fetch the module information for you."
+    
+    # Ensure response has proper formatting
+    if response and not any(c in response for c in ['📊', '📁', '📋', '✅', '❌', '⚠️']):
+        # Add emoji based on content
+        if 'passed' in response.lower():
+            response = "✅ " + response
+        elif 'failed' in response.lower():
+            response = "❌ " + response
+        elif 'module' in response.lower():
+            response = "📁 " + response
+    
     return response
 
 async def handle_chart(user_prompt: str, session_id: str):

@@ -1,29 +1,30 @@
-### Flaky Tests
-Find tests that both passed and failed in the last 5 runs.
+## charts
 
-### Slow Tests
-Show top 10 slowest tests by average duration.
+## 1
 
-### Module Stability
-Show failure percentage per module.
+give me the pie chart for the top 10 tests failed repeatedly
 
-### Failure Clustering
-Group similar error messages.
+## 2
 
-### Regression Detector
-Compare current run vs previous run failures.
+Coach / Coach tutorials
+Comman Functionality / Achivements
+Comman Functionality / Enter shots (in holes)
+Comman Functionality / Forgotten Your Password
+Comman Functionality / Login
+Comman Functionality / Search
+Comman Functionality / User Profile Card
+Player / player tutorials
+give me bar graph of number of tests per module from above module
 
-### Environment Comparison
-Compare DEV vs QA failure rates.
+# 3
 
-### Retry Impact
-Show tests that passed only after retry.
+top 15 slowest tests
 
-### Stability Score
-Calculate stability score per test.
+### chats
 
-### Risk Matrix
-Create risk score = failure_rate * duration.
-
-### Test ROI
-Find slow tests that rarely fail.
+give me all available module name
+give me number of tests per module
+is this results good for release
+give me list of tests from Comman Functionality / Login this module
+what is the average time does it took to run each test
+give me the top 15 slowest tests and duration
