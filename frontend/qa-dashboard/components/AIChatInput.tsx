@@ -2,12 +2,14 @@
 
 import { useState } from "react";
 import { generateChart } from "@/lib/api";
+import { useIngestion } from "@/lib/IngestionContext";
 
 interface AIChatInputProps {
   onChartGenerated: () => void;
 }
 
 export default function AIChatInput({ onChartGenerated }: AIChatInputProps) {
+  const { selectedIngestion } = useIngestion();
   const [prompt, setPrompt] = useState("");
   const [loading, setLoading] = useState(false);
   const [status, setStatus] = useState<string | null>(null);
@@ -21,13 +23,13 @@ export default function AIChatInput({ onChartGenerated }: AIChatInputProps) {
   const handleSubmit = async (e?: React.FormEvent, manualPrompt?: string) => {
     e?.preventDefault();
     const activePrompt = manualPrompt || prompt;
-    if (!activePrompt.trim()) return;
+    if (!activePrompt.trim() || !selectedIngestion) return;
 
     setLoading(true);
     setStatus("Generating chart...");
 
     try {
-      const result = await generateChart(activePrompt);
+      const result = await generateChart(activePrompt, selectedIngestion);
       if (result.success) {
         setPrompt("");
         setStatus("Chart generated successfully!");
@@ -53,7 +55,7 @@ export default function AIChatInput({ onChartGenerated }: AIChatInputProps) {
         placeholder="Describe the visualization you need..."
         value={prompt}
         onChange={(e) => setPrompt(e.target.value)}
-        disabled={loading}
+        disabled={loading || !selectedIngestion}
       />
 
       <div className="flex flex-wrap gap-2">
@@ -61,7 +63,7 @@ export default function AIChatInput({ onChartGenerated }: AIChatInputProps) {
           <button
             key={s}
             onClick={() => handleSubmit(undefined, s)}
-            disabled={loading}
+            disabled={loading || !selectedIngestion}
             className="text-[10px] uppercase tracking-wider font-bold px-3 py-1.5 bg-white/5 hover:bg-white/10 border border-white/5 rounded-full text-gray-400 hover:text-blue-400 transition-colors"
           >
             + {s}
@@ -71,7 +73,7 @@ export default function AIChatInput({ onChartGenerated }: AIChatInputProps) {
 
       <button
         onClick={(e) => handleSubmit(e)}
-        disabled={loading}
+        disabled={loading || !selectedIngestion}
         className="w-full py-4 bg-gradient-to-r from-blue-600 to-indigo-600 text-white rounded-xl text-sm font-bold shadow-lg shadow-blue-900/20 hover:from-blue-500 hover:to-indigo-500 disabled:opacity-50 disabled:cursor-not-allowed transition-all uppercase tracking-widest"
       >
         {loading ? "Generating..." : "Generate Visualization"}

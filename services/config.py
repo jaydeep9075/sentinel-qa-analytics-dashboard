@@ -4,9 +4,10 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-# Paths
+# Base directory where all ingestion folders live
 BASE_DIR = Path(__file__).parent.parent
-DATA_PATH = BASE_DIR / "universal_ingester" / "lancedb_tidb_test"
+DATA_BASE_PATH = BASE_DIR / "data"
+DATA_BASE_PATH.mkdir(exist_ok=True)
 
 # LLM
 LLM_PROVIDER = os.getenv("LLM_PROVIDER", "gemini")

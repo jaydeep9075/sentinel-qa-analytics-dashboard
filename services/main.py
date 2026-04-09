@@ -12,7 +12,6 @@ from . import config, state, data_loader, handlers, memory, llm_client
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Models
 class ChatRequest(BaseModel):
     message: str
     session_id: Optional[str] = None
@@ -21,12 +20,10 @@ class ChartRequest(BaseModel):
     message: str
     session_id: Optional[str] = None
 
-# Lifespan
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     logger.info("Starting up...")
-    data_loader.init_data()
-    logger.info(f"LanceDB path: {config.DATA_PATH}")
+    # Do not auto-load data; load on first request with ingestion_id header
     yield
     logger.info("Shutting down...")
     if state.duck_conn:
@@ -40,56 +37,53 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Health
 @app.get("/health")
 async def health():
-    return {"status": "ok", "data_available": state.lance_db is not None, "data_path": str(config.DATA_PATH)}
+    return {"status": "ok", "data_path": str(config.DATA_BASE_PATH)}
 
-# Chat
 @app.post("/chat")
-async def chat(request: ChatRequest, x_session_id: Optional[str] = Header(None)):
+async def chat(request: ChatRequest, x_session_id: Optional[str] = Header(None), x_ingestion_id: str = Header(...)):
     session_id = x_session_id or request.session_id or str(uuid.uuid4())
     try:
-        response = await handlers.handle_chat(request.message, session_id)
+        response = await handlers.handle_chat(request.message, session_id, x_ingestion_id)
         return {"response": response, "session_id": session_id}
     except Exception as e:
         logger.exception(f"Chat error: {e}")
         return {"response": f"An error occurred: {str(e)}", "session_id": session_id}
 
-# Chart
 @app.post("/chart")
-async def chart(request: ChartRequest, x_session_id: Optional[str] = Header(None)):
+async def chart(request: ChartRequest, x_session_id: Optional[str] = Header(None), x_ingestion_id: str = Header(...)):
     session_id = x_session_id or request.session_id or str(uuid.uuid4())
-    chart_json, error = await handlers.handle_chart(request.message, session_id)
+    chart_json, error = await handlers.handle_chart(request.message, session_id, x_ingestion_id)
     if error:
         return {"error": error, "session_id": session_id}
-    # Note: store_chart is now called inside handle_chart, so we don't need to call it again here.
     return {"chart": chart_json, "session_id": session_id}
 
-# History
 @app.get("/chat/history/{session_id}")
-async def get_chat_history_endpoint(session_id: str):
+async def get_chat_history_endpoint(session_id: str, x_ingestion_id: str = Header(...)):
+    if state.current_ingestion_id != x_ingestion_id:
+        data_loader.init_data(x_ingestion_id)
     history = memory.get_chat_history(session_id, limit=100)
     return {"session_id": session_id, "history": history}
 
 @app.get("/chart/history/{session_id}")
-async def get_chart_history_endpoint(session_id: str):
+async def get_chart_history_endpoint(session_id: str, x_ingestion_id: str = Header(...)):
+    if state.current_ingestion_id != x_ingestion_id:
+        data_loader.init_data(x_ingestion_id)
     history = memory.get_chart_history(session_id, limit=100)
     return {"session_id": session_id, "history": history}
 
-# Delete chart
 @app.delete("/chart/{chart_id}")
-async def delete_chart(chart_id: str, x_session_id: Optional[str] = Header(None)):
-    """Delete a specific chart by ID (only if it belongs to the session)."""
+async def delete_chart(chart_id: str, x_session_id: Optional[str] = Header(None), x_ingestion_id: str = Header(...)):
+    if state.current_ingestion_id != x_ingestion_id:
+        data_loader.init_data(x_ingestion_id)
     if not state.lance_db or "chart_history" not in state.lance_db.table_names():
         return {"error": "Chart history not available"}
     try:
         table = state.lance_db.open_table("chart_history")
         df = table.to_pandas()
-        # Filter out the chart with the given id
         df = df[df["id"] != chart_id]
         if len(df) == 0:
-            # Table would be empty; drop and recreate empty
             state.lance_db.drop_table("chart_history")
             empty_df = pd.DataFrame(columns=[
                 "id", "session_id", "type", "prompt", "response", "config",
@@ -97,7 +91,6 @@ async def delete_chart(chart_id: str, x_session_id: Optional[str] = Header(None)
             ])
             state.lance_db.create_table("chart_history", empty_df)
         else:
-            # Overwrite the table with filtered data
             state.lance_db.drop_table("chart_history")
             state.lance_db.create_table("chart_history", df)
         return {"success": True}
@@ -105,9 +98,10 @@ async def delete_chart(chart_id: str, x_session_id: Optional[str] = Header(None)
         logger.error(f"Error deleting chart: {e}")
         return {"error": str(e)}
 
-# Debug
 @app.get("/debug/data")
-async def debug_data():
+async def debug_data(x_ingestion_id: str = Header(...)):
+    if state.current_ingestion_id != x_ingestion_id:
+        data_loader.init_data(x_ingestion_id)
     data = {}
     if state.duck_conn:
         tables = state.duck_conn.execute("SHOW TABLES").fetchall()
@@ -119,7 +113,9 @@ async def debug_data():
     return data
 
 @app.get("/data/status")
-async def data_status():
+async def data_status(x_ingestion_id: str = Header(...)):
+    if state.current_ingestion_id != x_ingestion_id:
+        data_loader.init_data(x_ingestion_id)
     if not state.duck_conn:
         return {"has_data": False, "total_rows": 0}
     try:
@@ -138,7 +134,23 @@ async def data_status():
         logger.error(f"Error in /data/status: {e}")
         return {"has_data": False, "total_rows": 0}
 
-# Test endpoints (optional)
+@app.get("/ingestions")
+async def list_ingestions():
+    """Return list of available ingestion IDs with metadata."""
+    ingestions = []
+    for path in config.DATA_BASE_PATH.iterdir():
+        if path.is_dir() and (path / "lancedb").exists():
+            summary_file = path / "summary.md"
+            summary = ""
+            if summary_file.exists():
+                summary = summary_file.read_text()
+            ingestions.append({
+                "id": path.name,
+                "summary": summary,
+                "created": path.stat().st_mtime
+            })
+    return {"ingestions": sorted(ingestions, key=lambda x: x["created"], reverse=True)}
+
 @app.get("/test/llm")
 async def test_llm():
     llm = llm_client.LLMClient()
@@ -146,7 +158,9 @@ async def test_llm():
     return {"llm_response": resp}
 
 @app.get("/test/sql")
-async def test_sql():
+async def test_sql(x_ingestion_id: str = Header(...)):
+    if state.current_ingestion_id != x_ingestion_id:
+        data_loader.init_data(x_ingestion_id)
     if state.duck_conn:
         try:
             result = state.duck_conn.execute("SELECT COUNT(*) FROM flattened_tests").fetchone()
@@ -157,14 +171,4 @@ async def test_sql():
         return {"error": "duck_conn not initialized"}
 
 if __name__ == "__main__":
-    if not config.DATA_PATH.exists():
-        print(f"ERROR: Data path {config.DATA_PATH} not found.")
-    else:
-        print("\n" + "="*70)
-        print("🚀 Unified QA Service")
-        print("="*70)
-        print(f"LLM Provider: {config.LLM_PROVIDER}")
-        print(f"Model: {config.LLM_MODEL}")
-        print(f"Data Path: {config.DATA_PATH}")
-        print("="*70)
-        uvicorn.run(app, host="0.0.0.0", port=8000)
+    uvicorn.run(app, host="0.0.0.0", port=8000)

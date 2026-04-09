@@ -4,9 +4,12 @@ import { useState, useEffect } from "react";
 import AIChatbot from "@/components/AIChatbot";
 import AIChatInput from "@/components/AIChatInput";
 import ChartGallery from "@/components/ChartGallery";
+import IngestionSelector from "@/components/IngestionSelector";
 import { getDataStatus, checkHealth } from "@/lib/api";
+import { useIngestion } from "@/lib/IngestionContext";
 
 export default function Home() {
+  const { selectedIngestion } = useIngestion();
   const [dataStatus, setDataStatus] = useState<any>(null);
   const [backendConnected, setBackendConnected] = useState(false);
   const [refreshGallery, setRefreshGallery] = useState(0);
@@ -16,8 +19,10 @@ export default function Home() {
       try {
         const health = await checkHealth();
         setBackendConnected(true);
-        const status = await getDataStatus();
-        setDataStatus(status);
+        if (selectedIngestion) {
+          const status = await getDataStatus(selectedIngestion);
+          setDataStatus(status);
+        }
       } catch (error) {
         setBackendConnected(false);
       }
@@ -25,7 +30,7 @@ export default function Home() {
     checkConnection();
     const interval = setInterval(checkConnection, 10000);
     return () => clearInterval(interval);
-  }, []);
+  }, [selectedIngestion]);
 
   const handleChartGenerated = () => {
     setRefreshGallery((prev) => prev + 1);
@@ -42,6 +47,7 @@ export default function Home() {
             <p className="text-gray-400 text-sm">AI-Powered Test Analytics</p>
           </div>
           <div className="flex items-center gap-4">
+            <IngestionSelector />
             {backendConnected ? (
               <div className="flex items-center gap-2">
                 <div className="w-2 h-2 bg-green-500 rounded-full animate-pulse"></div>

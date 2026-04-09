@@ -2,9 +2,11 @@
 
 import { useState, useRef, useEffect } from "react";
 import { sendChatMessage } from "@/lib/api";
+import { useIngestion } from "@/lib/IngestionContext";
 import ReactMarkdown from "react-markdown";
 
 export default function AIChatbot() {
+  const { selectedIngestion } = useIngestion();
   const [messages, setMessages] = useState<
     { role: "user" | "ai"; content: string }[]
   >([
@@ -24,7 +26,7 @@ export default function AIChatbot() {
 
   const handleSend = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!input.trim() || isLoading) return;
+    if (!input.trim() || isLoading || !selectedIngestion) return;
 
     const userMsg = input.trim();
     setMessages((prev) => [...prev, { role: "user", content: userMsg }]);
@@ -32,7 +34,7 @@ export default function AIChatbot() {
     setIsLoading(true);
 
     try {
-      const response = await sendChatMessage(userMsg);
+      const response = await sendChatMessage(userMsg, selectedIngestion);
       setMessages((prev) => [...prev, { role: "ai", content: response }]);
     } catch (error) {
       setMessages((prev) => [
@@ -62,7 +64,6 @@ export default function AIChatbot() {
               {msg.role === "ai" ? (
                 <ReactMarkdown
                   components={{
-                    // Custom styling for markdown elements
                     ol: ({ node, ...props }) => (
                       <ol className="list-decimal pl-5 my-2" {...props} />
                     ),
@@ -108,7 +109,7 @@ export default function AIChatbot() {
           onChange={(e) => setInput(e.target.value)}
           placeholder="Ask about test results..."
           className="w-full bg-black/50 border border-white/10 text-white text-sm rounded-xl px-5 py-4 focus:outline-none focus:border-purple-500/50 transition-all placeholder:text-gray-700"
-          disabled={isLoading}
+          disabled={isLoading || !selectedIngestion}
         />
       </form>
     </div>

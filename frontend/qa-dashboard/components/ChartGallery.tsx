@@ -2,7 +2,9 @@
 
 import { useState, useEffect } from "react";
 import useSWR from "swr";
-import { getSessionCharts, deleteChart } from "@/lib/api";
+import { getChartHistory, deleteChart } from "@/lib/api";
+import { getSessionId } from "@/lib/session";
+import { useIngestion } from "@/lib/IngestionContext";
 import AIGeneratedChart from "./AIGeneratedChart";
 import {
   DndContext,
@@ -11,7 +13,6 @@ import {
   PointerSensor,
   useSensor,
   useSensors,
-  DragEndEvent,
 } from "@dnd-kit/core";
 import {
   arrayMove,
@@ -26,23 +27,48 @@ import { CSS } from "@dnd-kit/utilities";
 interface Chart {
   id: string;
   prompt: string;
-  chart_type: string;
   config: any;
   created_at: string;
 }
 
-// Wrapper fetcher that returns the list of charts
-const fetchCharts = async () => {
-  const result = await getSessionCharts();
-  // result is an array of chart objects with { id, config, ... }
-  // Convert to the shape expected by the component
-  return result.map((item: any) => ({
-    id: item.id,
-    prompt: item.prompt || "Chart",
-    chart_type: item.config?.chart?.type || "bar",
-    config: item.config,
-    created_at: item.created_at,
-  }));
+const fetchCharts = async (ingestionId: string) => {
+  const sessionId = getSessionId();
+  console.log("📊 fetchCharts using sessionId:", sessionId);
+  const response = await getChartHistory(sessionId, ingestionId);
+  console.log("📊 fetchCharts - full response:", response);
+
+  let historyArray = response.history;
+  if (!historyArray && Array.isArray(response)) {
+    historyArray = response;
+  }
+
+  console.log("📊 fetchCharts - historyArray:", historyArray);
+
+  if (!Array.isArray(historyArray)) {
+    console.error("❌ historyArray is not an array:", historyArray);
+    return [];
+  }
+
+  const charts = historyArray.map((item: any) => {
+    console.log("📊 Processing chart item:", item);
+    let parsedConfig;
+    try {
+      parsedConfig =
+        typeof item.config === "string" ? JSON.parse(item.config) : item.config;
+    } catch (e) {
+      console.error("❌ Failed to parse chart config:", e);
+      parsedConfig = null;
+    }
+    return {
+      id: item.id,
+      prompt: item.prompt || "Chart",
+      config: parsedConfig,
+      created_at: item.created_at,
+    };
+  });
+
+  console.log("📊 fetchCharts - returning charts:", charts);
+  return charts;
 };
 
 function SortableItem({
@@ -98,7 +124,7 @@ function SortableItem({
                 </svg>
               </div>
               <span className="px-2 py-1 bg-blue-500/20 text-blue-400 text-xs rounded-full">
-                {chart.chart_type || "AI Chart"}
+                Chart
               </span>
             </div>
             <p className="text-sm text-gray-400 italic truncate">
@@ -126,13 +152,18 @@ function SortableItem({
         </div>
       </div>
       <div className="p-4">
-        <AIGeneratedChart config={chart.config} />
+        {chart.config ? (
+          <AIGeneratedChart config={chart.config} />
+        ) : (
+          <div className="text-red-400 p-4 text-center">Invalid chart data</div>
+        )}
       </div>
     </div>
   );
 }
 
 export default function ChartGallery() {
+  const { selectedIngestion } = useIngestion();
   const [layout, setLayout] = useState<"grid" | "list">("grid");
   const [localOrder, setLocalOrder] = useState<Chart[]>([]);
 
@@ -141,13 +172,19 @@ export default function ChartGallery() {
     error,
     isLoading,
     mutate,
-  } = useSWR("session-charts", fetchCharts, {
-    refreshInterval: 5000,
-  });
+  } = useSWR(
+    selectedIngestion ? ["charts", selectedIngestion] : null,
+    () => fetchCharts(selectedIngestion!),
+    {
+      refreshInterval: 5000,
+      onSuccess: (data) => console.log("📊 SWR onSuccess - charts:", data),
+      onError: (err) => console.error("❌ SWR onError:", err),
+    },
+  );
 
-  // Update local order when data changes
   useEffect(() => {
     if (charts) {
+      console.log("📊 Setting localOrder from charts:", charts);
       setLocalOrder(charts);
     }
   }, [charts]);
@@ -160,9 +197,10 @@ export default function ChartGallery() {
   );
 
   const handleDelete = async (id: string) => {
+    if (!selectedIngestion) return;
     try {
-      await deleteChart(id);
-      mutate(); // refetch
+      await deleteChart(id, selectedIngestion);
+      mutate();
     } catch (err) {
       alert("Failed to delete chart");
     }
@@ -172,14 +210,29 @@ export default function ChartGallery() {
     return (
       <div className="text-center py-16 text-gray-400">Loading gallery...</div>
     );
-  if (error)
+
+  if (error) {
+    console.error("❌ Chart gallery error:", error);
     return (
       <div className="text-red-400 p-4 border border-red-500/30 rounded-xl">
-        Error loading charts
+        Error loading charts: {String(error)}
       </div>
     );
+  }
 
   const chartList = localOrder || [];
+  console.log(
+    "📊 Rendering ChartGallery - chartList length:",
+    chartList.length,
+  );
+
+  if (chartList.length === 0) {
+    return (
+      <div className="text-center py-16 text-gray-500">
+        No charts yet. Generate one using the chart generator!
+      </div>
+    );
+  }
 
   return (
     <div>
@@ -219,7 +272,6 @@ export default function ChartGallery() {
             );
             const newOrder = arrayMove(chartList, oldIndex, newIndex);
             setLocalOrder(newOrder);
-            // Order is only local; we don't persist it to the backend
           }
         }}
       >

@@ -2,7 +2,6 @@
 import dynamic from "next/dynamic";
 import { useEffect, useState } from "react";
 
-// Dynamically import react-plotly.js to avoid SSR issues
 const Plot = dynamic(() => import("react-plotly.js"), { ssr: false });
 
 interface AIGeneratedChartProps {
@@ -16,11 +15,28 @@ export default function AIGeneratedChart({ config }: AIGeneratedChartProps) {
     setIsClient(true);
   }, []);
 
-  if (!config || !config.data || !isClient) {
-    return <div className="text-gray-500 p-4 text-center">No chart data</div>;
+  if (!isClient)
+    return (
+      <div className="text-gray-500 p-4 text-center">Loading chart...</div>
+    );
+
+  // config should be the full Plotly JSON from fig.to_json()
+  // It contains { data: [...], layout: {...} }
+  if (!config || typeof config !== "object") {
+    console.error("Invalid chart config:", config);
+    return (
+      <div className="text-red-400 p-4 text-center">Invalid chart data</div>
+    );
   }
 
-  // config already has data and layout (from fig.to_json())
+  // Ensure data and layout exist
+  if (!config.data || !config.layout) {
+    console.error("Missing data or layout in config:", config);
+    return (
+      <div className="text-red-400 p-4 text-center">Chart data incomplete</div>
+    );
+  }
+
   return (
     <div className="w-full h-[400px]">
       <Plot

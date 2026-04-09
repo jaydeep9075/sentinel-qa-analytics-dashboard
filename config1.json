@@ -1,0 +1,20 @@
+{
+    "sources": [
+        {
+            "type": "db",
+            "params": {
+                "connection_string": "mysql+pymysql://sC5aTifmN57gWAj.root:IDdRYPtUs7yJNnDR@gateway01.ap-northeast-1.prod.aws.tidbcloud.com:4000/dappled",
+                "tables": [
+                    "test_cases",
+                    "test_results"
+                ],
+                "connect_args": {
+                    "ssl": {
+                        "verify_cert": false,
+                        "verify_identity": false
+                    }
+                }
+            }
+        }
+    ]
+}

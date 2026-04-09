@@ -3,7 +3,7 @@ import re
 import logging
 from datetime import datetime
 import pandas as pd
-from . import config, data_loader, memory, llm_client
+from . import config, data_loader, memory, llm_client, state
 
 logger = logging.getLogger(__name__)
 
@@ -23,18 +23,18 @@ def _convert_timestamp(obj):
 
 def _get_schema_with_samples():
     """Return schema including sample distinct values for key columns."""
-    if not data_loader.state.duck_conn:
+    if not state.duck_conn:
         return {}
-    tables = data_loader.state.duck_conn.execute("SHOW TABLES").fetchall()
+    tables = state.duck_conn.execute("SHOW TABLES").fetchall()
     schema = {}
     for (tbl,) in tables:
-        cols = data_loader.state.duck_conn.execute(f"DESCRIBE {tbl}").fetchall()
+        cols = state.duck_conn.execute(f"DESCRIBE {tbl}").fetchall()
         col_info = []
         for col_name, col_type, _, _, _, _ in cols:
             samples = []
             if "varchar" in col_type.lower() or "text" in col_type.lower():
                 try:
-                    samples = data_loader.state.duck_conn.execute(f"SELECT DISTINCT {col_name} FROM {tbl} LIMIT 5").fetchall()
+                    samples = state.duck_conn.execute(f"SELECT DISTINCT {col_name} FROM {tbl} LIMIT 5").fetchall()
                     samples = [s[0] for s in samples if s[0] is not None]
                 except:
                     pass
@@ -42,128 +42,22 @@ def _get_schema_with_samples():
         schema[tbl] = col_info
     return schema
 
-# async def handle_chat(user_message: str, session_id: str):
-#     history = memory.get_chat_history(session_id, limit=config.MAX_HISTORY_TURNS)
-#     context = ""
-#     for h in reversed(history):
-#         role = h["type"]
-#         content = h["prompt"] if role == "user" else h["response"]
-#         context += f"{role.capitalize()}: {content}\n"
+async def handle_chat(user_message: str, session_id: str, ingestion_id: str):
+    # Ensure data for this ingestion is loaded
+    if state.current_ingestion_id != ingestion_id:
+        if not data_loader.init_data(ingestion_id):
+            return f"Error: Ingestion '{ingestion_id}' not found or data unavailable."
 
-#     schemas = _get_schema_with_samples()
-#     schema_str = json.dumps(schemas, indent=2)
-
-#     decision_prompt = f"""You are a QA analytics assistant. Given the user request and available data, decide the best action.
-
-# Available tables and columns (with sample values):
-# {schema_str}
-
-# **Rules:**
-# - Use `test_cases` for test case definitions (module_name, priority, title).
-# - Use `flattened_tests` for test execution results (status, duration, error, test_name).
-# - To join test_cases with flattened_tests, use: test_cases.title = flattened_tests.test_name
-# - For "priority vs failure count", join and group by priority.
-# - For "how many tests in module X" -> SELECT COUNT(*) FROM test_cases WHERE module_name = '...'
-# - For pass rate -> SELECT SUM(CASE WHEN status='passed' THEN 1 ELSE 0 END)*1.0/COUNT(*) FROM flattened_tests
-
-# User request: "{user_message}"
-# Conversation history:
-# {context}
-
-# Return a JSON object with exactly two keys:
-# - "action": one of "sql", "vector", "answer"
-# - "data": for "sql", provide a DuckDB SQL query; for "vector", provide a search query string; for "answer", provide the direct answer.
-
-# Output ONLY the JSON.
-# """
-#     llm = llm_client.LLMClient()
-#     decision_str = llm.generate(decision_prompt, temperature=0.1)
-#     if not decision_str:
-#         return "I'm having trouble processing your request."
-
-#     cleaned = re.sub(r'```json\s*', '', decision_str)
-#     cleaned = re.sub(r'```\s*', '', cleaned)
-#     decision_str = cleaned.strip()
-
-#     try:
-#         decision = json.loads(decision_str)
-#     except Exception as e:
-#         decision = {"action": "answer", "data": "I couldn't understand your request."}
-
-#     action = decision.get("action")
-#     data = decision.get("data")
-
-#     if action == "sql":
-#         df, sql_error = data_loader.execute_sql(data)
-#         if sql_error:
-#             response = f"SQL error: {sql_error}"
-#         elif df.empty:
-#             response = "No data found for your request."
-#         else:
-#             df_copy = df.copy()
-#             for col in df_copy.select_dtypes(include=['datetime64']).columns:
-#                 df_copy[col] = df_copy[col].dt.isoformat()
-#             data_json = df_copy.head(100).to_json(orient="records")
-#             answer_prompt = f"""Based on the following data, answer the user's request concisely and well‑formatted.
-
-# User request: {user_message}
-
-# Data (as JSON):
-# {data_json}
-
-# Use bullet points or markdown tables. Provide final answer.
-# """
-#             response = llm.generate(answer_prompt, temperature=0.2)
-#             if not response:
-#                 response = f"Found {len(df)} rows, but could not generate a summary."
-#     elif action == "vector":
-#         docs = data_loader.vector_search(data, top_k=5)
-#         if not docs:
-#             response = "I couldn't find relevant information."
-#         else:
-#             context = "\n\n".join([d["text"][:500] for d in docs])
-#             answer_prompt = f"""Using the retrieved context, answer the user's question.
-
-# Context:
-# {context}
-
-# User question: {user_message}
-
-# Answer concisely.
-# """
-#             response = llm.generate(answer_prompt, temperature=0.2)
-#             if not response:
-#                 response = "I found some information but couldn't generate a response."
-#     else:
-#         response = data
-
-#     memory.store_chat_message(session_id, "user", user_message)
-#     memory.store_chat_message(session_id, "assistant", response)
-#     return response
-async def handle_chat(user_message: str, session_id: str):
-    # Get conversation history with better context handling
     history = memory.get_chat_history(session_id, limit=config.MAX_HISTORY_TURNS)
-    
-    # Build context with better structure
     context = ""
-    previous_answers = {}
-    for h in reversed(history[-5:]):  # Last 5 messages for context
+    for h in reversed(history[-5:]):
         role = h["type"]
         content = h["prompt"] if role == "user" else h["response"]
         context += f"{role.capitalize()}: {content}\n"
-        
-        # Store previous answers for follow-up questions
-        if role == "assistant":
-            # Extract key info from previous answers
-            if "modules" in content.lower():
-                previous_answers["modules_mentioned"] = True
-            if "failed" in content.lower():
-                previous_answers["failures_mentioned"] = True
 
     schemas = _get_schema_with_samples()
     schema_str = json.dumps(schemas, indent=2)
 
-    # ENHANCED DECISION PROMPT with business logic
     decision_prompt = f"""You are a QA analytics assistant. Analyze the user request and return JSON.
 
 Available tables:
@@ -202,7 +96,6 @@ When user asks "is this good for release" or similar:
 
 Return JSON: {{"action":"sql","data":"SQL_QUERY"}} or {{"action":"answer","data":"text"}}
 """
-    
     llm = llm_client.LLMClient()
     decision_str = llm.generate(decision_prompt, temperature=0.1)
     if not decision_str:
@@ -215,7 +108,6 @@ Return JSON: {{"action":"sql","data":"SQL_QUERY"}} or {{"action":"answer","data"
     try:
         decision = json.loads(decision_str)
     except Exception as e:
-        # Fallback: try to extract SQL from response
         if "SELECT" in decision_str.upper():
             decision = {"action": "sql", "data": decision_str}
         else:
@@ -224,14 +116,10 @@ Return JSON: {{"action":"sql","data":"SQL_QUERY"}} or {{"action":"answer","data"
     action = decision.get("action")
     data = decision.get("data")
 
-    # ENHANCED SQL HANDLING with fallback
     if action == "sql" or (action == "answer" and "SELECT" in data.upper()):
         if "SELECT" in data.upper():
             action = "sql"
-        
         df, sql_error = data_loader.execute_sql(data)
-        
-        # FALLBACK: If SQL fails, try alternative queries
         if sql_error and "how many tests failed" in user_message.lower():
             data = "SELECT COUNT(*) FROM flattened_tests WHERE status='failed'"
             df, sql_error = data_loader.execute_sql(data)
@@ -241,7 +129,6 @@ Return JSON: {{"action":"sql","data":"SQL_QUERY"}} or {{"action":"answer","data"
         elif sql_error and "pass rate" in user_message.lower():
             data = "SELECT ROUND(SUM(CASE WHEN status='passed' THEN 1 ELSE 0 END)*100.0/COUNT(*), 2) as pass_rate FROM flattened_tests"
             df, sql_error = data_loader.execute_sql(data)
-        
         if sql_error:
             response = f"SQL error: {sql_error}"
         elif df.empty:
@@ -251,10 +138,7 @@ Return JSON: {{"action":"sql","data":"SQL_QUERY"}} or {{"action":"answer","data"
             for col in df_copy.select_dtypes(include=['datetime64']).columns:
                 df_copy[col] = df_copy[col].dt.isoformat()
             data_json = df_copy.head(50).to_json(orient="records")
-            
-            # ENHANCED ANSWER PROMPT with business logic
             is_release_question = any(phrase in user_message.lower() for phrase in ['release', 'good to go', 'ready for'])
-            
             if is_release_question and 'pass_rate' in df.columns:
                 pass_rate = df.iloc[0]['pass_rate']
                 if pass_rate >= 95:
@@ -266,7 +150,6 @@ Return JSON: {{"action":"sql","data":"SQL_QUERY"}} or {{"action":"answer","data"
                 else:
                     verdict = "❌ NOT READY FOR RELEASE"
                     recommendation = f"Pass rate is only {pass_rate}%. Fix critical issues before release."
-                
                 response = f"""📊 **Release Readiness Report**
 
 **Pass Rate:** {pass_rate}%
@@ -274,7 +157,6 @@ Return JSON: {{"action":"sql","data":"SQL_QUERY"}} or {{"action":"answer","data"
 **Verdict:** {verdict}
 
 **Recommendation:** {recommendation}"""
-            
             else:
                 answer_prompt = f"""Based on the data, answer the user's request.
 
@@ -306,7 +188,6 @@ Provide final answer:
                         response = f"📋 **Failed Tests:**\n{tests}"
                     else:
                         response = f"Found {len(df)} rows matching your request."
-    
     elif action == "vector":
         docs = data_loader.vector_search(data, top_k=5)
         if not docs:
@@ -332,30 +213,11 @@ Answer concisely.
     memory.store_chat_message(session_id, "assistant", response)
     return response
 
+async def handle_chart(user_prompt: str, session_id: str, ingestion_id: str):
+    if state.current_ingestion_id != ingestion_id:
+        if not data_loader.init_data(ingestion_id):
+            return None, f"Error: Ingestion '{ingestion_id}' not found."
 
-def validate_response(response: str, user_message: str) -> str:
-    """Validate and clean up response for consistency"""
-    
-    # Fix common issues
-    if "could not determine" in response.lower() and "how many" in user_message.lower():
-        return "I need to query the database for that. Please try rephrasing your question."
-    
-    if "cannot" in response.lower() and "module" in user_message.lower():
-        return "Let me fetch the module information for you."
-    
-    # Ensure response has proper formatting
-    if response and not any(c in response for c in ['📊', '📁', '📋', '✅', '❌', '⚠️']):
-        # Add emoji based on content
-        if 'passed' in response.lower():
-            response = "✅ " + response
-        elif 'failed' in response.lower():
-            response = "❌ " + response
-        elif 'module' in response.lower():
-            response = "📁 " + response
-    
-    return response
-
-async def handle_chart(user_prompt: str, session_id: str):
     cache_key = user_prompt.lower().strip()
     if cache_key in _sql_cache:
         cached = _sql_cache[cache_key]
@@ -453,7 +315,6 @@ def _detect_chart_type(prompt: str) -> str:
         return "auto"
 
 def _generate_chart_from_df(df: pd.DataFrame, user_prompt: str, session_id: str, sql: str):
-    # adding validation of data structure before chart generation.
     if df.empty:
         return None, "No data available for chart"
     chart_type = _detect_chart_type(user_prompt)
@@ -528,27 +389,23 @@ Return only Python code. Define variable `fig`.
 
     code = re.sub(r"```python\n?|```", "", code).strip()
     
-    # Clean invalid color scales
     code = re.sub(r"'Blues_d'", "'Blues'", code)
     code = re.sub(r'"Blues_d"', '"Blues"', code)
     code = re.sub(r"'Blues_r'", "'Blues'", code)
     code = re.sub(r'"Blues_r"', '"Blues"', code)
     
-    # Clean invalid parameters for pie charts
     if 'pie' in code.lower():
         code = re.sub(r',\s*hovertemplate\s*=\s*[^,)]+', '', code)
         code = re.sub(r'hovertemplate\s*=\s*[^,)]+,\s*', '', code)
         code = re.sub(r',\s*customdata\s*=\s*[^,)]+', '', code)
         code = re.sub(r'customdata\s*=\s*[^,)]+,\s*', '', code)
     
-    # Ensure dark mode template
     if "template='plotly_dark'" not in code and 'template="plotly_dark"' not in code:
         if "fig.update_layout(" in code:
             code = code.replace("fig.update_layout(", "fig.update_layout(template='plotly_dark', ")
         else:
             code += "\nfig.update_layout(template='plotly_dark')"
     
-    # Remove fixed width/height for responsiveness
     code = re.sub(r',?\s*width\s*=\s*\d+\s*,?', '', code)
     code = re.sub(r',?\s*height\s*=\s*\d+\s*,?', '', code)
     
@@ -562,7 +419,6 @@ Return only Python code. Define variable `fig`.
         if fig is None:
             raise ValueError("No 'fig' variable defined")
         
-        # Apply dark mode and responsive settings
         fig.update_layout(
             template='plotly_dark',
             autosize=True,

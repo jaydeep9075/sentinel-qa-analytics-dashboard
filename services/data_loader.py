@@ -4,37 +4,29 @@ import pandas as pd
 import numpy as np
 import lancedb
 import duckdb
+from pathlib import Path
 from . import config, state
 from universal_ingester.utils import EmbeddingGenerator
 
 logger = logging.getLogger(__name__)
 
-def init_data():
-    """Load data from LanceDB into DuckDB and embedder."""
-    if not config.DATA_PATH.exists():
-        logger.error(f"Data path {config.DATA_PATH} not found. Run ingester first.")
-        return
+def init_data(ingestion_id: str):
+    """Load data for a specific ingestion into state.lance_db and state.duck_conn."""
+    ingestion_path = config.DATA_BASE_PATH / ingestion_id / "lancedb"
+    if not ingestion_path.exists():
+        logger.error(f"Ingestion path {ingestion_path} not found.")
+        return False
 
-    state.lance_db = lancedb.connect(str(config.DATA_PATH))
+    state.lance_db = lancedb.connect(str(ingestion_path))
     state.duck_conn = duckdb.connect()
     state.embedder = EmbeddingGenerator()
+    state.current_ingestion_id = ingestion_id
 
-    raw_result = state.lance_db.list_tables()
-    if hasattr(raw_result, 'tables'):
-        raw_tables = raw_result.tables
-    else:
-        raw_tables = raw_result
-
-    tables = []
-    for t in raw_tables:
-        if isinstance(t, tuple):
-            tables.append(t[0])
-        else:
-            tables.append(t)
-    logger.info(f"Tables found: {tables}")
+    raw_tables = state.lance_db.table_names()
+    logger.info(f"Tables found for {ingestion_id}: {raw_tables}")
 
     # Load test_cases
-    if "structured_test_cases" in tables:
+    if "structured_test_cases" in raw_tables:
         try:
             df_cases = state.lance_db.open_table("structured_test_cases").to_pandas()
             state.duck_conn.register("test_cases", df_cases)
@@ -42,8 +34,8 @@ def init_data():
         except Exception as e:
             logger.error(f"Error loading test_cases: {e}")
 
-    # Load test_results and flatten – store only test_name (no ID mapping)
-    if "structured_test_results" in tables:
+    # Load test_results and flatten
+    if "structured_test_results" in raw_tables:
         try:
             df_results = state.lance_db.open_table("structured_test_results").to_pandas()
             logger.info(f"Loaded {len(df_results)} test results")
@@ -74,7 +66,7 @@ def init_data():
 
                             rows.append({
                                 "result_id": row.get("id"),
-                                "test_name": t.get("full_title", ""),   # ← plain string
+                                "test_name": t.get("full_title", ""),
                                 "build_id": row.get("build_id"),
                                 "project_id": row.get("project_id"),
                                 "executed_at": row.get("executed_at"),
@@ -87,19 +79,11 @@ def init_data():
                     flattened = pd.DataFrame(rows)
                     state.duck_conn.register("flattened_tests", flattened)
                     logger.info(f"Flattened {len(flattened)} test executions")
-                    try:
-                        result = state.duck_conn.execute("SHOW TABLES").fetchall()
-                        logger.info(f"Tables in DuckDB: {[t[0] for t in result]}")
-                    except Exception as e:
-                        logger.error(f"Could not verify tables: {e}")
-                else:
-                    logger.warning("No test records could be flattened")
-            else:
-                logger.warning("No 'tests' column in test_results")
         except Exception as e:
             logger.error(f"Error loading test_results: {e}")
             import traceback
             traceback.print_exc()
+    return True
 
 def get_schema_info():
     schemas = {}
@@ -119,7 +103,7 @@ def execute_sql(query: str):
         return pd.DataFrame(), str(e)
 
 def vector_search(query: str, top_k: int = 5):
-    if not state.lance_db or "documents" not in state.lance_db.list_tables():
+    if not state.lance_db or "documents" not in state.lance_db.table_names():
         return []
     q_emb = state.embedder.embed([query])[0]
     table = state.lance_db.open_table("documents")
