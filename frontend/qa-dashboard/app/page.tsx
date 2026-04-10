@@ -5,6 +5,8 @@ import AIChatbot from "@/components/AIChatbot";
 import AIChatInput from "@/components/AIChatInput";
 import ChartGallery from "@/components/ChartGallery";
 import IngestionSelector from "@/components/IngestionSelector";
+import ProjectSelector from "@/components/ProjectSelector";
+import RoleSelector from "@/components/RoleSelector";
 import { getDataStatus, checkHealth } from "@/lib/api";
 import { useIngestion } from "@/lib/IngestionContext";
 
@@ -48,6 +50,8 @@ export default function Home() {
           </div>
           <div className="flex items-center gap-4">
             <IngestionSelector />
+            <ProjectSelector />
+            <RoleSelector />
             {backendConnected ? (
               <div className="flex items-center gap-2">
                 <div className="w-2 h-2 bg-green-500 rounded-full animate-pulse"></div>

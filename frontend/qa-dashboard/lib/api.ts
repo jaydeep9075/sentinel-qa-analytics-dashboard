@@ -20,30 +20,48 @@ export async function listIngestions() {
   return res.json();
 }
 
-export async function sendChatMessage(message: string, ingestionId: string) {
+export async function sendChatMessage(
+  message: string,
+  ingestionId: string,
+  role?: string | null,
+  project?: string | null,
+) {
   const sessionId = getSessionId();
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+    "x-ingestion-id": ingestionId,
+    "x-session-id": sessionId,
+  };
+  if (role) headers["x-role"] = role;
+  if (project) headers["x-project"] = project;
+
   const res = await fetch(`${API_BASE}/chat`, {
     method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "x-ingestion-id": ingestionId,
-      "x-session-id": sessionId,
-    },
+    headers,
     body: JSON.stringify({ message, session_id: sessionId }),
   });
   const data = await res.json();
   return data.response;
 }
 
-export async function generateChart(prompt: string, ingestionId: string) {
+export async function generateChart(
+  prompt: string,
+  ingestionId: string,
+  role?: string | null,
+  project?: string | null,
+) {
   const sessionId = getSessionId();
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+    "x-ingestion-id": ingestionId,
+    "x-session-id": sessionId,
+  };
+  if (role) headers["x-role"] = role;
+  if (project) headers["x-project"] = project;
+
   const res = await fetch(`${API_BASE}/chart`, {
     method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "x-ingestion-id": ingestionId,
-      "x-session-id": sessionId,
-    },
+    headers,
     body: JSON.stringify({ message: prompt, session_id: sessionId }),
   });
   const data = await res.json();

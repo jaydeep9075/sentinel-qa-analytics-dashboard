@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { Geist, Geist_Mono, Inter } from "next/font/google";
 import "./globals.css";
 import { IngestionProvider } from "@/lib/IngestionContext";
+import { RBProvider } from "@/lib/RBContext";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -33,7 +34,9 @@ export default function RootLayout({
       <body
         className={`${geistSans.variable} ${geistMono.variable} ${inter.variable} antialiased bg-[#0a0a0a] text-[#ededed]`}
       >
-        <IngestionProvider>{children}</IngestionProvider>
+        <RBProvider>
+          <IngestionProvider>{children}</IngestionProvider>
+        </RBProvider>
       </body>
     </html>
   );

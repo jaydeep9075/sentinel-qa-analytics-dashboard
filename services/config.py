@@ -17,3 +17,7 @@ OLLAMA_URL = os.getenv("OLLAMA_URL", "http://localhost:11434")
 
 # Misc
 MAX_HISTORY_TURNS = 10
+
+# RBA: Projects and roles root directories
+PROJECTS_ROOT = os.getenv("PROJECTS_ROOT", str(BASE_DIR / "projects"))
+ROLES_ROOT = os.getenv("ROLES_ROOT", str(BASE_DIR / "roles"))

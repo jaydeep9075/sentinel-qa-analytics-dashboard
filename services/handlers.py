@@ -4,6 +4,8 @@ import logging
 from datetime import datetime
 import pandas as pd
 from . import config, data_loader, memory, llm_client, state
+from .project_manager import ProjectManager
+from .role_manager import RoleManager
 
 logger = logging.getLogger(__name__)
 
@@ -42,23 +44,55 @@ def _get_schema_with_samples():
         schema[tbl] = col_info
     return schema
 
-async def handle_chat(user_message: str, session_id: str, ingestion_id: str):
+async def handle_chat(user_message: str, session_id: str, ingestion_id: str,
+                      role: str = None, project_id: str = None):
     # Ensure data for this ingestion is loaded
     if state.current_ingestion_id != ingestion_id:
         if not data_loader.init_data(ingestion_id):
             return f"Error: Ingestion '{ingestion_id}' not found or data unavailable."
 
+    # Initialize RBA managers if needed
+    if state.project_manager is None:
+        state.project_manager = ProjectManager()
+    if state.role_manager is None:
+        state.role_manager = RoleManager()
+
+    # Retrieve project context (only relevant sections)
+    project_context = ""
+    if project_id:
+        project_context = state.project_manager.retrieve_relevant_context(project_id, user_message)
+
+    # Load role instruction
+    role_instruction = ""
+    if role:
+        role_instruction = state.role_manager.get_role_instruction(role)
+    if not role_instruction:
+        role_instruction = "You are a helpful QA analytics assistant. Provide clear, concise answers."
+
+    # Build system prompt for the decision phase (kept short)
+    system_context = f"{role_instruction}\n\n"
+    if project_id:
+        system_context += f"Project: {project_id}\n"
+    if project_context:
+        system_context += f"Relevant project knowledge:\n{project_context}\n"
+
+    # Get conversation history
     history = memory.get_chat_history(session_id, limit=config.MAX_HISTORY_TURNS)
     context = ""
     for h in reversed(history[-5:]):
-        role = h["type"]
-        content = h["prompt"] if role == "user" else h["response"]
-        context += f"{role.capitalize()}: {content}\n"
+        role_label = h["type"]
+        content = h["prompt"] if role_label == "user" else h["response"]
+        context += f"{role_label.capitalize()}: {content}\n"
 
     schemas = _get_schema_with_samples()
     schema_str = json.dumps(schemas, indent=2)
 
-    decision_prompt = f"""You are a QA analytics assistant. Analyze the user request and return JSON.
+    # --------------------------------------------------------------
+    # Decision prompt (copied from working version)
+    # --------------------------------------------------------------
+    decision_prompt = f"""{system_context}
+
+You are a QA analytics assistant. Analyze the user request and return JSON.
 
 Available tables:
 - test_cases: module_name, priority, title
@@ -87,6 +121,7 @@ When user asks "is this good for release" or similar:
 - "number of modules" → SELECT COUNT(DISTINCT module_name) as module_count FROM test_cases
 - "module with most tests" → SELECT module_name, COUNT(*) as test_count FROM test_cases GROUP BY module_name ORDER BY test_count DESC LIMIT 1
 - "failed tests list" → SELECT test_name, error FROM flattened_tests WHERE status='failed' LIMIT 10
+- "list all tests in module X" → SELECT title FROM test_cases WHERE module_name = 'X' ORDER BY title
 
 **IMPORTANT RULES:**
 1. For ANY question about data (counts, lists, modules, failures), use action="sql"
@@ -116,10 +151,14 @@ Return JSON: {{"action":"sql","data":"SQL_QUERY"}} or {{"action":"answer","data"
     action = decision.get("action")
     data = decision.get("data")
 
+    # --------------------------------------------------------------
+    # SQL execution and answer generation (working logic)
+    # --------------------------------------------------------------
     if action == "sql" or (action == "answer" and "SELECT" in data.upper()):
         if "SELECT" in data.upper():
             action = "sql"
         df, sql_error = data_loader.execute_sql(data)
+        # Retry with hardcoded fallbacks for common queries (same as original)
         if sql_error and "how many tests failed" in user_message.lower():
             data = "SELECT COUNT(*) FROM flattened_tests WHERE status='failed'"
             df, sql_error = data_loader.execute_sql(data)
@@ -158,7 +197,10 @@ Return JSON: {{"action":"sql","data":"SQL_QUERY"}} or {{"action":"answer","data"
 
 **Recommendation:** {recommendation}"""
             else:
-                answer_prompt = f"""Based on the data, answer the user's request.
+                # Use the system context (role + project) in the answer prompt
+                answer_prompt = f"""{system_context}
+
+Based on the data, answer the user's request.
 
 User request: {user_message}
 
@@ -171,6 +213,7 @@ Total rows: {len(df)}
 - For counts: "📊 [description]: [number]"
 - For lists: Use numbered list (1., 2., 3.)
 - For modules: List all with numbers
+- For test names in a module: List each test name with a number
 - For pass rate: Include percentage and brief assessment
 - Be direct and specific. Don't say "based on the data"
 
@@ -178,11 +221,15 @@ Provide final answer:
 """
                 response = llm.generate(answer_prompt, temperature=0.2)
                 if not response:
+                    # Fallback formatting (same as original)
                     if len(df) == 1 and len(df.columns) == 1:
                         response = f"📊 Result: {df.iloc[0, 0]}"
-                    elif 'module_name' in df.columns:
+                    elif 'module_name' in df.columns and len(df.columns) == 1:
                         modules = "\n".join([f"{i+1}. {row['module_name']}" for i, row in df.iterrows()])
-                        response = f"📁 **Available Modules:**\n{modules}"
+                        response = f"📁 **Modules:**\n{modules}"
+                    elif 'title' in df.columns:
+                        tests = "\n".join([f"{i+1}. {row['title']}" for i, row in df.iterrows()])
+                        response = f"📋 **Tests in module:**\n{tests}"
                     elif 'test_name' in df.columns:
                         tests = "\n".join([f"{i+1}. {row['test_name']}" for i, row in df.iterrows()])
                         response = f"📋 **Failed Tests:**\n{tests}"
@@ -193,11 +240,13 @@ Provide final answer:
         if not docs:
             response = "I couldn't find relevant information."
         else:
-            context = "\n\n".join([d["text"][:500] for d in docs])
-            answer_prompt = f"""Using the retrieved context, answer the user's question.
+            context_docs = "\n\n".join([d["text"][:500] for d in docs])
+            answer_prompt = f"""{system_context}
+
+Using the retrieved context, answer the user's question.
 
 Context:
-{context}
+{context_docs}
 
 User question: {user_message}
 
@@ -213,10 +262,36 @@ Answer concisely.
     memory.store_chat_message(session_id, "assistant", response)
     return response
 
-async def handle_chart(user_prompt: str, session_id: str, ingestion_id: str):
+# --------------------------------------------------------------
+# Chart generation (unchanged from working version, but with RBA)
+# --------------------------------------------------------------
+async def handle_chart(user_prompt: str, session_id: str, ingestion_id: str,
+                       role: str = None, project_id: str = None):
     if state.current_ingestion_id != ingestion_id:
         if not data_loader.init_data(ingestion_id):
             return None, f"Error: Ingestion '{ingestion_id}' not found."
+
+    # Initialize RBA managers for chart context (optional)
+    if state.project_manager is None:
+        state.project_manager = ProjectManager()
+    if state.role_manager is None:
+        state.role_manager = RoleManager()
+
+    project_context = ""
+    if project_id:
+        project_context = state.project_manager.retrieve_relevant_context(project_id, user_prompt)
+
+    role_instruction = ""
+    if role:
+        role_instruction = state.role_manager.get_role_instruction(role)
+    if not role_instruction:
+        role_instruction = "You are a data analyst."
+
+    system_context = f"{role_instruction}\n\n"
+    if project_id:
+        system_context += f"Project: {project_id}\n"
+    if project_context:
+        system_context += f"Relevant project knowledge:\n{project_context}\n"
 
     cache_key = user_prompt.lower().strip()
     if cache_key in _sql_cache:
@@ -224,12 +299,14 @@ async def handle_chart(user_prompt: str, session_id: str, ingestion_id: str):
         logger.info(f"Using cached SQL for '{cache_key}'")
         df, err = data_loader.execute_sql(cached)
         if not err and not df.empty:
-            return _generate_chart_from_df(df, user_prompt, session_id, cached)
+            return _generate_chart_from_df(df, user_prompt, session_id, cached, system_context)
 
     schemas = _get_schema_with_samples()
     schema_str = json.dumps(schemas, indent=2)
 
-    sql_prompt = f"""You are a data analyst. Generate a DuckDB SQL query.
+    sql_prompt = f"""{system_context}
+
+You are a data analyst. Generate a DuckDB SQL query.
 
 Available tables and columns (with samples):
 {schema_str}
@@ -269,7 +346,9 @@ Return only SQL. If impossible, return "N/A".
     max_retries = 2
     for attempt in range(max_retries):
         if sql_error or df.empty:
-            correction_prompt = f"""The previous SQL query failed.
+            correction_prompt = f"""{system_context}
+
+The previous SQL query failed.
 Error: {sql_error or 'Empty result'}
 Original request: {user_prompt}
 Attempted SQL: {sql}
@@ -299,7 +378,7 @@ Return only SQL.
         for k in list(_sql_cache.keys())[:20]:
             del _sql_cache[k]
 
-    return _generate_chart_from_df(df, user_prompt, session_id, sql)
+    return _generate_chart_from_df(df, user_prompt, session_id, sql, system_context)
 
 def _detect_chart_type(prompt: str) -> str:
     prompt_lower = prompt.lower()
@@ -314,7 +393,7 @@ def _detect_chart_type(prompt: str) -> str:
     else:
         return "auto"
 
-def _generate_chart_from_df(df: pd.DataFrame, user_prompt: str, session_id: str, sql: str):
+def _generate_chart_from_df(df: pd.DataFrame, user_prompt: str, session_id: str, sql: str, system_context: str = ""):
     if df.empty:
         return None, "No data available for chart"
     chart_type = _detect_chart_type(user_prompt)
@@ -350,7 +429,9 @@ fig = px.bar(data, x='module_name', y='failure_count',
 fig.update_layout(template='plotly_dark', title_x=0.5)
 """
 
-    chart_prompt = f"""Generate Plotly Python code for a professional chart as described.
+    chart_prompt = f"""{system_context}
+
+Generate Plotly Python code for a professional chart as described.
 
 User request: "{user_prompt}"
 

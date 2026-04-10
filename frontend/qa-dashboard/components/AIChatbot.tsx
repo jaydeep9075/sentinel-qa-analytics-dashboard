@@ -3,10 +3,12 @@
 import { useState, useRef, useEffect } from "react";
 import { sendChatMessage } from "@/lib/api";
 import { useIngestion } from "@/lib/IngestionContext";
+import { useRB } from "@/lib/RBContext";
 import ReactMarkdown from "react-markdown";
 
 export default function AIChatbot() {
   const { selectedIngestion } = useIngestion();
+  const { selectedRole, selectedProject } = useRB();
   const [messages, setMessages] = useState<
     { role: "user" | "ai"; content: string }[]
   >([
@@ -34,7 +36,12 @@ export default function AIChatbot() {
     setIsLoading(true);
 
     try {
-      const response = await sendChatMessage(userMsg, selectedIngestion);
+      const response = await sendChatMessage(
+        userMsg,
+        selectedIngestion,
+        selectedRole,
+        selectedProject,
+      );
       setMessages((prev) => [...prev, { role: "ai", content: response }]);
     } catch (error) {
       setMessages((prev) => [

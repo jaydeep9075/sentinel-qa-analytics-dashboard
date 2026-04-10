@@ -23,7 +23,6 @@ class ChartRequest(BaseModel):
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     logger.info("Starting up...")
-    # Do not auto-load data; load on first request with ingestion_id header
     yield
     logger.info("Shutting down...")
     if state.duck_conn:
@@ -42,19 +41,33 @@ async def health():
     return {"status": "ok", "data_path": str(config.DATA_BASE_PATH)}
 
 @app.post("/chat")
-async def chat(request: ChatRequest, x_session_id: Optional[str] = Header(None), x_ingestion_id: str = Header(...)):
+async def chat(request: ChatRequest, 
+               x_session_id: Optional[str] = Header(None), 
+               x_ingestion_id: str = Header(...),
+               x_role: Optional[str] = Header(None),
+               x_project: Optional[str] = Header(None)):
     session_id = x_session_id or request.session_id or str(uuid.uuid4())
     try:
-        response = await handlers.handle_chat(request.message, session_id, x_ingestion_id)
+        response = await handlers.handle_chat(
+            request.message, session_id, x_ingestion_id, 
+            role=x_role, project_id=x_project
+        )
         return {"response": response, "session_id": session_id}
     except Exception as e:
         logger.exception(f"Chat error: {e}")
         return {"response": f"An error occurred: {str(e)}", "session_id": session_id}
 
 @app.post("/chart")
-async def chart(request: ChartRequest, x_session_id: Optional[str] = Header(None), x_ingestion_id: str = Header(...)):
+async def chart(request: ChartRequest,
+                x_session_id: Optional[str] = Header(None),
+                x_ingestion_id: str = Header(...),
+                x_role: Optional[str] = Header(None),
+                x_project: Optional[str] = Header(None)):
     session_id = x_session_id or request.session_id or str(uuid.uuid4())
-    chart_json, error = await handlers.handle_chart(request.message, session_id, x_ingestion_id)
+    chart_json, error = await handlers.handle_chart(
+        request.message, session_id, x_ingestion_id,
+        role=x_role, project_id=x_project
+    )
     if error:
         return {"error": error, "session_id": session_id}
     return {"chart": chart_json, "session_id": session_id}
@@ -150,6 +163,20 @@ async def list_ingestions():
                 "created": path.stat().st_mtime
             })
     return {"ingestions": sorted(ingestions, key=lambda x: x["created"], reverse=True)}
+
+@app.get("/projects")
+async def list_projects():
+    if state.project_manager is None:
+        from .project_manager import ProjectManager
+        state.project_manager = ProjectManager()
+    return {"projects": state.project_manager.list_projects()}
+
+@app.get("/roles")
+async def list_roles():
+    if state.role_manager is None:
+        from .role_manager import RoleManager
+        state.role_manager = RoleManager()
+    return {"roles": state.role_manager.list_roles()}
 
 @app.get("/test/llm")
 async def test_llm():
