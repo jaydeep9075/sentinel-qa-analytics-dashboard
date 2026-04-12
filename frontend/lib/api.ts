@@ -2,6 +2,11 @@ import { getSessionId } from "./session";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
+function getAuthHeaders(): Record<string, string> {
+  const token = typeof window !== "undefined" ? localStorage.getItem("token") : null;
+  return token ? { Authorization: `Bearer ${token}` } : {};
+}
+
 export async function checkHealth() {
   const res = await fetch(`${API_BASE}/health`);
   return res.json();
@@ -9,13 +14,15 @@ export async function checkHealth() {
 
 export async function getDataStatus(ingestionId: string) {
   const res = await fetch(`${API_BASE}/data/status`, {
-    headers: { "x-ingestion-id": ingestionId },
+    headers: { "x-ingestion-id": ingestionId, ...getAuthHeaders() },
   });
   return res.json();
 }
 
 export async function listIngestions() {
-  const res = await fetch(`${API_BASE}/ingestions`);
+  const res = await fetch(`${API_BASE}/ingestions`, {
+    headers: getAuthHeaders(),
+  });
   if (!res.ok) throw new Error("Failed to fetch ingestions");
   return res.json();
 }
@@ -31,6 +38,7 @@ export async function sendChatMessage(
     "Content-Type": "application/json",
     "x-ingestion-id": ingestionId,
     "x-session-id": sessionId,
+    ...getAuthHeaders(),
   };
   if (role) headers["x-role"] = role;
   if (project) headers["x-project"] = project;
@@ -55,6 +63,7 @@ export async function generateChart(
     "Content-Type": "application/json",
     "x-ingestion-id": ingestionId,
     "x-session-id": sessionId,
+    ...getAuthHeaders(),
   };
   if (role) headers["x-role"] = role;
   if (project) headers["x-project"] = project;
@@ -73,14 +82,14 @@ export async function generateChart(
 
 export async function getChatHistory(sessionId: string, ingestionId: string) {
   const res = await fetch(`${API_BASE}/chat/history/${sessionId}`, {
-    headers: { "x-ingestion-id": ingestionId },
+    headers: { "x-ingestion-id": ingestionId, ...getAuthHeaders() },
   });
   return res.json();
 }
 
 export async function getChartHistory(sessionId: string, ingestionId: string) {
   const res = await fetch(`${API_BASE}/chart/history/${sessionId}`, {
-    headers: { "x-ingestion-id": ingestionId },
+    headers: { "x-ingestion-id": ingestionId, ...getAuthHeaders() },
   });
   const data = await res.json();
   console.log("📊 getChartHistory raw response:", data);
@@ -90,7 +99,7 @@ export async function getChartHistory(sessionId: string, ingestionId: string) {
 export async function deleteChart(chartId: string, ingestionId: string) {
   const res = await fetch(`${API_BASE}/chart/${chartId}`, {
     method: "DELETE",
-    headers: { "x-ingestion-id": ingestionId },
+    headers: { "x-ingestion-id": ingestionId, ...getAuthHeaders() },
   });
   return res.json();
 }

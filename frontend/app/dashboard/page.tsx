@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
+import { useRouter } from "next/navigation";
 import AIChatbot from "@/components/AIChatbot";
 import AIChatInput from "@/components/AIChatInput";
 import ChartGallery from "@/components/ChartGallery";
@@ -10,11 +11,20 @@ import RoleSelector from "@/components/RoleSelector";
 import { getDataStatus, checkHealth } from "@/lib/api";
 import { useIngestion } from "@/lib/IngestionContext";
 
-export default function Home() {
+export default function Dashboard() {
+  const router = useRouter();
   const { selectedIngestion } = useIngestion();
   const [dataStatus, setDataStatus] = useState<any>(null);
   const [backendConnected, setBackendConnected] = useState(false);
   const [refreshGallery, setRefreshGallery] = useState(0);
+
+  // Check authentication
+  useEffect(() => {
+    const token = localStorage.getItem("token");
+    if (!token) {
+      router.push("/login");
+    }
+  }, [router]);
 
   useEffect(() => {
     const checkConnection = async () => {
@@ -36,6 +46,12 @@ export default function Home() {
 
   const handleChartGenerated = () => {
     setRefreshGallery((prev) => prev + 1);
+  };
+
+  const handleLogout = () => {
+    localStorage.removeItem("token");
+    localStorage.removeItem("role");
+    window.location.href = "/";
   };
 
   return (
@@ -65,6 +81,12 @@ export default function Home() {
                 <span className="text-xs text-red-400">Backend Offline</span>
               </div>
             )}
+            <button
+              onClick={handleLogout}
+              className="text-sm text-red-400 hover:text-red-300 ml-2"
+            >
+              Logout
+            </button>
           </div>
         </div>
       </header>
