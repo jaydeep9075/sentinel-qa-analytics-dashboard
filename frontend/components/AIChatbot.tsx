@@ -109,16 +109,43 @@ export default function AIChatbot() {
         )}
         <div ref={bottomRef} />
       </div>
-      <form onSubmit={handleSend} className="p-4 border-t border-white/10">
-        <input
-          type="text"
-          value={input}
-          onChange={(e) => setInput(e.target.value)}
-          placeholder="Ask about test results..."
-          className="w-full bg-black/50 border border-white/10 text-white text-sm rounded-xl px-5 py-4 focus:outline-none focus:border-purple-500/50 transition-all placeholder:text-gray-700"
-          disabled={isLoading || !selectedIngestion}
-        />
-      </form>
+      <div className="p-4 border-t border-white/10 bg-black/20">
+        <div className="flex gap-2 overflow-x-auto pb-3 mb-1 no-scrollbar">
+          {[
+            "Give me all available module names",
+            "Give me number of tests per module",
+            "Is this result good for release?",
+            "Give me list of tests from Common Functionality / Login module",
+            "What is the average time it took to run each test?",
+            "Give me the top 15 slowest tests and duration"
+          ].map((suggestion, i) => (
+            <button 
+              key={i}
+              onClick={() => setInput(suggestion)} 
+              className="shrink-0 text-xs px-3 py-1.5 bg-blue-500/10 hover:bg-blue-500/20 text-blue-300 rounded-full transition border border-blue-500/20 whitespace-nowrap"
+            >
+              {suggestion}
+            </button>
+          ))}
+        </div>
+        <form onSubmit={handleSend} className="relative">
+          <input
+            type="text"
+            value={input}
+            onChange={(e) => setInput(e.target.value)}
+            placeholder={`Ask about test results as a ${selectedRole ? selectedRole.toUpperCase() : "QA"}...`}
+            className="w-full bg-black/50 border border-white/10 text-white text-sm rounded-xl px-5 py-4 focus:outline-none focus:border-blue-500/50 transition-all placeholder:text-gray-700 pr-12"
+            disabled={isLoading || !selectedIngestion}
+          />
+          <button 
+            type="submit" 
+            disabled={isLoading || !input.trim() || !selectedIngestion}
+            className="absolute right-2 top-1/2 -translate-y-1/2 p-2 bg-blue-600 hover:bg-blue-500 disabled:bg-gray-700 disabled:text-gray-400 text-white rounded-lg transition-colors"
+          >
+            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M14 5l7 7m0 0l-7 7m7-7H3"></path></svg>
+          </button>
+        </form>
+      </div>
     </div>
   );
 }

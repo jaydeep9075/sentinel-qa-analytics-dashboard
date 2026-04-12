@@ -56,6 +56,13 @@ export function RBProvider({ children }: { children: React.ReactNode }) {
 
         setRoles(rolesData.roles || []);
         setProjects(projectsData.projects || []);
+
+        const savedProject = localStorage.getItem("selectedProject");
+        if (savedProject && projectsData.projects?.includes(savedProject)) {
+          setSelectedProject(savedProject);
+        } else if (projectsData.projects?.length > 0) {
+          setSelectedProject(projectsData.projects[0]);
+        }
       } catch (err) {
         console.error("Error fetching roles/projects:", err);
         setRoles([]);
@@ -68,6 +75,16 @@ export function RBProvider({ children }: { children: React.ReactNode }) {
     fetchData();
   }, []);
 
+  const handleSetSelectedRole = (role: string) => {
+    setSelectedRole(role);
+    localStorage.setItem("role", role);
+  };
+
+  const handleSetSelectedProject = (project: string) => {
+    setSelectedProject(project);
+    localStorage.setItem("selectedProject", project);
+  };
+
   // Only CTO can switch roles
   const canSwitchRole = userRole === "cto";
 
@@ -75,9 +92,9 @@ export function RBProvider({ children }: { children: React.ReactNode }) {
     <RBContext.Provider
       value={{
         selectedRole,
-        setSelectedRole,
+        setSelectedRole: handleSetSelectedRole,
         selectedProject,
-        setSelectedProject,
+        setSelectedProject: handleSetSelectedProject,
         roles,
         projects,
         loading,

@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { generateChart } from "@/lib/api";
 import { useIngestion } from "@/lib/IngestionContext";
+import { useRB } from "@/lib/RBContext";
 
 interface AIChatInputProps {
   onChartGenerated: () => void;
@@ -10,14 +11,19 @@ interface AIChatInputProps {
 
 export default function AIChatInput({ onChartGenerated }: AIChatInputProps) {
   const { selectedIngestion } = useIngestion();
+  const { selectedRole } = useRB();
   const [prompt, setPrompt] = useState("");
   const [loading, setLoading] = useState(false);
   const [status, setStatus] = useState<string | null>(null);
 
-  const shortcuts = [
+  const shortcuts = (!selectedRole || selectedRole === "qa") ? [
     "Bar chart of test status distribution",
     "Pie chart of passed vs failed",
     "Slowest 5 tests",
+  ] : [
+    "Test failure trends over time",
+    "Release health summary pie chart",
+    "Status by module area",
   ];
 
   const handleSubmit = async (e?: React.FormEvent, manualPrompt?: string) => {

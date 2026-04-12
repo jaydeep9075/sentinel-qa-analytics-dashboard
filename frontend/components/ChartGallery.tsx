@@ -184,8 +184,20 @@ export default function ChartGallery() {
 
   useEffect(() => {
     if (charts) {
-      console.log("📊 Setting localOrder from charts:", charts);
-      setLocalOrder(charts);
+      setLocalOrder((prev) => {
+        if (prev.length === 0) return charts;
+        
+        const existingIds = new Set(prev.map((c) => c.id));
+        const chartMap = new Map(charts.map((c) => [c.id, c]));
+        
+        const orderedExisting = prev
+          .filter((c) => chartMap.has(c.id))
+          .map((c) => chartMap.get(c.id)!);
+          
+        const newItems = charts.filter((c) => !existingIds.has(c.id));
+        
+        return [...newItems, ...orderedExisting];
+      });
     }
   }, [charts]);
 

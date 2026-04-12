@@ -18,14 +18,6 @@ export default function Dashboard() {
   const [backendConnected, setBackendConnected] = useState(false);
   const [refreshGallery, setRefreshGallery] = useState(0);
 
-  // Check authentication
-  useEffect(() => {
-    const token = localStorage.getItem("token");
-    if (!token) {
-      router.push("/login");
-    }
-  }, [router]);
-
   useEffect(() => {
     const checkConnection = async () => {
       try {
@@ -49,20 +41,25 @@ export default function Dashboard() {
   };
 
   const handleLogout = () => {
-    localStorage.removeItem("token");
-    localStorage.removeItem("role");
+    localStorage.clear();
     window.location.href = "/";
   };
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-gray-900 via-gray-800 to-black text-white">
-      <header className="bg-black/50 backdrop-blur-lg border-b border-white/10 sticky top-0 z-50">
-        <div className="container mx-auto px-6 py-4 flex justify-between items-center">
-          <div>
-            <h1 className="text-2xl font-bold bg-gradient-to-r from-blue-400 to-purple-500 bg-clip-text text-transparent">
-              Sentinel QA Intelligence
-            </h1>
-            <p className="text-gray-400 text-sm">AI-Powered Test Analytics</p>
+    <div className="min-h-screen bg-gradient-to-br from-slate-950 via-gray-900 to-black text-white selection:bg-blue-500/30 font-sans">
+      <header className="bg-white/[0.02] backdrop-blur-xl border-b border-white/10 sticky top-0 z-50 shadow-2xl">
+        <div className="container mx-auto px-6 py-4 flex flex-col md:flex-row justify-between items-center gap-4">
+          <div className="flex items-center gap-3 relative">
+            <div className="absolute -inset-2 bg-gradient-to-r from-blue-500/20 to-purple-500/20 blur-xl rounded-full pointer-events-none" />
+            <div className="w-10 h-10 bg-gradient-to-tr from-blue-500 to-purple-500 rounded-xl flex items-center justify-center font-bold text-lg shadow-lg relative z-10">
+              S
+            </div>
+            <div className="relative z-10">
+              <h1 className="text-xl font-bold bg-gradient-to-r from-white to-gray-400 bg-clip-text text-transparent">
+                Sentinel Dashboard
+              </h1>
+              <p className="text-gray-500 text-xs tracking-wider uppercase font-semibold">QA Intelligence Platform</p>
+            </div>
           </div>
           <div className="flex items-center gap-4">
             <IngestionSelector />

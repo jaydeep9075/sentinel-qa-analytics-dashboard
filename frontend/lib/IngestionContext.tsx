@@ -37,15 +37,25 @@ export const IngestionProvider: React.FC<{ children: React.ReactNode }> = ({
       .then((data) => {
         setIngestions(data.ingestions);
         if (data.ingestions.length > 0) {
-          setSelectedIngestion(data.ingestions[0].id);
+          const saved = localStorage.getItem("selectedIngestion");
+          if (saved && data.ingestions.some((i: Ingestion) => i.id === saved)) {
+            setSelectedIngestion(saved);
+          } else {
+            setSelectedIngestion(data.ingestions[0].id);
+          }
         }
       })
       .finally(() => setLoading(false));
   }, []);
 
+  const handleSetSelectedIngestion = (id: string) => {
+    setSelectedIngestion(id);
+    localStorage.setItem("selectedIngestion", id);
+  };
+
   return (
     <IngestionContext.Provider
-      value={{ ingestions, selectedIngestion, setSelectedIngestion, loading }}
+      value={{ ingestions, selectedIngestion, setSelectedIngestion: handleSetSelectedIngestion, loading }}
     >
       {children}
     </IngestionContext.Provider>
