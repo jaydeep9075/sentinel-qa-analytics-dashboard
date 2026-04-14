@@ -198,7 +198,15 @@ async def list_ingestions(current_user: dict = Depends(get_current_user)):
                 "summary": summary,
                 "created": path.stat().st_mtime
             })
-    return {"ingestions": sorted(ingestions, key=lambda x: x["created"], reverse=True)}
+    
+    # Sort by creation time (oldest first)
+    sorted_ingestions = sorted(ingestions, key=lambda x: x["created"])
+    
+    # Assign build labels
+    for i, item in enumerate(sorted_ingestions):
+        item["build_label"] = f"Build {i + 1}"
+        
+    return {"ingestions": sorted(sorted_ingestions, key=lambda x: x["created"], reverse=True)}
 
 @app.get("/projects")
 async def list_projects(current_user: dict = Depends(get_current_user)):

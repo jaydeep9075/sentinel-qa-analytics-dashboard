@@ -15,8 +15,9 @@ export default function IngestionSelector() {
       className="bg-black/50 border border-white/10 rounded-lg px-3 py-1 text-sm"
     >
       {ingestions.map((ing) => (
+        // value = real folder id (sent in API headers), label = friendly "Build N"
         <option key={ing.id} value={ing.id}>
-          {ing.id}
+          {ing.build_label}
         </option>
       ))}
     </select>

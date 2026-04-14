@@ -2,14 +2,17 @@
 import React, { createContext, useContext, useState, useEffect } from "react";
 import { listIngestions } from "./api";
 
-interface Ingestion {
-  id: string;
+export interface Ingestion {
+  id: string;          // real folder name — used in API headers, never shown
+  build_label: string; // e.g. "Build 1", "Build 2"
   summary: string;
+  created: number;
 }
 
 interface IngestionContextType {
   ingestions: Ingestion[];
-  selectedIngestion: string | null;
+  selectedIngestion: string | null;   // stores the real folder id
+  selectedBuildLabel: string | null;  // the friendly label for the selected ingestion
   setSelectedIngestion: (id: string) => void;
   loading: boolean;
 }
@@ -17,6 +20,7 @@ interface IngestionContextType {
 const IngestionContext = createContext<IngestionContextType>({
   ingestions: [],
   selectedIngestion: null,
+  selectedBuildLabel: null,
   setSelectedIngestion: () => {},
   loading: false,
 });
@@ -27,22 +31,20 @@ export const IngestionProvider: React.FC<{ children: React.ReactNode }> = ({
   children,
 }) => {
   const [ingestions, setIngestions] = useState<Ingestion[]>([]);
-  const [selectedIngestion, setSelectedIngestion] = useState<string | null>(
-    null,
-  );
+  const [selectedIngestion, setSelectedIngestion] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     listIngestions()
       .then((data) => {
-        setIngestions(data.ingestions);
-        if (data.ingestions.length > 0) {
+        const list: Ingestion[] = data.ingestions;
+        setIngestions(list);
+        if (list.length > 0) {
+          // Try to restore last selected by real folder id
           const saved = localStorage.getItem("selectedIngestion");
-          if (saved && data.ingestions.some((i: Ingestion) => i.id === saved)) {
-            setSelectedIngestion(saved);
-          } else {
-            setSelectedIngestion(data.ingestions[0].id);
-          }
+          const stillExists = saved && list.some((i) => i.id === saved);
+          // If the saved ingestion was deleted, fall back to the newest (index 0)
+          setSelectedIngestion(stillExists ? saved! : list[0].id);
         }
       })
       .finally(() => setLoading(false));
@@ -53,9 +55,18 @@ export const IngestionProvider: React.FC<{ children: React.ReactNode }> = ({
     localStorage.setItem("selectedIngestion", id);
   };
 
+  const selectedBuildLabel =
+    ingestions.find((i) => i.id === selectedIngestion)?.build_label ?? null;
+
   return (
     <IngestionContext.Provider
-      value={{ ingestions, selectedIngestion, setSelectedIngestion: handleSetSelectedIngestion, loading }}
+      value={{
+        ingestions,
+        selectedIngestion,
+        selectedBuildLabel,
+        setSelectedIngestion: handleSetSelectedIngestion,
+        loading,
+      }}
     >
       {children}
     </IngestionContext.Provider>
