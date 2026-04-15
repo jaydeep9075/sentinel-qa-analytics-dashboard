@@ -12,19 +12,23 @@ interface AIChatInputProps {
 export default function AIChatInput({ onChartGenerated }: AIChatInputProps) {
   const { selectedIngestion } = useIngestion();
   const { selectedRole } = useRB();
+  const roleKey = (selectedRole || "qa").toLowerCase();
   const [prompt, setPrompt] = useState("");
   const [loading, setLoading] = useState(false);
   const [status, setStatus] = useState<string | null>(null);
 
-  const shortcuts = (!selectedRole || selectedRole === "qa") ? [
-    "Bar chart of test status distribution",
-    "Pie chart of passed vs failed",
-    "Slowest 5 tests",
-  ] : [
-    "Test failure trends over time",
-    "Release health summary pie chart",
-    "Status by module area",
-  ];
+  const shortcuts =
+    roleKey === "cto"
+      ? [
+          "Release health summary pie chart (passed vs failed)",
+          "Line chart of failure trend over time",
+          "Bar chart of failures by module",
+        ]
+      : [
+          "Bar chart of test status distribution",
+          "Pie chart of passed vs failed",
+          "Slowest 5 tests",
+        ];
 
   const handleSubmit = async (e?: React.FormEvent, manualPrompt?: string) => {
     e?.preventDefault();

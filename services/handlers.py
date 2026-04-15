@@ -10,6 +10,7 @@ from .role_manager import RoleManager
 logger = logging.getLogger(__name__)
 
 _sql_cache = {}
+_SAFE_COLORWAY = ["#3b82f6", "#22c55e", "#f59e0b", "#ef4444", "#8b5cf6", "#06b6d4"]
 
 def _convert_timestamp(obj):
     if isinstance(obj, dict):
@@ -44,6 +45,59 @@ def _get_schema_with_samples():
         schema[tbl] = col_info
     return schema
 
+
+def _sanitize_sql_text(sql: str) -> str:
+    if not sql:
+        return ""
+    cleaned = re.sub(r"```sql\s*|```", "", sql, flags=re.IGNORECASE).strip()
+    cleaned = re.sub(r"^\s*duckdb\s*:?", "", cleaned, flags=re.IGNORECASE).strip()
+    return cleaned.rstrip(";")
+
+
+def _fallback_sql_for_prompt(prompt: str) -> str:
+    p = (prompt or "").lower()
+    if "how many tests failed" in p or ("failed" in p and "how many" in p):
+        return "SELECT COUNT(*) AS failed_count FROM flattened_tests WHERE status = 'failed'"
+    if "how many tests passed" in p or ("passed" in p and "how many" in p):
+        return "SELECT COUNT(*) AS passed_count FROM flattened_tests WHERE status = 'passed'"
+    if "pass rate" in p or "good for release" in p or "ready for release" in p:
+        return "SELECT ROUND(SUM(CASE WHEN status='passed' THEN 1 ELSE 0 END)*100.0/COUNT(*), 2) AS pass_rate FROM flattened_tests"
+    if "status" in p and "test" in p:
+        return "SELECT status, COUNT(*) AS test_count FROM flattened_tests GROUP BY status ORDER BY test_count DESC"
+    if "module" in p and "count" in p:
+        return "SELECT module_name, COUNT(*) AS test_count FROM test_cases GROUP BY module_name ORDER BY test_count DESC"
+    return ""
+
+
+def _is_dataframe_usable(df: pd.DataFrame) -> bool:
+    if df is None or df.empty:
+        return False
+    non_null = df.dropna(how="all")
+    return not non_null.empty
+
+
+def _sanitize_plotly_code(code: str) -> str:
+    sanitized = code or ""
+    sanitized = re.sub(r"```python\s*|```", "", sanitized, flags=re.IGNORECASE).strip()
+    sanitized = re.sub(r"'Blues_d'", "'Blues'", sanitized)
+    sanitized = re.sub(r'"Blues_d"', '"Blues"', sanitized)
+    sanitized = re.sub(r"'Blues_r'", "'Blues'", sanitized)
+    sanitized = re.sub(r'"Blues_r"', '"Blues"', sanitized)
+    sanitized = re.sub(r",\s*piecolorway\s*=\s*[^,)]+", "", sanitized, flags=re.IGNORECASE)
+    sanitized = re.sub(r"piecolorway\s*=\s*[^,)]+,\s*", "", sanitized, flags=re.IGNORECASE)
+    sanitized = re.sub(r",\s*hovertemplate\s*=\s*[^,)]+", "", sanitized)
+    sanitized = re.sub(r"hovertemplate\s*=\s*[^,)]+,\s*", "", sanitized)
+    sanitized = re.sub(r",\s*customdata\s*=\s*[^,)]+", "", sanitized)
+    sanitized = re.sub(r"customdata\s*=\s*[^,)]+,\s*", "", sanitized)
+    sanitized = re.sub(r",?\s*width\s*=\s*\d+\s*,?", "", sanitized)
+    sanitized = re.sub(r",?\s*height\s*=\s*\d+\s*,?", "", sanitized)
+    if "template='plotly_dark'" not in sanitized and 'template="plotly_dark"' not in sanitized:
+        if "fig.update_layout(" in sanitized:
+            sanitized = sanitized.replace("fig.update_layout(", "fig.update_layout(template='plotly_dark', ")
+        else:
+            sanitized += "\nfig.update_layout(template='plotly_dark')"
+    return sanitized
+
 async def handle_chat(user_message: str, session_id: str, ingestion_id: str,
                       role: str = None, project_id: str = None):
     # Ensure data for this ingestion is loaded
@@ -66,6 +120,7 @@ async def handle_chat(user_message: str, session_id: str, ingestion_id: str,
     role_instruction = ""
     if role:
         role_instruction = state.role_manager.get_role_instruction(role)
+        logger.info(f"Role requested for chat: {role}; loaded={bool(role_instruction)}")
     if not role_instruction:
         role_instruction = "You are a helpful QA analytics assistant. Provide clear, concise answers."
 
@@ -154,24 +209,23 @@ Return JSON: {{"action":"sql","data":"SQL_QUERY"}} or {{"action":"answer","data"
     # --------------------------------------------------------------
     # SQL execution and answer generation (working logic)
     # --------------------------------------------------------------
-    if action == "sql" or (action == "answer" and "SELECT" in data.upper()):
-        if "SELECT" in data.upper():
+    if action == "sql" or (action == "answer" and isinstance(data, str) and "SELECT" in data.upper()):
+        if isinstance(data, str) and "SELECT" in data.upper():
             action = "sql"
-        df, sql_error = data_loader.execute_sql(data)
+        sql_candidate = _sanitize_sql_text(data if isinstance(data, str) else "")
+        if not sql_candidate:
+            sql_candidate = _fallback_sql_for_prompt(user_message)
+        df, sql_error = data_loader.execute_sql(sql_candidate)
         # Retry with hardcoded fallbacks for common queries (same as original)
-        if sql_error and "how many tests failed" in user_message.lower():
-            data = "SELECT COUNT(*) FROM flattened_tests WHERE status='failed'"
-            df, sql_error = data_loader.execute_sql(data)
-        elif sql_error and "how many tests passed" in user_message.lower():
-            data = "SELECT COUNT(*) FROM flattened_tests WHERE status='passed'"
-            df, sql_error = data_loader.execute_sql(data)
-        elif sql_error and "pass rate" in user_message.lower():
-            data = "SELECT ROUND(SUM(CASE WHEN status='passed' THEN 1 ELSE 0 END)*100.0/COUNT(*), 2) as pass_rate FROM flattened_tests"
-            df, sql_error = data_loader.execute_sql(data)
         if sql_error:
-            response = f"SQL error: {sql_error}"
-        elif df.empty:
-            response = "No data found for your request."
+            fallback_sql = _fallback_sql_for_prompt(user_message)
+            if fallback_sql and fallback_sql != sql_candidate:
+                logger.info("Retrying chat request with fallback SQL")
+                df, sql_error = data_loader.execute_sql(fallback_sql)
+        if sql_error:
+            response = f"I couldn't run the data query safely. Details: {sql_error}"
+        elif not _is_dataframe_usable(df):
+            response = "I found the query target but it returned empty or null-only data."
         else:
             df_copy = df.copy()
             for col in df_copy.select_dtypes(include=['datetime64']).columns:
@@ -208,6 +262,8 @@ Data (as JSON):
 {data_json}
 
 Total rows: {len(df)}
+
+Respect the role instruction tone and audience depth exactly.
 
 **RESPONSE FORMAT RULES:**
 - For counts: "📊 [description]: [number]"
@@ -284,6 +340,7 @@ async def handle_chart(user_prompt: str, session_id: str, ingestion_id: str,
     role_instruction = ""
     if role:
         role_instruction = state.role_manager.get_role_instruction(role)
+        logger.info(f"Role requested for chart: {role}; loaded={bool(role_instruction)}")
     if not role_instruction:
         role_instruction = "You are a data analyst."
 
@@ -338,9 +395,12 @@ Return only SQL. If impossible, return "N/A".
     sql = llm.generate(sql_prompt, temperature=0.1)
     logger.info(f"Generated SQL for chart: {sql}")
     if not sql or sql.strip() == "N/A":
-        return None, "Could not determine data for chart"
+        fallback_sql = _fallback_sql_for_prompt(user_prompt)
+        if not fallback_sql:
+            return None, "Could not determine data for chart"
+        sql = fallback_sql
 
-    sql = re.sub(r"```sql\n?|```", "", sql).strip()
+    sql = _sanitize_sql_text(sql)
     df, sql_error = data_loader.execute_sql(sql)
 
     max_retries = 2
@@ -358,7 +418,7 @@ Return only SQL.
 """
             corrected_sql = llm.generate(correction_prompt, temperature=0.2)
             if corrected_sql:
-                corrected_sql = re.sub(r"```sql\n?|```", "", corrected_sql).strip()
+                corrected_sql = _sanitize_sql_text(corrected_sql)
                 df, sql_error = data_loader.execute_sql(corrected_sql)
                 sql = corrected_sql
                 logger.info(f"Retry {attempt+1}: using corrected SQL")
@@ -369,9 +429,17 @@ Return only SQL.
 
     if sql_error:
         logger.error(f"SQL error after retries: {sql_error}")
-        return None, f"SQL error: {sql_error}"
-    if df.empty:
-        return None, "No data found for chart"
+        fallback_sql = _fallback_sql_for_prompt(user_prompt)
+        if fallback_sql and fallback_sql != sql:
+            df, sql_error = data_loader.execute_sql(fallback_sql)
+            if not sql_error and _is_dataframe_usable(df):
+                sql = fallback_sql
+            else:
+                return None, f"SQL error: {sql_error}"
+        else:
+            return None, f"SQL error: {sql_error}"
+    if not _is_dataframe_usable(df):
+        return None, "No data found for chart (empty or null-only result)"
 
     _sql_cache[cache_key] = sql
     if len(_sql_cache) > 100:
@@ -394,14 +462,14 @@ def _detect_chart_type(prompt: str) -> str:
         return "auto"
 
 def _generate_chart_from_df(df: pd.DataFrame, user_prompt: str, session_id: str, sql: str, system_context: str = ""):
-    if df.empty:
+    if not _is_dataframe_usable(df):
         return None, "No data available for chart"
     chart_type = _detect_chart_type(user_prompt)
     if chart_type == "pie" and len(df.columns) < 2:
         return None, "Pie chart requires at least 2 columns (category and value)"
     elif chart_type == "line" and len(df) < 2:
         return None, "Line chart requires at least 2 data points"
-    df = df.dropna()
+    df = df.dropna(how="all")
     if df.empty:
         return None, "Data contains only null values"
     data_sample = df.head(100).to_dict(orient="records")
@@ -468,27 +536,7 @@ Return only Python code. Define variable `fig`.
     if not code:
         return None, "Chart generation failed"
 
-    code = re.sub(r"```python\n?|```", "", code).strip()
-    
-    code = re.sub(r"'Blues_d'", "'Blues'", code)
-    code = re.sub(r'"Blues_d"', '"Blues"', code)
-    code = re.sub(r"'Blues_r'", "'Blues'", code)
-    code = re.sub(r'"Blues_r"', '"Blues"', code)
-    
-    if 'pie' in code.lower():
-        code = re.sub(r',\s*hovertemplate\s*=\s*[^,)]+', '', code)
-        code = re.sub(r'hovertemplate\s*=\s*[^,)]+,\s*', '', code)
-        code = re.sub(r',\s*customdata\s*=\s*[^,)]+', '', code)
-        code = re.sub(r'customdata\s*=\s*[^,)]+,\s*', '', code)
-    
-    if "template='plotly_dark'" not in code and 'template="plotly_dark"' not in code:
-        if "fig.update_layout(" in code:
-            code = code.replace("fig.update_layout(", "fig.update_layout(template='plotly_dark', ")
-        else:
-            code += "\nfig.update_layout(template='plotly_dark')"
-    
-    code = re.sub(r',?\s*width\s*=\s*\d+\s*,?', '', code)
-    code = re.sub(r',?\s*height\s*=\s*\d+\s*,?', '', code)
+    code = _sanitize_plotly_code(code)
     
     try:
         logger.info(f"Chart code execution - length: {len(code)}")
@@ -506,7 +554,8 @@ Return only Python code. Define variable `fig`.
             margin=dict(l=40, r=40, t=50, b=40),
             paper_bgcolor='rgba(0,0,0,0)',
             plot_bgcolor='rgba(0,0,0,0)',
-            font=dict(color='#e5e7eb')
+            font=dict(color='#e5e7eb'),
+            colorway=_SAFE_COLORWAY
         )
         
         if not fig.layout.title or not fig.layout.title.text:

@@ -9,6 +9,7 @@ import ReactMarkdown from "react-markdown";
 export default function AIChatbot() {
   const { selectedIngestion } = useIngestion();
   const { selectedRole, selectedProject } = useRB();
+  const roleKey = (selectedRole || "qa").toLowerCase();
   const [messages, setMessages] = useState<
     { role: "user" | "ai"; content: string }[]
   >([
@@ -111,14 +112,24 @@ export default function AIChatbot() {
       </div>
       <div className="p-4 border-t border-white/10 bg-black/20">
         <div className="flex gap-2 overflow-x-auto pb-3 mb-1 no-scrollbar">
-          {[
-            "Give me all available module names",
-            "Give me number of tests per module",
-            "Is this result good for release?",
-            "Give me list of tests from Common Functionality / Login module",
-            "What is the average time it took to run each test?",
-            "Give me the top 15 slowest tests and duration"
-          ].map((suggestion, i) => (
+          {(roleKey === "cto"
+            ? [
+                "Is this result good for release?",
+                "Give me pass rate and status breakdown",
+                "Show failure trend and top failure reasons",
+                "Give me the top 10 riskiest modules by failure count",
+                "What are the top 15 slowest tests and duration?",
+                "Summarize key release blockers in 5 bullets",
+              ]
+            : [
+                "Give me all available module names",
+                "Give me number of tests per module",
+                "Show failed tests list with errors",
+                "Give me list of tests from Common Functionality / Login module",
+                "What is the average time it took to run each test?",
+                "Give me the top 15 slowest tests and duration",
+              ]
+          ).map((suggestion, i) => (
             <button 
               key={i}
               onClick={() => setInput(suggestion)} 
