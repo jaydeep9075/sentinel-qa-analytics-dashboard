@@ -185,27 +185,41 @@ async def data_status(
 
 @app.get("/ingestions")
 async def list_ingestions(current_user: dict = Depends(get_current_user)):
-    """Return list of available ingestion IDs with metadata."""
+    """Return list of available ingestion IDs with metadata (prefer JSON summary)."""
     ingestions = []
     for path in config.DATA_BASE_PATH.iterdir():
         if path.is_dir() and (path / "lancedb").exists():
-            summary_file = path / "summary.md"
-            summary = ""
-            if summary_file.exists():
-                summary = summary_file.read_text()
+            # Try to read summary.json first
+            summary_json = path / "summary.json"
+            summary_text = ""
+            if summary_json.exists():
+                try:
+                    with open(summary_json, 'r', encoding='utf-8') as f:
+                        data = json.load(f)
+                    # Convert metrics to a readable string or keep as JSON string
+                    summary_text = json.dumps(data.get("metrics", {}), indent=2)
+                except Exception as e:
+                    logger.warning(f"Could not read {summary_json}: {e}")
+            else:
+                # Fallback to markdown with UTF-8 (though we prefer JSON)
+                summary_md = path / "summary.md"
+                if summary_md.exists():
+                    try:
+                        summary_text = summary_md.read_text(encoding='utf-8')
+                    except Exception:
+                        summary_text = ""
+            
             ingestions.append({
                 "id": path.name,
-                "summary": summary,
+                "summary": summary_text,
                 "created": path.stat().st_mtime
             })
     
     # Sort by creation time (oldest first)
     sorted_ingestions = sorted(ingestions, key=lambda x: x["created"])
-    
-    # Assign build labels
     for i, item in enumerate(sorted_ingestions):
         item["build_label"] = f"Build {i + 1}"
-        
+    
     return {"ingestions": sorted(sorted_ingestions, key=lambda x: x["created"], reverse=True)}
 
 @app.get("/projects")
