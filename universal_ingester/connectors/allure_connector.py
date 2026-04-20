@@ -1,98 +1,152 @@
+# connectors/allure_connector.py
 import json
+import os
+import glob
 import uuid
-import pandas as pd
-from pathlib import Path
 from typing import List, Dict, Any
+import pandas as pd
+from datetime import datetime, timezone
 from .base import BaseConnector
 import logging
 
 logger = logging.getLogger(__name__)
 
+
 class AllureConnector(BaseConnector):
-    def __init__(self, directory: str):
-        self.directory = Path(directory)
-        if not self.directory.exists():
-            raise FileNotFoundError(f"Allure directory not found: {directory}")
+    """
+    Connector for Allure test results.
+    Produces a single dataset 'test_results' with a 'tests' JSON column,
+    exactly matching the TiDB ingestion schema.
+    """
+    def __init__(self, allure_results_path: str):
+        if not allure_results_path:
+            raise ValueError("Allure results path is required")
+        self.root_path = allure_results_path
+        if not os.path.isdir(self.root_path):
+            raise ValueError(f"Path does not exist: {self.root_path}")
+
+    def _find_result_files(self) -> List[str]:
+        """Find all *-result.json files, supporting nested artifact folders."""
+        result_files = []
+        # Check if the path itself is an allure-results directory
+        if os.path.basename(self.root_path) == "allure-results":
+            result_files = glob.glob(os.path.join(self.root_path, "*-result.json"))
+            if result_files:
+                return result_files
+
+        # Look for artifact_*/allure-results subdirectories
+        artifact_pattern = os.path.join(self.root_path, "artifact_*", "allure-results", "*-result.json")
+        result_files = glob.glob(artifact_pattern)
+        if result_files:
+            return result_files
+
+        # Fallback: recursive search for allure-results folders
+        for root, dirs, files in os.walk(self.root_path):
+            if os.path.basename(root) == "allure-results":
+                result_files.extend(glob.glob(os.path.join(root, "*-result.json")))
+        return result_files
+
+    def _map_status(self, allure_status: str) -> str:
+        """Map Allure status to a consistent value expected by data_loader."""
+        status_map = {
+            "passed": "passed",
+            "failed": "failed",
+            "broken": "failed",
+            "skipped": "skipped",
+            "pending": "pending",
+            "unknown": "unknown"
+        }
+        return status_map.get(allure_status.lower(), allure_status.lower())
+
+    def _parse_duration(self, start: int, stop: int) -> str:
+        """Convert start/stop timestamps (ms) to duration string like '43758ms'."""
+        if start is not None and stop is not None:
+            duration_ms = stop - start
+            return f"{duration_ms}ms"
+        return "0ms"
 
     def fetch(self) -> List[Dict[str, Any]]:
-        """Parse Allure results and return two datasets: test_results and test_cases."""
-        result_files = list(self.directory.glob("*-result.json"))
-        if not result_files:
-            logger.warning(f"No Allure result files found in {self.directory}")
-            return []
+        result_files = self._find_result_files()
+        logger.info(f"Found {len(result_files)} result.json files")
 
-        # Prepare rows for test_results
-        results_rows = []
-        # Collect unique test definitions for test_cases
-        test_case_map = {}
+        if not result_files:
+            logger.warning(f"No result.json files found in {self.root_path}")
+            # Return empty dataset with correct schema
+            empty_df = pd.DataFrame(columns=["id", "project_id", "executed_at", "tests"])
+            return [{
+                'name': 'test_results',
+                'data': empty_df,
+                'type': 'structured',
+                'metadata': {'source': 'allure', 'rows': 0}
+            }]
+
+        all_tests = []
+        min_start = float('inf')
+        max_stop = 0
 
         for file_path in result_files:
-            with open(file_path, 'r', encoding='utf-8') as f:
-                data = json.load(f)
+            try:
+                with open(file_path, 'r', encoding='utf-8') as f:
+                    data = json.load(f)
+            except Exception as e:
+                logger.error(f"Error reading {file_path}: {e}")
+                continue
 
-            # Extract core fields
-            test_name = data.get('name', '')
-            status = data.get('status', '').lower()
-            duration_ms = data.get('stop', 0) - data.get('start', 0) if data.get('stop') and data.get('start') else 0
-            error = ''
-            if status == 'failed':
-                details = data.get('statusDetails', {})
-                error = details.get('message', '') or details.get('trace', '')
+            # Extract basic fields
+            name = data.get("name")
+            full_name = data.get("fullName", name)
+            status = self._map_status(data.get("status", "unknown"))
+            start = data.get("start")
+            stop = data.get("stop")
+            duration_str = self._parse_duration(start, stop)
+            description = data.get("description")
+            status_details = data.get("statusDetails", {})
+            error_message = status_details.get("message", "")
+            error_trace = status_details.get("trace", "")
+            error = error_message if error_message else (error_trace[:200] if error_trace else "")
 
-            labels = data.get('labels', [])
-            tags = [l['value'] for l in labels if l.get('name') == 'tag']
-            suite = next((l['value'] for l in labels if l.get('name') == 'suite'), 'Unknown')
-            # Extract executed_at from start timestamp (milliseconds)
-            executed_at = None
-            if data.get('start'):
-                executed_at = pd.to_datetime(data['start'], unit='ms')
+            # Extract labels for additional metadata
+            labels = data.get("labels", [])
+            label_dict = {l["name"]: l["value"] for l in labels if "name" in l and "value" in l}
+            spec_file = label_dict.get("suite", "")  # or use another label
 
-            # Build test execution dict
-            test_execution = {
-                "full_title": test_name,
+            # Track overall execution time window
+            if start is not None:
+                min_start = min(min_start, start)
+            if stop is not None:
+                max_stop = max(max_stop, stop)
+
+            # Build test object matching expected schema
+            test_obj = {
+                "full_title": full_name,
                 "status": status,
-                "duration": duration_ms / 1000.0,          # seconds
+                "duration": duration_str,
                 "error": error,
-                "spec_file": file_path.name,
-                "suite": suite,
-                "tags": ','.join(tags),
+                "spec_file": spec_file,
+                # Additional fields that might be useful
+                "name": name,
+                "description": description,
+                "labels": label_dict,
+                "uuid": data.get("uuid"),
             }
+            all_tests.append(test_obj)
 
-            # Create a row for test_results (one row per result file)
-            results_rows.append({
-                "id": str(uuid.uuid4()),
-                "project_id": "allure_project",           # static, can be overridden
-                "executed_at": executed_at,
-                "tests": [test_execution]                 # list with one test
-            })
+        logger.info(f"Parsed {len(all_tests)} test results")
 
-            # Record test case definition (unique by test_name)
-            if test_name not in test_case_map:
-                test_case_map[test_name] = {
-                    "title": test_name,
-                    "module_name": suite,
-                    "priority": "Medium",                  # default, can be inferred from tags
-                    "description": data.get('description', ''),
-                }
+        # Create a single row with all tests
+        executed_at = datetime.fromtimestamp(min_start / 1000, tz=timezone.utc).isoformat() if min_start != float('inf') else datetime.now(timezone.utc).isoformat()
+        row_id = str(uuid.uuid4())
 
-        # Build test_cases DataFrame
-        test_cases_df = pd.DataFrame(list(test_case_map.values()))
-        # Build test_results DataFrame
-        test_results_df = pd.DataFrame(results_rows)
+        df = pd.DataFrame([{
+            "id": row_id,
+            "project_id": None,  # Can be set from config later if needed
+            "executed_at": executed_at,
+            "tests": json.dumps(all_tests)  # Store as JSON string
+        }])
 
-        logger.info(f"Loaded {len(test_results_df)} test result rows and {len(test_cases_df)} unique test cases")
-
-        return [
-            {
-                'name': 'test_results',
-                'data': test_results_df,
-                'type': 'structured',
-                'metadata': {'directory': str(self.directory), 'file_count': len(result_files)}
-            },
-            {
-                'name': 'test_cases',
-                'data': test_cases_df,
-                'type': 'structured',
-                'metadata': {'directory': str(self.directory), 'unique_tests': len(test_cases_df)}
-            }
-        ]
+        return [{
+            'name': 'test_results',
+            'data': df,
+            'type': 'structured',
+            'metadata': {'source': 'allure', 'rows': 1, 'test_count': len(all_tests)}
+        }]
