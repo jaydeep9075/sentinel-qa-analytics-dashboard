@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
+import Link from "next/link";
 import AIChatbot from "@/components/AIChatbot";
 import AIChatInput from "@/components/AIChatInput";
 import ChartGallery from "@/components/ChartGallery";
@@ -78,6 +79,12 @@ export default function Dashboard() {
                 <span className="text-xs text-red-400">Backend Offline</span>
               </div>
             )}
+            <Link 
+              href="/build-trends" 
+              className="text-sm text-blue-400 hover:text-blue-300 font-bold ml-2 border border-blue-500/30 px-3 py-1.5 rounded-lg bg-blue-500/10 transition-colors"
+            >
+              Build Trends
+            </Link>
             <button
               onClick={handleLogout}
               className="text-sm text-red-400 hover:text-red-300 ml-2"

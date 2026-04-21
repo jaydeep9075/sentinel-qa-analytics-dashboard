@@ -3,6 +3,8 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
+    "prebuild": "node scripts/generate-builds-json.js",
+    "predev": "node scripts/generate-builds-json.js",
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
