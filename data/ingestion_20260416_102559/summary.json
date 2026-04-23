@@ -1,0 +1,82 @@
+{
+  "build_id": "ingestion_20260416_102559",
+  "ingested_at": "2026-04-16T10:27:24.609029",
+  "total_records_ingested": 570,
+  "metrics": {
+    "total_tests": 1219,
+    "passed": 954,
+    "failed": 265,
+    "pass_rate": 78.26,
+    "avg_duration_sec": 18.52,
+    "total_duration_sec": 18076.02,
+    "most_common_error": "{'location': {'column': 0, 'file': '', 'line': 0}, 'message': '', 'stack': ''}",
+    "slowest_tests": [
+      {
+        "name": "should have data on achievements section",
+        "duration_sec": 296.26
+      },
+      {
+        "name": "Calculate Longest Going-for-Green Streak (APP shots) per Activity",
+        "duration_sec": 243.72
+      },
+      {
+        "name": "should have data on achievements section",
+        "duration_sec": 184.14
+      },
+      {
+        "name": "should have data on achievements section",
+        "duration_sec": 158.01
+      },
+      {
+        "name": "should have data on achievements section",
+        "duration_sec": 129.07
+      },
+      {
+        "name": "should have data on achievements section",
+        "duration_sec": 128.66
+      },
+      {
+        "name": "should have data on achievements section",
+        "duration_sec": 127.32
+      },
+      {
+        "name": "should navigate to teams page and verify page loads successfullly ",
+        "duration_sec": 124.21
+      },
+      {
+        "name": "should have data on achievements section",
+        "duration_sec": 118.85
+      },
+      {
+        "name": "Validate the Connections Page UI for player 1 and send a request to player 2.",
+        "duration_sec": 113.98
+      },
+      {
+        "name": "should have valid data on coach profile",
+        "duration_sec": 110.7
+      },
+      {
+        "name": "Validate the Connections Page UI on a macbook-16 screen for player and send a request to coach.",
+        "duration_sec": 110.13
+      },
+      {
+        "name": "Validate the request on the Connections Page macbook-16 screen for coach, sent by player, and accept it.",
+        "duration_sec": 104.21
+      },
+      {
+        "name": "should create round highlights using share button",
+        "duration_sec": 100.71
+      },
+      {
+        "name": "should have data on achievements section",
+        "duration_sec": 99.76
+      }
+    ]
+  },
+  "tables": [
+    "documents",
+    "sources",
+    "structured_test_cases",
+    "structured_test_results"
+  ]
+}

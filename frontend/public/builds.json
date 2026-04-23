@@ -1,0 +1,820 @@
+{
+  "builds": [
+    {
+      "build_id": "ingestion_20260423_111619",
+      "ingested_at": "2026-04-23T11:16:28.794499+00:00",
+      "total_records_ingested": 21,
+      "metrics": {
+        "total_tests": 21,
+        "executed_tests": 21,
+        "skipped_tests": 0,
+        "passed": 8,
+        "failed": 13,
+        "pass_rate": 38.1,
+        "avg_duration_sec": 363.03,
+        "total_duration_sec": 7623.72,
+        "most_common_error": "TimeoutError: locator.click: Timeout 20000ms exceeded.\nCall log:\n  - waiting for locator('.sod_label')\n    - locator resolved to <span class=\"sod_label\" title=\"HSA Store\">HSA Store</span>\n  - attempti",
+        "slowest_tests": [
+          {
+            "name": "Platforms/SOM_OCI/HSA/SOM_Payment.spec.ts#SOM_AddPayment @hsa_storefront @payment @hsa_som_oci TS_13-SOM_Add_Payment_Status_FraudCheck @fraud_check @som_oci_smoke @som_oci_sentinel",
+            "duration_sec": 453.94
+          },
+          {
+            "name": "Platforms/SOM_OCI/HSA/SOM_UserType.spec.ts#SOM_userType @hsa_storefront @user_type @hsa_som_oci TS_01-SOM_registeredUserType @registered_user @som_oci_smoke @som_oci_sentinel",
+            "duration_sec": 410.71
+          },
+          {
+            "name": "Platforms/SOM_OCI/FSA/SOM_OrderDetails.spec.ts#SOM_OrderAmount_SOM_ProductSku @fsa_storefront @order_details @fsa_som_oci @som_oci_smoke @som_oci_sentinel TS_06-SOM_orderAmount_productSKU matches with FSA_OrderAmount_ProductSKU @order_amount",
+            "duration_sec": 407.58
+          },
+          {
+            "name": "Platforms/SOM_OCI/WDH/SOM_OrderDetails.spec.ts#SOM_OrderAmount_SOM_ProductSku @wdh_storefront @order_details @wdh_som_oci @som_oci_smoke TS_06-SOM_orderAmount_productSKU matches with WDH_OrderAmount_ProductSKU @order_amount",
+            "duration_sec": 402.46
+          },
+          {
+            "name": "Platforms/SOM_OCI/HSA/SOM_OrderDetails.spec.ts#SOM_OrderAmount_SOM_ProductSku @hsa_storefront @order_details @hsa_som_oci @som_oci_smoke @som_oci_sentinel TS_06-SOM_orderAmount_productSKU matches with HSA_OrderAmount_ProductSKU @order_amount",
+            "duration_sec": 392.14
+          },
+          {
+            "name": "Platforms/SFRA/Backoffice_BM/FSA/SFCC_paymentDetails.spec.ts#SFCC_PaymentDetails @fsa_storefront @payment_details @fsa_som_oci @som_oci_smoke @som_oci_sentinel TS_25-SFCC_Payment_Details_Matches_FSA_Payment_Details @payment_details",
+            "duration_sec": 382.46
+          },
+          {
+            "name": "Platforms/SFRA/Backoffice_BM/HSA/SFCC_paymentDetails.spec.ts#SFCC_PaymentDetails @hsa_storefront @payment_details @hsa_som_oci @som_oci_smoke @som_oci_sentinel TS_25-SFCC_PaymentDetailsMatchesWith_FSA_PaymentDetails @payment_details",
+            "duration_sec": 379.2
+          },
+          {
+            "name": "Platforms/SOM_OCI/FSA/SOM_Payment.spec.ts#SOM_AddPayment @fsa_storefront @payment @fsa_som_oci TS_13-SOM_Add_Payment_Status_FraudCheck @payment_fraud_check @som_oci_smoke @som_oci_sentinel",
+            "duration_sec": 377.14
+          },
+          {
+            "name": "Platforms/SFRA/Backoffice_BM/FSA/SFCC_PaymentStatus.spec.ts#SFCC_PaymentStatus @fsa_storefront @payment_status @fsa_som_oci @som_oci_smoke @som_oci_sentinel TS_22-SFCC_payment_status @payment_status",
+            "duration_sec": 376.68
+          },
+          {
+            "name": "Platforms/SOM_OCI/FSA/SOM_UserType.spec.ts#SOM_userType @fsa_storefront @user_type @fsa_som_oci TS_01-SOM_registeredUserType @registered_user @som_oci_smoke @som_oci_sentinel",
+            "duration_sec": 373.72
+          },
+          {
+            "name": "Platforms/SOM_OCI/WDH/SOM_Payment.spec.ts#SOM_AddPayment @wdh_storefront @payment @wdh_som_oci TS_13-SOM_Add_Payment_Status_FraudCheck @fraud_check @som_oci_smoke",
+            "duration_sec": 372.35
+          },
+          {
+            "name": "Platforms/SOM_OCI/WDH/SOM_OrderDetails.spec.ts#SOM_OrderAmount_SOM_ProductSku @wdh_storefront @order_details @wdh_som_oci @som_oci_smoke TS_07-SOM_verifyStore_&_verifyAddress of placed order. @store_address",
+            "duration_sec": 361.81
+          },
+          {
+            "name": "Platforms/SOM_OCI/HSA/SOM_OrderDetails.spec.ts#SOM_OrderAmount_SOM_ProductSku @hsa_storefront @order_details @hsa_som_oci @som_oci_smoke @som_oci_sentinel TS_07-SOM_verifyStore_&_verifyAddress of placed order @store_address",
+            "duration_sec": 359.87
+          },
+          {
+            "name": "Platforms/SOM_OCI/FSA/SOM_OrderDetails.spec.ts#SOM_OrderAmount_SOM_ProductSku @fsa_storefront @order_details @fsa_som_oci @som_oci_smoke @som_oci_sentinel TS_07-SOM_verifyStore_&_verifyAddress of placed order @store_address",
+            "duration_sec": 356.63
+          },
+          {
+            "name": "Platforms/SOM_OCI/WDH/SOM_UserType.spec.ts#SOM_userType @wdh_storefront @user_type @wdh_som_oci TS_01-SOM_registeredUserType @registered_user @som_oci_smoke",
+            "duration_sec": 350.09
+          }
+        ]
+      },
+      "tables": [
+        "documents",
+        "sources",
+        "structured_test_results"
+      ]
+    },
+    {
+      "build_id": "ingestion_20260423_110825",
+      "ingested_at": "2026-04-23T11:08:52.660915+00:00",
+      "total_records_ingested": 606,
+      "metrics": {
+        "total_tests": 606,
+        "executed_tests": 596,
+        "skipped_tests": 10,
+        "passed": 560,
+        "failed": 36,
+        "pass_rate": 93.96,
+        "avg_duration_sec": 238.23,
+        "total_duration_sec": 144367.92,
+        "most_common_error": "Error: Alaska/Hawaii Address Restriction message verification has Failed\n\nexpect(locator).toContainText(expected) failed\n\nLocator: locator('.shipping-error.c-checkout__shipping-error .alert')\nExpected",
+        "slowest_tests": [
+          {
+            "name": "Platforms/SFRA/Checkout/WDH/RestartedRegisteredCheckout.spec.ts#RestartedCheckoutTests @wdh_storefront @sixth_wdh-group TS_13-RestartedRegisteredCheckoutTest @restarted_registered_checkout ",
+            "duration_sec": 861.55
+          },
+          {
+            "name": "Platforms/SFRA/Checkout/HSA/RestartedRegisteredCheckout.spec.ts#RestartedCheckoutTests @hsa_storefront @sixth_hsa-group TS_13-RestartedRegisteredCheckout @restarted_registered_checkout ",
+            "duration_sec": 838.06
+          },
+          {
+            "name": "Platforms/SFRA/Checkout/FSA/RestartedRegisteredCheckout.spec.ts#RestartedCheckoutTests @fsa_storefront @sixth_fsa-group TS_13-RestartedRegisteredCheckout @restarted_registered_checkout ",
+            "duration_sec": 821.79
+          },
+          {
+            "name": "Platforms/SFRA/Checkout/WDH/SplitPayWithStoreCredit.spec.ts#SplitPayWithStoreCredit @wdh_storefront @wdh-splitPayWithStoreCredit @hsa-flaky-second-group TS_91-SplitPayWithStoreCredit @split_pay_with_store_credit",
+            "duration_sec": 707.21
+          },
+          {
+            "name": "Platforms/SFRA/Checkout/HSA/SplitPayWithPerksStoreCreditCoupon.spec.ts#SplitPayWithPerksStoreCreditCoupon @hsa_storefront @hsa-splitPayWithPerksStoreCreditCoupon @hsa-flaky-second-group TS_93-SplitPayWithPerksStoreCreditCoupon @split_pay_with_perks_store_credit_coupon",
+            "duration_sec": 705.71
+          },
+          {
+            "name": "Platforms/SFRA/Order History_Status/WDH/OrderStatus.spec.ts#OrderStatusTest @wdh_storefront @order_status_test @third_wdh-group TS_21-CanPlaceOrderAsRegisteredUser @can_place_order_as_registered",
+            "duration_sec": 700.42
+          },
+          {
+            "name": "Platforms/SFRA/Favorites Feature/WDH/AddToFavorites.spec.ts#AddToFavorites @wdh_storefront @addToFavorites @sixth_wdh-group TS_54-UnfavoriteProductFromPLPAndPDP @unfavorite_product_from_plp_pdp",
+            "duration_sec": 694.36
+          },
+          {
+            "name": "Platforms/SFRA/Favorites Feature/WDH/AddToFavorites.spec.ts#AddToFavorites @wdh_storefront @addToFavorites @sixth_wdh-group TS_53-IncreaseDecreaseProductQuantityFromFavorites @increase_decrease_product_quantity_from_favorites",
+            "duration_sec": 686.68
+          },
+          {
+            "name": "Platforms/SFRA/Favorites Feature/FSA/AddToFavorites.spec.ts#AddToFavorites @fsa_storefront @fsa-addToFavorites @sixth_fsa-group TS_53-IncreaseDecreaseProductQuantityFromFavorites @increase_decrease_product_quantity_from_favorites",
+            "duration_sec": 686.01
+          },
+          {
+            "name": "Platforms/SFRA/Favorites Feature/HSA/AddToFavorites.spec.ts#AddToFavorites @hsa_storefront @addToFavorites @sixth_hsa-group TS_53-IncreaseDecreaseProductQuantityFromFavorites @increase_decrease_product_quantity_from_favorites",
+            "duration_sec": 675.2
+          },
+          {
+            "name": "Platforms/SFRA/Checkout/FSA/SplitPayWithPerkStoreCredit.spec.ts#SplitPayWithPerksStoreCredit @fsa_storefront @fsa-splitPayWithPerksStoreCredit @fsa-flaky-group TS_92-SplitPayWithPerksStoreCredit @split_pay_with_perks_store_credit",
+            "duration_sec": 665.38
+          },
+          {
+            "name": "Platforms/SFRA/Order History_Status/WDH/OrderHistory.spec.ts#OrderHistoryTest @wdh_storefront @order_history_test @second_wdh-group TS_20.1-CanPlaceOrderAsRegisteredUser_1 @can_place_order_as_registered_user",
+            "duration_sec": 664.86
+          },
+          {
+            "name": "Platforms/SFRA/Checkout/HSA/SplitPayWithPerkStoreCredit.spec.ts#SplitPayWithPerksStoreCredit @hsa_storefront @hsa-splitPayWithPerksStoreCredit @hsa-flaky-second-group TS_92-SplitPayWithPerksStoreCredit @split_pay_with_perks_store_credit",
+            "duration_sec": 653.82
+          },
+          {
+            "name": "Platforms/SFRA/Order History_Status/WDH/OrderHistory.spec.ts#OrderHistoryTest @wdh_storefront @order_history_test @second_wdh-group TS_20.2-CanPlaceOrderAsRegisteredUser_2 @can_place_order_as_registered_user",
+            "duration_sec": 650.96
+          },
+          {
+            "name": "Platforms/SFRA/Checkout/FSA/RestartedGuestCheckout.spec.ts#RestartedCheckout @fsa_storefront @fifth_fsa-group TS_13-RestartedGuestCheckoutTest @restarted_guest_checkout",
+            "duration_sec": 650.01
+          }
+        ]
+      },
+      "tables": [
+        "documents",
+        "sources",
+        "structured_test_results"
+      ]
+    },
+    {
+      "build_id": "ingestion_20260423_105845",
+      "ingested_at": "2026-04-23T10:59:21.233019+00:00",
+      "total_records_ingested": 606,
+      "metrics": {
+        "total_tests": 606,
+        "passed": 560,
+        "failed": 36,
+        "pass_rate": 92.41,
+        "avg_duration_sec": 238.23,
+        "total_duration_sec": 144367.92,
+        "most_common_error": "Error: Alaska/Hawaii Address Restriction message verification has Failed\n\nexpect(locator).toContainText(expected) failed\n\nLocator: locator('.shipping-error.c-checkout__shipping-error .alert')\nExpected",
+        "slowest_tests": [
+          {
+            "name": "Platforms/SFRA/Checkout/WDH/RestartedRegisteredCheckout.spec.ts#RestartedCheckoutTests @wdh_storefront @sixth_wdh-group TS_13-RestartedRegisteredCheckoutTest @restarted_registered_checkout ",
+            "duration_sec": 861.55
+          },
+          {
+            "name": "Platforms/SFRA/Checkout/HSA/RestartedRegisteredCheckout.spec.ts#RestartedCheckoutTests @hsa_storefront @sixth_hsa-group TS_13-RestartedRegisteredCheckout @restarted_registered_checkout ",
+            "duration_sec": 838.06
+          },
+          {
+            "name": "Platforms/SFRA/Checkout/FSA/RestartedRegisteredCheckout.spec.ts#RestartedCheckoutTests @fsa_storefront @sixth_fsa-group TS_13-RestartedRegisteredCheckout @restarted_registered_checkout ",
+            "duration_sec": 821.79
+          },
+          {
+            "name": "Platforms/SFRA/Checkout/WDH/SplitPayWithStoreCredit.spec.ts#SplitPayWithStoreCredit @wdh_storefront @wdh-splitPayWithStoreCredit @hsa-flaky-second-group TS_91-SplitPayWithStoreCredit @split_pay_with_store_credit",
+            "duration_sec": 707.21
+          },
+          {
+            "name": "Platforms/SFRA/Checkout/HSA/SplitPayWithPerksStoreCreditCoupon.spec.ts#SplitPayWithPerksStoreCreditCoupon @hsa_storefront @hsa-splitPayWithPerksStoreCreditCoupon @hsa-flaky-second-group TS_93-SplitPayWithPerksStoreCreditCoupon @split_pay_with_perks_store_credit_coupon",
+            "duration_sec": 705.71
+          },
+          {
+            "name": "Platforms/SFRA/Order History_Status/WDH/OrderStatus.spec.ts#OrderStatusTest @wdh_storefront @order_status_test @third_wdh-group TS_21-CanPlaceOrderAsRegisteredUser @can_place_order_as_registered",
+            "duration_sec": 700.42
+          },
+          {
+            "name": "Platforms/SFRA/Favorites Feature/WDH/AddToFavorites.spec.ts#AddToFavorites @wdh_storefront @addToFavorites @sixth_wdh-group TS_54-UnfavoriteProductFromPLPAndPDP @unfavorite_product_from_plp_pdp",
+            "duration_sec": 694.36
+          },
+          {
+            "name": "Platforms/SFRA/Favorites Feature/WDH/AddToFavorites.spec.ts#AddToFavorites @wdh_storefront @addToFavorites @sixth_wdh-group TS_53-IncreaseDecreaseProductQuantityFromFavorites @increase_decrease_product_quantity_from_favorites",
+            "duration_sec": 686.68
+          },
+          {
+            "name": "Platforms/SFRA/Favorites Feature/FSA/AddToFavorites.spec.ts#AddToFavorites @fsa_storefront @fsa-addToFavorites @sixth_fsa-group TS_53-IncreaseDecreaseProductQuantityFromFavorites @increase_decrease_product_quantity_from_favorites",
+            "duration_sec": 686.01
+          },
+          {
+            "name": "Platforms/SFRA/Favorites Feature/HSA/AddToFavorites.spec.ts#AddToFavorites @hsa_storefront @addToFavorites @sixth_hsa-group TS_53-IncreaseDecreaseProductQuantityFromFavorites @increase_decrease_product_quantity_from_favorites",
+            "duration_sec": 675.2
+          },
+          {
+            "name": "Platforms/SFRA/Checkout/FSA/SplitPayWithPerkStoreCredit.spec.ts#SplitPayWithPerksStoreCredit @fsa_storefront @fsa-splitPayWithPerksStoreCredit @fsa-flaky-group TS_92-SplitPayWithPerksStoreCredit @split_pay_with_perks_store_credit",
+            "duration_sec": 665.38
+          },
+          {
+            "name": "Platforms/SFRA/Order History_Status/WDH/OrderHistory.spec.ts#OrderHistoryTest @wdh_storefront @order_history_test @second_wdh-group TS_20.1-CanPlaceOrderAsRegisteredUser_1 @can_place_order_as_registered_user",
+            "duration_sec": 664.86
+          },
+          {
+            "name": "Platforms/SFRA/Checkout/HSA/SplitPayWithPerkStoreCredit.spec.ts#SplitPayWithPerksStoreCredit @hsa_storefront @hsa-splitPayWithPerksStoreCredit @hsa-flaky-second-group TS_92-SplitPayWithPerksStoreCredit @split_pay_with_perks_store_credit",
+            "duration_sec": 653.82
+          },
+          {
+            "name": "Platforms/SFRA/Order History_Status/WDH/OrderHistory.spec.ts#OrderHistoryTest @wdh_storefront @order_history_test @second_wdh-group TS_20.2-CanPlaceOrderAsRegisteredUser_2 @can_place_order_as_registered_user",
+            "duration_sec": 650.96
+          },
+          {
+            "name": "Platforms/SFRA/Checkout/FSA/RestartedGuestCheckout.spec.ts#RestartedCheckout @fsa_storefront @fifth_fsa-group TS_13-RestartedGuestCheckoutTest @restarted_guest_checkout",
+            "duration_sec": 650.01
+          }
+        ]
+      },
+      "tables": [
+        "documents",
+        "sources",
+        "structured_test_results"
+      ]
+    },
+    {
+      "build_id": "ingestion_20260423_102059",
+      "ingested_at": "2026-04-23T10:21:09.974555+00:00",
+      "total_records_ingested": 21,
+      "metrics": {
+        "total_tests": 21,
+        "passed": 8,
+        "failed": 13,
+        "pass_rate": 38.1,
+        "avg_duration_sec": 363.03,
+        "total_duration_sec": 7623.72,
+        "most_common_error": "TimeoutError: locator.click: Timeout 20000ms exceeded.\nCall log:\n  - waiting for locator('.sod_label')\n    - locator resolved to <span class=\"sod_label\" title=\"HSA Store\">HSA Store</span>\n  - attempti",
+        "slowest_tests": [
+          {
+            "name": "Platforms/SOM_OCI/HSA/SOM_Payment.spec.ts#SOM_AddPayment @hsa_storefront @payment @hsa_som_oci TS_13-SOM_Add_Payment_Status_FraudCheck @fraud_check @som_oci_smoke @som_oci_sentinel",
+            "duration_sec": 453.94
+          },
+          {
+            "name": "Platforms/SOM_OCI/HSA/SOM_UserType.spec.ts#SOM_userType @hsa_storefront @user_type @hsa_som_oci TS_01-SOM_registeredUserType @registered_user @som_oci_smoke @som_oci_sentinel",
+            "duration_sec": 410.71
+          },
+          {
+            "name": "Platforms/SOM_OCI/FSA/SOM_OrderDetails.spec.ts#SOM_OrderAmount_SOM_ProductSku @fsa_storefront @order_details @fsa_som_oci @som_oci_smoke @som_oci_sentinel TS_06-SOM_orderAmount_productSKU matches with FSA_OrderAmount_ProductSKU @order_amount",
+            "duration_sec": 407.58
+          },
+          {
+            "name": "Platforms/SOM_OCI/WDH/SOM_OrderDetails.spec.ts#SOM_OrderAmount_SOM_ProductSku @wdh_storefront @order_details @wdh_som_oci @som_oci_smoke TS_06-SOM_orderAmount_productSKU matches with WDH_OrderAmount_ProductSKU @order_amount",
+            "duration_sec": 402.46
+          },
+          {
+            "name": "Platforms/SOM_OCI/HSA/SOM_OrderDetails.spec.ts#SOM_OrderAmount_SOM_ProductSku @hsa_storefront @order_details @hsa_som_oci @som_oci_smoke @som_oci_sentinel TS_06-SOM_orderAmount_productSKU matches with HSA_OrderAmount_ProductSKU @order_amount",
+            "duration_sec": 392.14
+          },
+          {
+            "name": "Platforms/SFRA/Backoffice_BM/FSA/SFCC_paymentDetails.spec.ts#SFCC_PaymentDetails @fsa_storefront @payment_details @fsa_som_oci @som_oci_smoke @som_oci_sentinel TS_25-SFCC_Payment_Details_Matches_FSA_Payment_Details @payment_details",
+            "duration_sec": 382.46
+          },
+          {
+            "name": "Platforms/SFRA/Backoffice_BM/HSA/SFCC_paymentDetails.spec.ts#SFCC_PaymentDetails @hsa_storefront @payment_details @hsa_som_oci @som_oci_smoke @som_oci_sentinel TS_25-SFCC_PaymentDetailsMatchesWith_FSA_PaymentDetails @payment_details",
+            "duration_sec": 379.2
+          },
+          {
+            "name": "Platforms/SOM_OCI/FSA/SOM_Payment.spec.ts#SOM_AddPayment @fsa_storefront @payment @fsa_som_oci TS_13-SOM_Add_Payment_Status_FraudCheck @payment_fraud_check @som_oci_smoke @som_oci_sentinel",
+            "duration_sec": 377.14
+          },
+          {
+            "name": "Platforms/SFRA/Backoffice_BM/FSA/SFCC_PaymentStatus.spec.ts#SFCC_PaymentStatus @fsa_storefront @payment_status @fsa_som_oci @som_oci_smoke @som_oci_sentinel TS_22-SFCC_payment_status @payment_status",
+            "duration_sec": 376.68
+          },
+          {
+            "name": "Platforms/SOM_OCI/FSA/SOM_UserType.spec.ts#SOM_userType @fsa_storefront @user_type @fsa_som_oci TS_01-SOM_registeredUserType @registered_user @som_oci_smoke @som_oci_sentinel",
+            "duration_sec": 373.72
+          },
+          {
+            "name": "Platforms/SOM_OCI/WDH/SOM_Payment.spec.ts#SOM_AddPayment @wdh_storefront @payment @wdh_som_oci TS_13-SOM_Add_Payment_Status_FraudCheck @fraud_check @som_oci_smoke",
+            "duration_sec": 372.35
+          },
+          {
+            "name": "Platforms/SOM_OCI/WDH/SOM_OrderDetails.spec.ts#SOM_OrderAmount_SOM_ProductSku @wdh_storefront @order_details @wdh_som_oci @som_oci_smoke TS_07-SOM_verifyStore_&_verifyAddress of placed order. @store_address",
+            "duration_sec": 361.81
+          },
+          {
+            "name": "Platforms/SOM_OCI/HSA/SOM_OrderDetails.spec.ts#SOM_OrderAmount_SOM_ProductSku @hsa_storefront @order_details @hsa_som_oci @som_oci_smoke @som_oci_sentinel TS_07-SOM_verifyStore_&_verifyAddress of placed order @store_address",
+            "duration_sec": 359.87
+          },
+          {
+            "name": "Platforms/SOM_OCI/FSA/SOM_OrderDetails.spec.ts#SOM_OrderAmount_SOM_ProductSku @fsa_storefront @order_details @fsa_som_oci @som_oci_smoke @som_oci_sentinel TS_07-SOM_verifyStore_&_verifyAddress of placed order @store_address",
+            "duration_sec": 356.63
+          },
+          {
+            "name": "Platforms/SOM_OCI/WDH/SOM_UserType.spec.ts#SOM_userType @wdh_storefront @user_type @wdh_som_oci TS_01-SOM_registeredUserType @registered_user @som_oci_smoke",
+            "duration_sec": 350.09
+          }
+        ]
+      },
+      "tables": [
+        "documents",
+        "sources",
+        "structured_test_results"
+      ]
+    },
+    {
+      "build_id": "ingestion_20260423_101345",
+      "ingested_at": "2026-04-23T10:13:54.880212+00:00",
+      "total_records_ingested": 21,
+      "metrics": {
+        "total_tests": 21,
+        "passed": 8,
+        "failed": 13,
+        "pass_rate": 38.1,
+        "avg_duration_sec": 363.03,
+        "total_duration_sec": 7623.72,
+        "most_common_error": "TimeoutError: locator.click: Timeout 20000ms exceeded.\nCall log:\n  - waiting for locator('.sod_label')\n    - locator resolved to <span class=\"sod_label\" title=\"HSA Store\">HSA Store</span>\n  - attempti",
+        "slowest_tests": [
+          {
+            "name": "Platforms/SOM_OCI/HSA/SOM_Payment.spec.ts#SOM_AddPayment @hsa_storefront @payment @hsa_som_oci TS_13-SOM_Add_Payment_Status_FraudCheck @fraud_check @som_oci_smoke @som_oci_sentinel",
+            "duration_sec": 453.94
+          },
+          {
+            "name": "Platforms/SOM_OCI/HSA/SOM_UserType.spec.ts#SOM_userType @hsa_storefront @user_type @hsa_som_oci TS_01-SOM_registeredUserType @registered_user @som_oci_smoke @som_oci_sentinel",
+            "duration_sec": 410.71
+          },
+          {
+            "name": "Platforms/SOM_OCI/FSA/SOM_OrderDetails.spec.ts#SOM_OrderAmount_SOM_ProductSku @fsa_storefront @order_details @fsa_som_oci @som_oci_smoke @som_oci_sentinel TS_06-SOM_orderAmount_productSKU matches with FSA_OrderAmount_ProductSKU @order_amount",
+            "duration_sec": 407.58
+          },
+          {
+            "name": "Platforms/SOM_OCI/WDH/SOM_OrderDetails.spec.ts#SOM_OrderAmount_SOM_ProductSku @wdh_storefront @order_details @wdh_som_oci @som_oci_smoke TS_06-SOM_orderAmount_productSKU matches with WDH_OrderAmount_ProductSKU @order_amount",
+            "duration_sec": 402.46
+          },
+          {
+            "name": "Platforms/SOM_OCI/HSA/SOM_OrderDetails.spec.ts#SOM_OrderAmount_SOM_ProductSku @hsa_storefront @order_details @hsa_som_oci @som_oci_smoke @som_oci_sentinel TS_06-SOM_orderAmount_productSKU matches with HSA_OrderAmount_ProductSKU @order_amount",
+            "duration_sec": 392.14
+          },
+          {
+            "name": "Platforms/SFRA/Backoffice_BM/FSA/SFCC_paymentDetails.spec.ts#SFCC_PaymentDetails @fsa_storefront @payment_details @fsa_som_oci @som_oci_smoke @som_oci_sentinel TS_25-SFCC_Payment_Details_Matches_FSA_Payment_Details @payment_details",
+            "duration_sec": 382.46
+          },
+          {
+            "name": "Platforms/SFRA/Backoffice_BM/HSA/SFCC_paymentDetails.spec.ts#SFCC_PaymentDetails @hsa_storefront @payment_details @hsa_som_oci @som_oci_smoke @som_oci_sentinel TS_25-SFCC_PaymentDetailsMatchesWith_FSA_PaymentDetails @payment_details",
+            "duration_sec": 379.2
+          },
+          {
+            "name": "Platforms/SOM_OCI/FSA/SOM_Payment.spec.ts#SOM_AddPayment @fsa_storefront @payment @fsa_som_oci TS_13-SOM_Add_Payment_Status_FraudCheck @payment_fraud_check @som_oci_smoke @som_oci_sentinel",
+            "duration_sec": 377.14
+          },
+          {
+            "name": "Platforms/SFRA/Backoffice_BM/FSA/SFCC_PaymentStatus.spec.ts#SFCC_PaymentStatus @fsa_storefront @payment_status @fsa_som_oci @som_oci_smoke @som_oci_sentinel TS_22-SFCC_payment_status @payment_status",
+            "duration_sec": 376.68
+          },
+          {
+            "name": "Platforms/SOM_OCI/FSA/SOM_UserType.spec.ts#SOM_userType @fsa_storefront @user_type @fsa_som_oci TS_01-SOM_registeredUserType @registered_user @som_oci_smoke @som_oci_sentinel",
+            "duration_sec": 373.72
+          },
+          {
+            "name": "Platforms/SOM_OCI/WDH/SOM_Payment.spec.ts#SOM_AddPayment @wdh_storefront @payment @wdh_som_oci TS_13-SOM_Add_Payment_Status_FraudCheck @fraud_check @som_oci_smoke",
+            "duration_sec": 372.35
+          },
+          {
+            "name": "Platforms/SOM_OCI/WDH/SOM_OrderDetails.spec.ts#SOM_OrderAmount_SOM_ProductSku @wdh_storefront @order_details @wdh_som_oci @som_oci_smoke TS_07-SOM_verifyStore_&_verifyAddress of placed order. @store_address",
+            "duration_sec": 361.81
+          },
+          {
+            "name": "Platforms/SOM_OCI/HSA/SOM_OrderDetails.spec.ts#SOM_OrderAmount_SOM_ProductSku @hsa_storefront @order_details @hsa_som_oci @som_oci_smoke @som_oci_sentinel TS_07-SOM_verifyStore_&_verifyAddress of placed order @store_address",
+            "duration_sec": 359.87
+          },
+          {
+            "name": "Platforms/SOM_OCI/FSA/SOM_OrderDetails.spec.ts#SOM_OrderAmount_SOM_ProductSku @fsa_storefront @order_details @fsa_som_oci @som_oci_smoke @som_oci_sentinel TS_07-SOM_verifyStore_&_verifyAddress of placed order @store_address",
+            "duration_sec": 356.63
+          },
+          {
+            "name": "Platforms/SOM_OCI/WDH/SOM_UserType.spec.ts#SOM_userType @wdh_storefront @user_type @wdh_som_oci TS_01-SOM_registeredUserType @registered_user @som_oci_smoke",
+            "duration_sec": 350.09
+          }
+        ]
+      },
+      "tables": [
+        "documents",
+        "sources",
+        "structured_test_results"
+      ]
+    },
+    {
+      "build_id": "ingestion_20260420_121558",
+      "ingested_at": "2026-04-20T12:16:08.947569+00:00",
+      "total_records_ingested": 1,
+      "metrics": {
+        "total_tests": 306,
+        "passed": 260,
+        "failed": 45,
+        "pass_rate": 84.97,
+        "avg_duration_sec": 189.63,
+        "total_duration_sec": 58026.44,
+        "most_common_error": "Error: Action failed after 3 attempts - Error: TimeoutError: locator.click: Timeout 30000ms exceeded.\nCall log:\n  - waiting for getByRole('link', { name: 'SignIn' }).first()",
+        "slowest_tests": [
+          {
+            "name": "Platforms/SFRA/Checkout/HSA/RestartedRegisteredCheckout.spec.ts#RestartedCheckoutTests @hsa_storefront @sixth_hsa-group TS_13-RestartedRegisteredCheckout @restarted_registered_checkout ",
+            "duration_sec": 520.9
+          },
+          {
+            "name": "Platforms/SFRA/Checkout/FSA/RestartedRegisteredCheckout.spec.ts#RestartedCheckoutTests @fsa_storefront @sixth_fsa-group TS_13-RestartedRegisteredCheckout @restarted_registered_checkout ",
+            "duration_sec": 520.39
+          },
+          {
+            "name": "Platforms/SFRA/Checkout/WDH/RestartedRegisteredCheckout.spec.ts#RestartedCheckoutTests @wdh_storefront @sixth_wdh-group TS_13-RestartedRegisteredCheckoutTest @restarted_registered_checkout ",
+            "duration_sec": 498.78
+          },
+          {
+            "name": "Platforms/SFRA/Checkout/HSA/RestartedGuestCheckout.spec.ts#RestartedCheckout @hsa_storefront @fifth_hsa-group TS_13-RestartedGuestCheckoutTest @restarted_guest_checkout ",
+            "duration_sec": 444.66
+          },
+          {
+            "name": "Platforms/SFRA/Checkout/FSA/RestartedGuestCheckout.spec.ts#RestartedCheckout @fsa_storefront @fifth_fsa-group TS_13-RestartedGuestCheckoutTest @restarted_guest_checkout",
+            "duration_sec": 433.01
+          },
+          {
+            "name": "Platforms/SFRA/Order History_Status/FSA/OrderHistory.spec.ts#OrderHistoryTest @fsa_storefront @order_history_test @fourth_fsa-group TS_20.2-CanPlaceOrderAsRegisteredUser_2 @can_place_order_as_registered_user",
+            "duration_sec": 433
+          },
+          {
+            "name": "Platforms/SFRA/Order History_Status/FSA/OrderHistory.spec.ts#OrderHistoryTest @fsa_storefront @order_history_test @fourth_fsa-group TS_20.1-CanPlaceOrderAsRegisteredUser_1 @can_place_order_as_registered_user",
+            "duration_sec": 432.23
+          },
+          {
+            "name": "Platforms/SFRA/Favorites Feature/FSA/AddToFavorites.spec.ts#AddToFavorites @fsa_storefront @fsa-addToFavorites @sixth_fsa-group TS_53-IncreaseDecreaseProductQuantityFromFavorites @increase_decrease_product_quantity_from_favorites",
+            "duration_sec": 428.64
+          },
+          {
+            "name": "Platforms/SFRA/Favorites Feature/HSA/AddToFavorites.spec.ts#AddToFavorites @hsa_storefront @addToFavorites @sixth_hsa-group TS_53-IncreaseDecreaseProductQuantityFromFavorites @increase_decrease_product_quantity_from_favorites",
+            "duration_sec": 427.4
+          },
+          {
+            "name": "Platforms/SFRA/Order History_Status/HSA/OrderHistory.spec.ts#OrderHistoryTest @hsa_storefront @order_history_test @fourth_hsa-group TS_20.1-CanPlaceOrderAsRegisteredUser_1 @can_place_order_as_registered_user",
+            "duration_sec": 418.87
+          },
+          {
+            "name": "Platforms/SFRA/Order History_Status/HSA/OrderHistory.spec.ts#OrderHistoryTest @hsa_storefront @order_history_test @fourth_hsa-group TS_20.2-CanPlaceOrderAsRegisteredUser_2 @can_place_order_as_registered_user",
+            "duration_sec": 415.85
+          },
+          {
+            "name": "Platforms/SFRA/Favorites Feature/WDH/AddToFavorites.spec.ts#AddToFavorites @wdh_storefront @addToFavorites @sixth_wdh-group TS_53-IncreaseDecreaseProductQuantityFromFavorites @increase_decrease_product_quantity_from_favorites",
+            "duration_sec": 399.81
+          },
+          {
+            "name": "Platforms/SFRA/Order History_Status/WDH/OrderHistory.spec.ts#OrderHistoryTest @wdh_storefront @order_history_test @second_wdh-group TS_20.1-CanPlaceOrderAsRegisteredUser_1 @can_place_order_as_registered_user",
+            "duration_sec": 399.71
+          },
+          {
+            "name": "Platforms/SFRA/Favorites Feature/FSA/AddToFavorites.spec.ts#AddToFavorites @fsa_storefront @fsa-addToFavorites @sixth_fsa-group TS_49-AddProductToFavoritesOnPLP @add_product_to_favorites_on_plp",
+            "duration_sec": 397.72
+          },
+          {
+            "name": "Platforms/SFRA/Favorites Feature/HSA/AddToFavorites.spec.ts#AddToFavorites @hsa_storefront @addToFavorites @sixth_hsa-group TS_49-AddProductToFavoritesOnPLP @add_product_to_favorites_on_plp",
+            "duration_sec": 397.08
+          }
+        ]
+      },
+      "tables": [
+        "documents",
+        "sources",
+        "structured_test_results"
+      ]
+    },
+    {
+      "build_id": "ingestion_20260420_121315",
+      "ingested_at": "2026-04-20T12:14:32.430734+00:00",
+      "total_records_ingested": 570,
+      "metrics": {
+        "total_tests": 1219,
+        "passed": 954,
+        "failed": 265,
+        "pass_rate": 78.26,
+        "avg_duration_sec": 18.52,
+        "total_duration_sec": 18076.02,
+        "most_common_error": "Timed out retrying after 20000ms: Expected to find element: `.py-11`, but never found it.",
+        "slowest_tests": [
+          {
+            "name": "Achievements Page Test Validate and Create activity for Achievements Page should have data on achievements section",
+            "duration_sec": 296.26
+          },
+          {
+            "name": "Achievements Page Test Golf Account Master Audit Calculate Longest Going-for-Green Streak (APP shots) per Activity",
+            "duration_sec": 243.72
+          },
+          {
+            "name": "Coach Profile Test Validate Coach Profile should have data on achievements section",
+            "duration_sec": 184.14
+          },
+          {
+            "name": "Achievements Page Test Validate and Create activity for Achievements Page should have data on achievements section",
+            "duration_sec": 158.01
+          },
+          {
+            "name": "Coach Profile Test Validate Coach Profile should have data on achievements section",
+            "duration_sec": 129.07
+          },
+          {
+            "name": "Coach Profile Test Validate Coach Profile should have data on achievements section",
+            "duration_sec": 128.66
+          },
+          {
+            "name": "Player Profile Test Validate Player Profile should have data on achievements section",
+            "duration_sec": 127.32
+          },
+          {
+            "name": "Teams Dashboard Tests Validate Teams Dashboard (Coach) functionality should navigate to teams page and verify page loads successfullly ",
+            "duration_sec": 124.21
+          },
+          {
+            "name": "Player Profile Test Validate Player Profile should have data on achievements section",
+            "duration_sec": 118.85
+          },
+          {
+            "name": "Player to Player Connection Script Validate the connections for player to player Validate the Connections Page UI for player 1 and send a request to player 2.",
+            "duration_sec": 113.98
+          },
+          {
+            "name": "Coach Profile Test Validate Coach Profile should have valid data on coach profile",
+            "duration_sec": 110.7
+          },
+          {
+            "name": "Player to Coach Connection Script Validate the connections for player to coach (Following) Validate the Connections Page UI on a macbook-16 screen for player and send a request to coach.",
+            "duration_sec": 110.13
+          },
+          {
+            "name": "Player to Coach Connection Script Validate the connections for player to coach (Following) Validate the request on the Connections Page macbook-16 screen for coach, sent by player, and accept it.",
+            "duration_sec": 104.21
+          },
+          {
+            "name": "Player Feeds Page Test Validate Feed Page for Player Profile should create round highlights using share button",
+            "duration_sec": 100.71
+          },
+          {
+            "name": "Achievements Page Test Validate and Create activity for Achievements Page should have data on achievements section",
+            "duration_sec": 99.76
+          }
+        ]
+      },
+      "tables": [
+        "documents",
+        "sources",
+        "structured_test_cases",
+        "structured_test_results"
+      ]
+    },
+    {
+      "build_id": "ingestion_20260420_120437",
+      "ingested_at": "2026-04-20T12:04:49.528819+00:00",
+      "total_records_ingested": 1,
+      "metrics": {
+        "total_tests": 306,
+        "passed": 260,
+        "failed": 45,
+        "pass_rate": 84.97,
+        "avg_duration_sec": 189.63,
+        "total_duration_sec": 58026.44,
+        "most_common_error": "Error: Action failed after 3 attempts - Error: TimeoutError: locator.click: Timeout 30000ms exceeded.\nCall log:\n  - waiting for getByRole('link', { name: 'SignIn' }).first()",
+        "slowest_tests": [
+          {
+            "name": "Platforms/SFRA/Checkout/HSA/RestartedRegisteredCheckout.spec.ts#RestartedCheckoutTests @hsa_storefront @sixth_hsa-group TS_13-RestartedRegisteredCheckout @restarted_registered_checkout ",
+            "duration_sec": 520.9
+          },
+          {
+            "name": "Platforms/SFRA/Checkout/FSA/RestartedRegisteredCheckout.spec.ts#RestartedCheckoutTests @fsa_storefront @sixth_fsa-group TS_13-RestartedRegisteredCheckout @restarted_registered_checkout ",
+            "duration_sec": 520.39
+          },
+          {
+            "name": "Platforms/SFRA/Checkout/WDH/RestartedRegisteredCheckout.spec.ts#RestartedCheckoutTests @wdh_storefront @sixth_wdh-group TS_13-RestartedRegisteredCheckoutTest @restarted_registered_checkout ",
+            "duration_sec": 498.78
+          },
+          {
+            "name": "Platforms/SFRA/Checkout/HSA/RestartedGuestCheckout.spec.ts#RestartedCheckout @hsa_storefront @fifth_hsa-group TS_13-RestartedGuestCheckoutTest @restarted_guest_checkout ",
+            "duration_sec": 444.66
+          },
+          {
+            "name": "Platforms/SFRA/Checkout/FSA/RestartedGuestCheckout.spec.ts#RestartedCheckout @fsa_storefront @fifth_fsa-group TS_13-RestartedGuestCheckoutTest @restarted_guest_checkout",
+            "duration_sec": 433.01
+          },
+          {
+            "name": "Platforms/SFRA/Order History_Status/FSA/OrderHistory.spec.ts#OrderHistoryTest @fsa_storefront @order_history_test @fourth_fsa-group TS_20.2-CanPlaceOrderAsRegisteredUser_2 @can_place_order_as_registered_user",
+            "duration_sec": 433
+          },
+          {
+            "name": "Platforms/SFRA/Order History_Status/FSA/OrderHistory.spec.ts#OrderHistoryTest @fsa_storefront @order_history_test @fourth_fsa-group TS_20.1-CanPlaceOrderAsRegisteredUser_1 @can_place_order_as_registered_user",
+            "duration_sec": 432.23
+          },
+          {
+            "name": "Platforms/SFRA/Favorites Feature/FSA/AddToFavorites.spec.ts#AddToFavorites @fsa_storefront @fsa-addToFavorites @sixth_fsa-group TS_53-IncreaseDecreaseProductQuantityFromFavorites @increase_decrease_product_quantity_from_favorites",
+            "duration_sec": 428.64
+          },
+          {
+            "name": "Platforms/SFRA/Favorites Feature/HSA/AddToFavorites.spec.ts#AddToFavorites @hsa_storefront @addToFavorites @sixth_hsa-group TS_53-IncreaseDecreaseProductQuantityFromFavorites @increase_decrease_product_quantity_from_favorites",
+            "duration_sec": 427.4
+          },
+          {
+            "name": "Platforms/SFRA/Order History_Status/HSA/OrderHistory.spec.ts#OrderHistoryTest @hsa_storefront @order_history_test @fourth_hsa-group TS_20.1-CanPlaceOrderAsRegisteredUser_1 @can_place_order_as_registered_user",
+            "duration_sec": 418.87
+          },
+          {
+            "name": "Platforms/SFRA/Order History_Status/HSA/OrderHistory.spec.ts#OrderHistoryTest @hsa_storefront @order_history_test @fourth_hsa-group TS_20.2-CanPlaceOrderAsRegisteredUser_2 @can_place_order_as_registered_user",
+            "duration_sec": 415.85
+          },
+          {
+            "name": "Platforms/SFRA/Favorites Feature/WDH/AddToFavorites.spec.ts#AddToFavorites @wdh_storefront @addToFavorites @sixth_wdh-group TS_53-IncreaseDecreaseProductQuantityFromFavorites @increase_decrease_product_quantity_from_favorites",
+            "duration_sec": 399.81
+          },
+          {
+            "name": "Platforms/SFRA/Order History_Status/WDH/OrderHistory.spec.ts#OrderHistoryTest @wdh_storefront @order_history_test @second_wdh-group TS_20.1-CanPlaceOrderAsRegisteredUser_1 @can_place_order_as_registered_user",
+            "duration_sec": 399.71
+          },
+          {
+            "name": "Platforms/SFRA/Favorites Feature/FSA/AddToFavorites.spec.ts#AddToFavorites @fsa_storefront @fsa-addToFavorites @sixth_fsa-group TS_49-AddProductToFavoritesOnPLP @add_product_to_favorites_on_plp",
+            "duration_sec": 397.72
+          },
+          {
+            "name": "Platforms/SFRA/Favorites Feature/HSA/AddToFavorites.spec.ts#AddToFavorites @hsa_storefront @addToFavorites @sixth_hsa-group TS_49-AddProductToFavoritesOnPLP @add_product_to_favorites_on_plp",
+            "duration_sec": 397.08
+          }
+        ]
+      },
+      "tables": [
+        "documents",
+        "sources",
+        "structured_test_results"
+      ]
+    },
+    {
+      "build_id": "ingestion_20260420_071902",
+      "ingested_at": "2026-04-20T07:19:13.204964+00:00",
+      "total_records_ingested": 1,
+      "metrics": {
+        "total_tests": 306,
+        "passed": 260,
+        "failed": 45,
+        "pass_rate": 84.97,
+        "avg_duration_sec": 189.63,
+        "total_duration_sec": 58026.44,
+        "most_common_error": "Error: Action failed after 3 attempts - Error: TimeoutError: locator.click: Timeout 30000ms exceeded.\nCall log:\n  - waiting for getByRole('link', { name: 'SignIn' }).first()",
+        "slowest_tests": [
+          {
+            "name": "Platforms/SFRA/Checkout/HSA/RestartedRegisteredCheckout.spec.ts#RestartedCheckoutTests @hsa_storefront @sixth_hsa-group TS_13-RestartedRegisteredCheckout @restarted_registered_checkout ",
+            "duration_sec": 520.9
+          },
+          {
+            "name": "Platforms/SFRA/Checkout/FSA/RestartedRegisteredCheckout.spec.ts#RestartedCheckoutTests @fsa_storefront @sixth_fsa-group TS_13-RestartedRegisteredCheckout @restarted_registered_checkout ",
+            "duration_sec": 520.39
+          },
+          {
+            "name": "Platforms/SFRA/Checkout/WDH/RestartedRegisteredCheckout.spec.ts#RestartedCheckoutTests @wdh_storefront @sixth_wdh-group TS_13-RestartedRegisteredCheckoutTest @restarted_registered_checkout ",
+            "duration_sec": 498.78
+          },
+          {
+            "name": "Platforms/SFRA/Checkout/HSA/RestartedGuestCheckout.spec.ts#RestartedCheckout @hsa_storefront @fifth_hsa-group TS_13-RestartedGuestCheckoutTest @restarted_guest_checkout ",
+            "duration_sec": 444.66
+          },
+          {
+            "name": "Platforms/SFRA/Checkout/FSA/RestartedGuestCheckout.spec.ts#RestartedCheckout @fsa_storefront @fifth_fsa-group TS_13-RestartedGuestCheckoutTest @restarted_guest_checkout",
+            "duration_sec": 433.01
+          },
+          {
+            "name": "Platforms/SFRA/Order History_Status/FSA/OrderHistory.spec.ts#OrderHistoryTest @fsa_storefront @order_history_test @fourth_fsa-group TS_20.2-CanPlaceOrderAsRegisteredUser_2 @can_place_order_as_registered_user",
+            "duration_sec": 433
+          },
+          {
+            "name": "Platforms/SFRA/Order History_Status/FSA/OrderHistory.spec.ts#OrderHistoryTest @fsa_storefront @order_history_test @fourth_fsa-group TS_20.1-CanPlaceOrderAsRegisteredUser_1 @can_place_order_as_registered_user",
+            "duration_sec": 432.23
+          },
+          {
+            "name": "Platforms/SFRA/Favorites Feature/FSA/AddToFavorites.spec.ts#AddToFavorites @fsa_storefront @fsa-addToFavorites @sixth_fsa-group TS_53-IncreaseDecreaseProductQuantityFromFavorites @increase_decrease_product_quantity_from_favorites",
+            "duration_sec": 428.64
+          },
+          {
+            "name": "Platforms/SFRA/Favorites Feature/HSA/AddToFavorites.spec.ts#AddToFavorites @hsa_storefront @addToFavorites @sixth_hsa-group TS_53-IncreaseDecreaseProductQuantityFromFavorites @increase_decrease_product_quantity_from_favorites",
+            "duration_sec": 427.4
+          },
+          {
+            "name": "Platforms/SFRA/Order History_Status/HSA/OrderHistory.spec.ts#OrderHistoryTest @hsa_storefront @order_history_test @fourth_hsa-group TS_20.1-CanPlaceOrderAsRegisteredUser_1 @can_place_order_as_registered_user",
+            "duration_sec": 418.87
+          },
+          {
+            "name": "Platforms/SFRA/Order History_Status/HSA/OrderHistory.spec.ts#OrderHistoryTest @hsa_storefront @order_history_test @fourth_hsa-group TS_20.2-CanPlaceOrderAsRegisteredUser_2 @can_place_order_as_registered_user",
+            "duration_sec": 415.85
+          },
+          {
+            "name": "Platforms/SFRA/Favorites Feature/WDH/AddToFavorites.spec.ts#AddToFavorites @wdh_storefront @addToFavorites @sixth_wdh-group TS_53-IncreaseDecreaseProductQuantityFromFavorites @increase_decrease_product_quantity_from_favorites",
+            "duration_sec": 399.81
+          },
+          {
+            "name": "Platforms/SFRA/Order History_Status/WDH/OrderHistory.spec.ts#OrderHistoryTest @wdh_storefront @order_history_test @second_wdh-group TS_20.1-CanPlaceOrderAsRegisteredUser_1 @can_place_order_as_registered_user",
+            "duration_sec": 399.71
+          },
+          {
+            "name": "Platforms/SFRA/Favorites Feature/FSA/AddToFavorites.spec.ts#AddToFavorites @fsa_storefront @fsa-addToFavorites @sixth_fsa-group TS_49-AddProductToFavoritesOnPLP @add_product_to_favorites_on_plp",
+            "duration_sec": 397.72
+          },
+          {
+            "name": "Platforms/SFRA/Favorites Feature/HSA/AddToFavorites.spec.ts#AddToFavorites @hsa_storefront @addToFavorites @sixth_hsa-group TS_49-AddProductToFavoritesOnPLP @add_product_to_favorites_on_plp",
+            "duration_sec": 397.08
+          }
+        ]
+      },
+      "tables": [
+        "documents",
+        "sources",
+        "structured_test_results"
+      ]
+    },
+    {
+      "build_id": "ingestion_20260416_102559",
+      "ingested_at": "2026-04-16T10:27:24.609029",
+      "total_records_ingested": 570,
+      "metrics": {
+        "total_tests": 1219,
+        "passed": 954,
+        "failed": 265,
+        "pass_rate": 78.26,
+        "avg_duration_sec": 18.52,
+        "total_duration_sec": 18076.02,
+        "most_common_error": "{'location': {'column': 0, 'file': '', 'line': 0}, 'message': '', 'stack': ''}",
+        "slowest_tests": [
+          {
+            "name": "should have data on achievements section",
+            "duration_sec": 296.26
+          },
+          {
+            "name": "Calculate Longest Going-for-Green Streak (APP shots) per Activity",
+            "duration_sec": 243.72
+          },
+          {
+            "name": "should have data on achievements section",
+            "duration_sec": 184.14
+          },
+          {
+            "name": "should have data on achievements section",
+            "duration_sec": 158.01
+          },
+          {
+            "name": "should have data on achievements section",
+            "duration_sec": 129.07
+          },
+          {
+            "name": "should have data on achievements section",
+            "duration_sec": 128.66
+          },
+          {
+            "name": "should have data on achievements section",
+            "duration_sec": 127.32
+          },
+          {
+            "name": "should navigate to teams page and verify page loads successfullly ",
+            "duration_sec": 124.21
+          },
+          {
+            "name": "should have data on achievements section",
+            "duration_sec": 118.85
+          },
+          {
+            "name": "Validate the Connections Page UI for player 1 and send a request to player 2.",
+            "duration_sec": 113.98
+          },
+          {
+            "name": "should have valid data on coach profile",
+            "duration_sec": 110.7
+          },
+          {
+            "name": "Validate the Connections Page UI on a macbook-16 screen for player and send a request to coach.",
+            "duration_sec": 110.13
+          },
+          {
+            "name": "Validate the request on the Connections Page macbook-16 screen for coach, sent by player, and accept it.",
+            "duration_sec": 104.21
+          },
+          {
+            "name": "should create round highlights using share button",
+            "duration_sec": 100.71
+          },
+          {
+            "name": "should have data on achievements section",
+            "duration_sec": 99.76
+          }
+        ]
+      },
+      "tables": [
+        "documents",
+        "sources",
+        "structured_test_cases",
+        "structured_test_results"
+      ]
+    }
+  ]
+}

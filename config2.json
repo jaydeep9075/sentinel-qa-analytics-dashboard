@@ -1,0 +1,12 @@
+{
+    "ingestion_name": "allure_demo",
+    "sources": [
+        {
+            "type": "allure",
+            "path": "C:/Users/ADITYA THODSARE/Downloads/allure-data"
+        }
+    ],
+    "output": {
+        "base_path": "../data"
+    }
+}
