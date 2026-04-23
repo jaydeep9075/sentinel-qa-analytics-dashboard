@@ -3,12 +3,12 @@
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import AIChatbot from "@/components/AIChatbot";
-import AIChatInput from "@/components/AIChatInput";
 import ChartGallery from "@/components/ChartGallery";
 import IngestionSelector from "@/components/IngestionSelector";
 import ProjectSelector from "@/components/ProjectSelector";
 import RoleSelector from "@/components/RoleSelector";
+import FloatingChat from "@/components/FloatingChat";
+import FloatingChart from "@/components/FloatingChart";  // new
 import { getDataStatus, checkHealth } from "@/lib/api";
 import { useIngestion } from "@/lib/IngestionContext";
 
@@ -18,6 +18,15 @@ export default function Dashboard() {
   const [dataStatus, setDataStatus] = useState<any>(null);
   const [backendConnected, setBackendConnected] = useState(false);
   const [refreshGallery, setRefreshGallery] = useState(0);
+
+  // Listen for chart-generated events from FloatingChart
+  useEffect(() => {
+    const handleChartGenerated = () => {
+      setRefreshGallery(prev => prev + 1);
+    };
+    window.addEventListener("chart-generated", handleChartGenerated);
+    return () => window.removeEventListener("chart-generated", handleChartGenerated);
+  }, []);
 
   useEffect(() => {
     const checkConnection = async () => {
@@ -36,10 +45,6 @@ export default function Dashboard() {
     const interval = setInterval(checkConnection, 10000);
     return () => clearInterval(interval);
   }, [selectedIngestion]);
-
-  const handleChartGenerated = () => {
-    setRefreshGallery((prev) => prev + 1);
-  };
 
   const handleLogout = () => {
     localStorage.clear();
@@ -69,9 +74,7 @@ export default function Dashboard() {
             {backendConnected ? (
               <div className="flex items-center gap-2">
                 <div className="w-2 h-2 bg-green-500 rounded-full animate-pulse"></div>
-                <span className="text-xs text-green-400">
-                  Backend Connected
-                </span>
+                <span className="text-xs text-green-400">Backend Connected</span>
               </div>
             ) : (
               <div className="flex items-center gap-2">
@@ -79,8 +82,8 @@ export default function Dashboard() {
                 <span className="text-xs text-red-400">Backend Offline</span>
               </div>
             )}
-            <Link 
-              href="/build-trends" 
+            <Link
+              href="/build-trends"
               className="text-sm text-blue-400 hover:text-blue-300 font-bold ml-2 border border-blue-500/30 px-3 py-1.5 rounded-lg bg-blue-500/10 transition-colors"
             >
               Build Trends
@@ -131,27 +134,12 @@ export default function Dashboard() {
           </div>
         )}
 
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
-          {/* Chat Section */}
-          <div className="bg-white/5 backdrop-blur-lg rounded-2xl border border-white/10 h-[600px]">
-            <AIChatbot />
-          </div>
+        {/* Chart Gallery - now at TOP */}
+        <ChartGallery key={refreshGallery} />
 
-          {/* Chart Generator Section */}
-          <div className="bg-white/5 backdrop-blur-lg rounded-2xl border border-white/10 h-[600px]">
-            <div className="p-6 border-b border-white/10">
-              <h2 className="text-xl font-bold">📊 Chart Generator</h2>
-              <p className="text-gray-400 text-sm">Create visualizations</p>
-            </div>
-            <div className="p-6">
-              <AIChatInput onChartGenerated={handleChartGenerated} />
-            </div>
-          </div>
-        </div>
-
-        <div className="mt-16">
-          <ChartGallery key={refreshGallery} />
-        </div>
+        {/* Floating buttons: chart (higher) and chat (lower) */}
+        <FloatingChart />
+        <FloatingChat />
       </div>
     </div>
   );
