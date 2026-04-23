@@ -1,583 +1,477 @@
+"""
+handlers.py — Chat and chart request handlers.
+- Uses centralized prompts from prompts.py
+- No role-based logic in prompts
+- Robust SQL validation and Plotly sanitization
+- Persistent chat history context (last 20 turns)
+"""
+
 import json
 import re
 import logging
 from datetime import datetime
 import pandas as pd
+import numpy as np
 from . import config, data_loader, memory, llm_client, state
-from .project_manager import ProjectManager
-from .role_manager import RoleManager
+from .prompts import (
+    CHAT_DECISION_PROMPT,
+    CHAT_ANSWER_PROMPT,
+    CHAT_RELEASE_VERDICT,
+    CHART_SQL_PROMPT,
+    CHART_CODE_PROMPT,
+    FALLBACK_SQL_MAP,
+    CHART_FALLBACK_SQL_MAP,
+)
 
 logger = logging.getLogger(__name__)
 
-_sql_cache = {}
-_SAFE_COLORWAY = ["#3b82f6", "#22c55e", "#f59e0b", "#ef4444", "#8b5cf6", "#06b6d4"]
+_sql_cache: dict = {}
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
 
 def _convert_timestamp(obj):
     if isinstance(obj, dict):
         return {k: _convert_timestamp(v) for k, v in obj.items()}
     elif isinstance(obj, list):
-        return [_convert_timestamp(item) for item in obj]
+        return [_convert_timestamp(i) for i in obj]
     elif isinstance(obj, pd.Timestamp):
         return obj.isoformat()
     elif isinstance(obj, datetime):
         return obj.isoformat()
-    else:
-        return obj
-
-def _get_schema_with_samples():
-    """Return schema including sample distinct values for key columns."""
-    if not state.duck_conn:
-        return {}
-    tables = state.duck_conn.execute("SHOW TABLES").fetchall()
-    schema = {}
-    for (tbl,) in tables:
-        cols = state.duck_conn.execute(f"DESCRIBE {tbl}").fetchall()
-        col_info = []
-        for col_name, col_type, _, _, _, _ in cols:
-            samples = []
-            if "varchar" in col_type.lower() or "text" in col_type.lower():
-                try:
-                    samples = state.duck_conn.execute(f"SELECT DISTINCT {col_name} FROM {tbl} LIMIT 5").fetchall()
-                    samples = [s[0] for s in samples if s[0] is not None]
-                except:
-                    pass
-            col_info.append({"name": col_name, "type": col_type, "sample_values": samples})
-        schema[tbl] = col_info
-    return schema
+    return obj
 
 
-def _sanitize_sql_text(sql: str) -> str:
+def _sanitize_sql(sql: str) -> str:
     if not sql:
         return ""
-    cleaned = re.sub(r"```sql\s*|```", "", sql, flags=re.IGNORECASE).strip()
-    cleaned = re.sub(r"^\s*duckdb\s*:?", "", cleaned, flags=re.IGNORECASE).strip()
-    return cleaned.rstrip(";")
+    s = re.sub(r"```sql\s*|```", "", sql, flags=re.IGNORECASE).strip()
+    s = re.sub(r"^\s*duckdb\s*:?", "", s, flags=re.IGNORECASE).strip()
+    return s.rstrip(";").strip()
 
 
-def _fallback_sql_for_prompt(prompt: str) -> str:
-    p = (prompt or "").lower()
-    if "how many tests failed" in p or ("failed" in p and "how many" in p):
-        return "SELECT COUNT(*) AS failed_count FROM flattened_tests WHERE status = 'failed'"
-    if "how many tests passed" in p or ("passed" in p and "how many" in p):
-        return "SELECT COUNT(*) AS passed_count FROM flattened_tests WHERE status = 'passed'"
-    if "pass rate" in p or "good for release" in p or "ready for release" in p:
-        return "SELECT ROUND(SUM(CASE WHEN status='passed' THEN 1 ELSE 0 END)*100.0/COUNT(*), 2) AS pass_rate FROM flattened_tests"
-    if "status" in p and "test" in p:
-        return "SELECT status, COUNT(*) AS test_count FROM flattened_tests GROUP BY status ORDER BY test_count DESC"
-    if "module" in p and "count" in p:
-        return "SELECT module_name, COUNT(*) AS test_count FROM test_cases GROUP BY module_name ORDER BY test_count DESC"
+def _is_df_usable(df: pd.DataFrame) -> bool:
+    if df is None or df.empty:
+        return False
+    return not df.dropna(how="all").empty
+
+
+def _fallback_sql(prompt: str, sql_map: dict) -> str:
+    p = prompt.lower()
+    for pattern, sql in sql_map.items():
+        if re.search(pattern, p):
+            return sql
     return ""
 
 
-def _is_dataframe_usable(df: pd.DataFrame) -> bool:
-    if df is None or df.empty:
-        return False
-    non_null = df.dropna(how="all")
-    return not non_null.empty
+def _build_history_context(session_id: str, limit: int = 20) -> str:
+    history = memory.get_chat_history(session_id, limit=limit)
+    if not history:
+        return "(no prior conversation)"
+    lines = []
+    for h in reversed(history):
+        role = h.get("type", "")
+        if role == "user":
+            lines.append(f"User: {h.get('prompt', '')}")
+        else:
+            lines.append(f"Assistant: {h.get('response', '')}")
+    return "\n".join(lines[-20:])  # last 20 exchanges
 
 
 def _sanitize_plotly_code(code: str) -> str:
-    sanitized = code or ""
-    sanitized = re.sub(r"```python\s*|```", "", sanitized, flags=re.IGNORECASE).strip()
-    sanitized = re.sub(r"'Blues_d'", "'Blues'", sanitized)
-    sanitized = re.sub(r'"Blues_d"', '"Blues"', sanitized)
-    sanitized = re.sub(r"'Blues_r'", "'Blues'", sanitized)
-    sanitized = re.sub(r'"Blues_r"', '"Blues"', sanitized)
-    sanitized = re.sub(r",\s*piecolorway\s*=\s*[^,)]+", "", sanitized, flags=re.IGNORECASE)
-    sanitized = re.sub(r"piecolorway\s*=\s*[^,)]+,\s*", "", sanitized, flags=re.IGNORECASE)
-    sanitized = re.sub(r",\s*hovertemplate\s*=\s*[^,)]+", "", sanitized)
-    sanitized = re.sub(r"hovertemplate\s*=\s*[^,)]+,\s*", "", sanitized)
-    sanitized = re.sub(r",\s*customdata\s*=\s*[^,)]+", "", sanitized)
-    sanitized = re.sub(r"customdata\s*=\s*[^,)]+,\s*", "", sanitized)
-    sanitized = re.sub(r",?\s*width\s*=\s*\d+\s*,?", "", sanitized)
-    sanitized = re.sub(r",?\s*height\s*=\s*\d+\s*,?", "", sanitized)
-    if "template='plotly_dark'" not in sanitized and 'template="plotly_dark"' not in sanitized:
-        if "fig.update_layout(" in sanitized:
-            sanitized = sanitized.replace("fig.update_layout(", "fig.update_layout(template='plotly_dark', ")
-        else:
-            sanitized += "\nfig.update_layout(template='plotly_dark')"
-    return sanitized
+    s = re.sub(r"```python\s*|```", "", code or "", flags=re.IGNORECASE).strip()
+    # Remove forbidden palette strings
+    for bad in ("'Blues_d'", '"Blues_d"', "'Blues_r'", '"Blues_r"'):
+        s = s.replace(bad, "'Blues'")
+    # Strip forbidden kwargs
+    for kw in ("piecolorway", "hovertemplate", "customdata"):
+        s = re.sub(rf",?\s*{kw}\s*=\s*[^,)\n]+", "", s)
+    # Strip explicit size (we control via update_layout)
+    s = re.sub(r",?\s*width\s*=\s*\d+\s*,?", "", s)
+    s = re.sub(r",?\s*height\s*=\s*\d+\s*,?", "", s)
+    # Ensure template is always plotly_dark
+    if "plotly_dark" not in s:
+        s += "\nfig.update_layout(template='plotly_dark')"
+    return s
 
-async def handle_chat(user_message: str, session_id: str, ingestion_id: str,
-                      role: str = None, project_id: str = None):
-    # Ensure data for this ingestion is loaded
+
+def _detect_chart_type(prompt: str) -> str:
+    p = prompt.lower()
+    if any(k in p for k in ("line", "trend", "over time", "timeline")):
+        return "line"
+    if any(k in p for k in ("pie", "distribution", "percentage", "share")):
+        return "pie"
+    if any(k in p for k in ("heatmap", "matrix", "heat map")):
+        return "heatmap"
+    if any(k in p for k in ("horizontal", "slowest", "longest")):
+        return "horizontal_bar"
+    if any(k in p for k in ("bar", "count", "top", "most")):
+        return "bar"
+    return "bar"
+
+
+def _apply_chart_layout(fig):
+    """Apply consistent dark theme layout overrides."""
+    fig.update_layout(
+        template="plotly_dark",
+        autosize=True,
+        paper_bgcolor="rgba(15,15,15,0)",
+        plot_bgcolor="rgba(15,15,15,0)",
+        font=dict(family="monospace", color="#e2e8f0", size=12),
+        title=dict(font=dict(size=15, color="#f1f5f9"), x=0.5, xanchor="center"),
+        margin=dict(l=60, r=40, t=70, b=80),
+        legend=dict(
+            bgcolor="rgba(255,255,255,0.05)",
+            bordercolor="rgba(255,255,255,0.1)",
+            borderwidth=1,
+            font=dict(color="#cbd5e1"),
+        ),
+        xaxis=dict(
+            gridcolor="rgba(255,255,255,0.06)",
+            linecolor="rgba(255,255,255,0.12)",
+            tickfont=dict(color="#94a3b8", size=11),
+            title_font=dict(color="#cbd5e1"),
+        ),
+        yaxis=dict(
+            gridcolor="rgba(255,255,255,0.06)",
+            linecolor="rgba(255,255,255,0.12)",
+            tickfont=dict(color="#94a3b8", size=11),
+            title_font=dict(color="#cbd5e1"),
+        ),
+        colorway=["#60a5fa", "#34d399", "#f59e0b", "#f87171", "#a78bfa", "#38bdf8"],
+    )
+    return fig
+
+
+# ---------------------------------------------------------------------------
+# Chat handler
+# ---------------------------------------------------------------------------
+
+async def handle_chat(
+    user_message: str,
+    session_id: str,
+    ingestion_id: str,
+    role: str = None,
+    project_id: str = None,
+):
+    # Load data if needed
     if state.current_ingestion_id != ingestion_id:
         if not data_loader.init_data(ingestion_id):
-            return f"Error: Ingestion '{ingestion_id}' not found or data unavailable."
+            return f"❌ Ingestion '{ingestion_id}' not found or data unavailable."
 
-    # Initialize RBA managers if needed
-    if state.project_manager is None:
-        state.project_manager = ProjectManager()
-    if state.role_manager is None:
-        state.role_manager = RoleManager()
-
-    # Retrieve project context (only relevant sections)
-    project_context = ""
-    if project_id:
-        project_context = state.project_manager.retrieve_relevant_context(project_id, user_message)
-
-    # Load role instruction
-    role_instruction = ""
-    if role:
-        role_instruction = state.role_manager.get_role_instruction(role)
-        logger.info(f"Role requested for chat: {role}; loaded={bool(role_instruction)}")
-    if not role_instruction:
-        role_instruction = "You are a helpful QA analytics assistant. Provide clear, concise answers."
-
-    # Build system prompt for the decision phase (kept short)
-    system_context = f"{role_instruction}\n\n"
-    if project_id:
-        system_context += f"Project: {project_id}\n"
-    if project_context:
-        system_context += f"Relevant project knowledge:\n{project_context}\n"
-
-    # Get conversation history
-    history = memory.get_chat_history(session_id, limit=config.MAX_HISTORY_TURNS)
-    context = ""
-    for h in reversed(history[-5:]):
-        role_label = h["type"]
-        content = h["prompt"] if role_label == "user" else h["response"]
-        context += f"{role_label.capitalize()}: {content}\n"
-
-    schemas = _get_schema_with_samples()
-    schema_str = json.dumps(schemas, indent=2)
-
-    # --------------------------------------------------------------
-    # Decision prompt (copied from working version)
-    # --------------------------------------------------------------
-    decision_prompt = f"""{system_context}
-
-You are a QA analytics assistant. Analyze the user request and return JSON.
-
-Available tables:
-- test_cases: module_name, priority, title
-- flattened_tests: status, duration, error, test_name
-Join: test_cases.title = flattened_tests.test_name
-
-**PREVIOUS CONVERSATION:**
-{context}
-
-**CURRENT USER REQUEST:** "{user_message}"
-
-**BUSINESS LOGIC RULES FOR RELEASE DECISIONS:**
-When user asks "is this good for release" or similar:
-1. Calculate pass rate = (passed / total) * 100
-2. Check critical failures count
-3. Provide verdict based on:
-   - Pass rate >= 95% AND no critical failures → "✅ GOOD FOR RELEASE"
-   - Pass rate >= 80% AND < 95% → "⚠️ CONSIDER WITH CAUTION"  
-   - Pass rate < 80% OR any critical failures → "❌ NOT READY FOR RELEASE"
-
-**SQL QUERY PATTERNS (USE THESE EXACT PATTERNS):**
-- "how many tests failed" → SELECT COUNT(*) FROM flattened_tests WHERE status='failed'
-- "how many tests passed" → SELECT COUNT(*) FROM flattened_tests WHERE status='passed'
-- "pass rate" → SELECT ROUND(SUM(CASE WHEN status='passed' THEN 1 ELSE 0 END)*100.0/COUNT(*), 2) as pass_rate FROM flattened_tests
-- "list all modules" → SELECT DISTINCT module_name FROM test_cases ORDER BY module_name
-- "number of modules" → SELECT COUNT(DISTINCT module_name) as module_count FROM test_cases
-- "module with most tests" → SELECT module_name, COUNT(*) as test_count FROM test_cases GROUP BY module_name ORDER BY test_count DESC LIMIT 1
-- "failed tests list" → SELECT test_name, error FROM flattened_tests WHERE status='failed' LIMIT 10
-- "list all tests in module X" → SELECT title FROM test_cases WHERE module_name = 'X' ORDER BY title
-
-**IMPORTANT RULES:**
-1. For ANY question about data (counts, lists, modules, failures), use action="sql"
-2. For release readiness questions, use action="sql" to get metrics first
-3. For follow-up questions (like "what about X module"), use action="sql" with module filter
-4. Only use "answer" for greetings or when no data needed
-
-Return JSON: {{"action":"sql","data":"SQL_QUERY"}} or {{"action":"answer","data":"text"}}
-"""
     llm = llm_client.LLMClient()
-    decision_str = llm.generate(decision_prompt, temperature=0.1)
-    if not decision_str:
-        return "I'm having trouble processing your request."
 
-    cleaned = re.sub(r'```json\s*', '', decision_str)
-    cleaned = re.sub(r'```\s*', '', cleaned)
-    decision_str = cleaned.strip()
+    # Build conversation history context (last 20 turns)
+    history_context = _build_history_context(session_id, limit=20)
 
+    # --- Decision phase ---
+    decision_prompt = CHAT_DECISION_PROMPT.format(
+        history=history_context,
+        user_message=user_message,
+    )
+
+    raw_decision = llm.generate(decision_prompt, temperature=0.05)
+    if not raw_decision:
+        return "⚠️ AI service unavailable. Please try again."
+
+    # Parse decision JSON
+    cleaned = re.sub(r"```json\s*|```", "", raw_decision, flags=re.IGNORECASE).strip()
+    # Extract just the JSON object if extra text surrounds it
+    json_match = re.search(r'\{[^{}]+\}', cleaned, re.DOTALL)
     try:
-        decision = json.loads(decision_str)
-    except Exception as e:
-        if "SELECT" in decision_str.upper():
-            decision = {"action": "sql", "data": decision_str}
+        decision = json.loads(json_match.group() if json_match else cleaned)
+    except Exception:
+        # If there's a SELECT in the output, treat as SQL
+        if "SELECT" in raw_decision.upper():
+            sql_match = re.search(r'SELECT.+', raw_decision, re.IGNORECASE | re.DOTALL)
+            decision = {"action": "sql", "data": sql_match.group() if sql_match else ""}
         else:
-            decision = {"action": "answer", "data": "I couldn't understand your request."}
+            decision = {"action": "answer", "data": raw_decision.strip()}
 
-    action = decision.get("action")
-    data = decision.get("data")
+    action = decision.get("action", "answer")
+    data = decision.get("data", "")
 
-    # --------------------------------------------------------------
-    # SQL execution and answer generation (working logic)
-    # --------------------------------------------------------------
-    if action == "sql" or (action == "answer" and isinstance(data, str) and "SELECT" in data.upper()):
-        if isinstance(data, str) and "SELECT" in data.upper():
-            action = "sql"
-        sql_candidate = _sanitize_sql_text(data if isinstance(data, str) else "")
-        if not sql_candidate:
-            sql_candidate = _fallback_sql_for_prompt(user_message)
-        df, sql_error = data_loader.execute_sql(sql_candidate)
-        # Retry with hardcoded fallbacks for common queries (same as original)
-        if sql_error:
-            fallback_sql = _fallback_sql_for_prompt(user_message)
-            if fallback_sql and fallback_sql != sql_candidate:
-                logger.info("Retrying chat request with fallback SQL")
-                df, sql_error = data_loader.execute_sql(fallback_sql)
-        if sql_error:
-            response = f"I couldn't run the data query safely. Details: {sql_error}"
-        elif not _is_dataframe_usable(df):
-            response = "I found the query target but it returned empty or null-only data."
+    # Force sql action if SELECT is in data
+    if isinstance(data, str) and "SELECT" in data.upper():
+        action = "sql"
+
+    # --- SQL execution ---
+    if action == "sql":
+        sql = _sanitize_sql(data) if data else ""
+
+        # Try LLM SQL first, then fallback
+        df, err = data_loader.execute_sql(sql) if sql else (pd.DataFrame(), "empty")
+        if err or not _is_df_usable(df):
+            fallback = _fallback_sql(user_message, FALLBACK_SQL_MAP)
+            if fallback and fallback != sql:
+                logger.info(f"Chat: using fallback SQL for '{user_message}'")
+                df, err = data_loader.execute_sql(fallback)
+                sql = fallback
+
+        if err:
+            response = f"⚠️ I couldn't retrieve that data. Details: {err}"
+        elif not _is_df_usable(df):
+            response = "📭 No data found for your query."
         else:
-            df_copy = df.copy()
-            for col in df_copy.select_dtypes(include=['datetime64']).columns:
-                df_copy[col] = df_copy[col].dt.isoformat()
-            data_json = df_copy.head(50).to_json(orient="records")
-            is_release_question = any(phrase in user_message.lower() for phrase in ['release', 'good to go', 'ready for'])
-            if is_release_question and 'pass_rate' in df.columns:
-                pass_rate = df.iloc[0]['pass_rate']
-                if pass_rate >= 95:
+            # Release readiness special handling
+            is_release = any(
+                kw in user_message.lower()
+                for kw in ("release", "good to go", "ready for", "ship", "deploy")
+            )
+            if is_release and "pass_rate" in df.columns:
+                row = df.iloc[0]
+                pr = float(row.get("pass_rate", 0))
+                total = int(row.get("total", 0))
+                passed = int(row.get("passed", total * pr / 100)) if "passed" not in row else int(row.get("passed", 0))
+                failed = int(row.get("failed_count", 0))
+                if pr >= 95:
                     verdict = "✅ GOOD FOR RELEASE"
-                    recommendation = "Quality meets release criteria. Proceed with deployment."
-                elif pass_rate >= 80:
+                    rec = "Quality meets release criteria. Proceed with deployment."
+                elif pr >= 80:
                     verdict = "⚠️ CONSIDER WITH CAUTION"
-                    recommendation = f"Pass rate is {pass_rate}%. Review failures before release."
+                    rec = f"Pass rate {pr}% is below target. Review and fix failures before releasing."
                 else:
                     verdict = "❌ NOT READY FOR RELEASE"
-                    recommendation = f"Pass rate is only {pass_rate}%. Fix critical issues before release."
-                response = f"""📊 **Release Readiness Report**
-
-**Pass Rate:** {pass_rate}%
-
-**Verdict:** {verdict}
-
-**Recommendation:** {recommendation}"""
+                    rec = f"Pass rate {pr}% is critically low. Fix failures before releasing."
+                response = CHAT_RELEASE_VERDICT.format(
+                    pass_rate=pr,
+                    passed=passed,
+                    total=total,
+                    failed_count=failed,
+                    verdict=verdict,
+                    recommendation=rec,
+                )
             else:
-                # Use the system context (role + project) in the answer prompt
-                answer_prompt = f"""{system_context}
+                # Serialize for LLM
+                df_safe = df.copy()
+                for col in df_safe.select_dtypes(include=["datetime64"]).columns:
+                    df_safe[col] = df_safe[col].astype(str)
+                # Replace NaN/None
+                df_safe = df_safe.where(pd.notna(df_safe), other="")
+                data_json = df_safe.head(50).to_json(orient="records", force_ascii=False)
 
-Based on the data, answer the user's request.
-
-User request: {user_message}
-
-Data (as JSON):
-{data_json}
-
-Total rows: {len(df)}
-
-Respect the role instruction tone and audience depth exactly.
-
-**RESPONSE FORMAT RULES:**
-- For counts: "📊 [description]: [number]"
-- For lists: Use numbered list (1., 2., 3.)
-- For modules: List all with numbers
-- For test names in a module: List each test name with a number
-- For pass rate: Include percentage and brief assessment
-- Be direct and specific. Don't say "based on the data"
-
-Provide final answer:
-"""
-                response = llm.generate(answer_prompt, temperature=0.2)
+                answer_prompt = CHAT_ANSWER_PROMPT.format(
+                    user_message=user_message,
+                    row_count=len(df),
+                    data_json=data_json,
+                )
+                response = llm.generate(answer_prompt, temperature=0.15)
                 if not response:
-                    # Fallback formatting (same as original)
+                    # Minimal fallback formatting
                     if len(df) == 1 and len(df.columns) == 1:
-                        response = f"📊 Result: {df.iloc[0, 0]}"
-                    elif 'module_name' in df.columns and len(df.columns) == 1:
-                        modules = "\n".join([f"{i+1}. {row['module_name']}" for i, row in df.iterrows()])
-                        response = f"📁 **Modules:**\n{modules}"
-                    elif 'title' in df.columns:
-                        tests = "\n".join([f"{i+1}. {row['title']}" for i, row in df.iterrows()])
-                        response = f"📋 **Tests in module:**\n{tests}"
-                    elif 'test_name' in df.columns:
-                        tests = "\n".join([f"{i+1}. {row['test_name']}" for i, row in df.iterrows()])
-                        response = f"📋 **Failed Tests:**\n{tests}"
+                        response = f"📊 **Result:** {df.iloc[0, 0]}"
+                    elif len(df.columns) <= 2:
+                        rows_fmt = "\n".join(
+                            f"{i+1}. " + " | ".join(str(v) for v in row)
+                            for i, row in enumerate(df.head(20).itertuples(index=False))
+                        )
+                        response = f"**Results ({len(df)} rows):**\n{rows_fmt}"
                     else:
-                        response = f"Found {len(df)} rows matching your request."
+                        response = f"Found **{len(df)} rows**. Use the chart feature to visualize."
+
     elif action == "vector":
         docs = data_loader.vector_search(data, top_k=5)
         if not docs:
-            response = "I couldn't find relevant information."
+            response = "No relevant information found."
         else:
-            context_docs = "\n\n".join([d["text"][:500] for d in docs])
-            answer_prompt = f"""{system_context}
+            ctx = "\n\n".join(d["text"][:400] for d in docs)
+            answer_prompt = f"Context:\n{ctx}\n\nQuestion: {user_message}\n\nAnswer concisely:"
+            response = llm.generate(answer_prompt, temperature=0.2) or "Could not generate a response."
 
-Using the retrieved context, answer the user's question.
-
-Context:
-{context_docs}
-
-User question: {user_message}
-
-Answer concisely.
-"""
-            response = llm.generate(answer_prompt, temperature=0.2)
-            if not response:
-                response = "I found some information but couldn't generate a response."
     else:
-        response = data
+        # Pure answer
+        response = str(data) if data else "I'm not sure how to answer that. Try rephrasing."
 
+    # Persist both turns
     memory.store_chat_message(session_id, "user", user_message)
     memory.store_chat_message(session_id, "assistant", response)
     return response
 
-# --------------------------------------------------------------
-# Chart generation (unchanged from working version, but with RBA)
-# --------------------------------------------------------------
-async def handle_chart(user_prompt: str, session_id: str, ingestion_id: str,
-                       role: str = None, project_id: str = None):
+
+# ---------------------------------------------------------------------------
+# Chart handler
+# ---------------------------------------------------------------------------
+
+async def handle_chart(
+    user_prompt: str,
+    session_id: str,
+    ingestion_id: str,
+    role: str = None,
+    project_id: str = None,
+):
     if state.current_ingestion_id != ingestion_id:
         if not data_loader.init_data(ingestion_id):
-            return None, f"Error: Ingestion '{ingestion_id}' not found."
+            return None, f"❌ Ingestion '{ingestion_id}' not found."
 
-    # Initialize RBA managers for chart context (optional)
-    if state.project_manager is None:
-        state.project_manager = ProjectManager()
-    if state.role_manager is None:
-        state.role_manager = RoleManager()
-
-    project_context = ""
-    if project_id:
-        project_context = state.project_manager.retrieve_relevant_context(project_id, user_prompt)
-
-    role_instruction = ""
-    if role:
-        role_instruction = state.role_manager.get_role_instruction(role)
-        logger.info(f"Role requested for chart: {role}; loaded={bool(role_instruction)}")
-    if not role_instruction:
-        role_instruction = "You are a data analyst."
-
-    system_context = f"{role_instruction}\n\n"
-    if project_id:
-        system_context += f"Project: {project_id}\n"
-    if project_context:
-        system_context += f"Relevant project knowledge:\n{project_context}\n"
-
-    cache_key = user_prompt.lower().strip()
-    if cache_key in _sql_cache:
-        cached = _sql_cache[cache_key]
-        logger.info(f"Using cached SQL for '{cache_key}'")
-        df, err = data_loader.execute_sql(cached)
-        if not err and not df.empty:
-            return _generate_chart_from_df(df, user_prompt, session_id, cached, system_context)
-
-    schemas = _get_schema_with_samples()
-    schema_str = json.dumps(schemas, indent=2)
-
-    sql_prompt = f"""{system_context}
-
-You are a data analyst. Generate a DuckDB SQL query.
-
-Available tables and columns (with samples):
-{schema_str}
-
-**Join instructions:**
-- To join test_cases and flattened_tests, use: test_cases.title = flattened_tests.test_name
-- For "priority vs failure count": 
-    SELECT tc.priority, COUNT(ft.status) as failure_count
-    FROM test_cases tc
-    JOIN flattened_tests ft ON tc.title = ft.test_name
-    WHERE ft.status = 'failed'
-    GROUP BY tc.priority
-- For heatmap: SELECT tc.module_name, tc.priority, COUNT(ft.status) as failures
-  FROM test_cases tc
-  JOIN flattened_tests ft ON tc.title = ft.test_name
-  WHERE ft.status = 'failed'
-  GROUP BY tc.module_name, tc.priority
-- For pass rate per module: SELECT tc.module_name, 
-    SUM(CASE WHEN ft.status='passed' THEN 1 ELSE 0 END)*1.0/COUNT(*) as pass_rate
-  FROM test_cases tc
-  JOIN flattened_tests ft ON tc.title = ft.test_name
-  GROUP BY tc.module_name
-
-User request: "{user_prompt}"
-
-Return only SQL. If impossible, return "N/A".
-"""
     llm = llm_client.LLMClient()
-    sql = llm.generate(sql_prompt, temperature=0.1)
-    logger.info(f"Generated SQL for chart: {sql}")
-    if not sql or sql.strip() == "N/A":
-        fallback_sql = _fallback_sql_for_prompt(user_prompt)
-        if not fallback_sql:
-            return None, "Could not determine data for chart"
-        sql = fallback_sql
+    chart_type = _detect_chart_type(user_prompt)
 
-    sql = _sanitize_sql_text(sql)
-    df, sql_error = data_loader.execute_sql(sql)
+    # --- SQL generation ---
+    cache_key = user_prompt.lower().strip()
+    sql = _sql_cache.get(cache_key)
 
-    max_retries = 2
-    for attempt in range(max_retries):
-        if sql_error or df.empty:
-            correction_prompt = f"""{system_context}
+    if not sql:
+        sql_prompt = CHART_SQL_PROMPT.format(user_prompt=user_prompt)
+        raw_sql = llm.generate(sql_prompt, temperature=0.05)
+        sql = _sanitize_sql(raw_sql or "")
 
-The previous SQL query failed.
-Error: {sql_error or 'Empty result'}
-Original request: {user_prompt}
-Attempted SQL: {sql}
-Please provide a corrected DuckDB SQL query that will return non-empty data.
-Use the correct join: test_cases.title = flattened_tests.test_name
-Return only SQL.
-"""
-            corrected_sql = llm.generate(correction_prompt, temperature=0.2)
-            if corrected_sql:
-                corrected_sql = _sanitize_sql_text(corrected_sql)
-                df, sql_error = data_loader.execute_sql(corrected_sql)
-                sql = corrected_sql
-                logger.info(f"Retry {attempt+1}: using corrected SQL")
+    if not sql or sql.upper() == "N/A":
+        sql = _fallback_sql(user_prompt, CHART_FALLBACK_SQL_MAP)
+        if not sql:
+            return None, "Could not determine what data to chart."
+
+    # Execute SQL with retries
+    df, err = data_loader.execute_sql(sql)
+
+    for attempt in range(2):
+        if err or not _is_df_usable(df):
+            fb = _fallback_sql(user_prompt, CHART_FALLBACK_SQL_MAP)
+            if fb and fb != sql:
+                logger.info(f"Chart SQL retry {attempt + 1}: using fallback")
+                df, err = data_loader.execute_sql(fb)
+                sql = fb
+                if not err and _is_df_usable(df):
+                    break
             else:
+                # Ask LLM to correct
+                fix_prompt = (
+                    f"Fix this DuckDB SQL query. Error: {err or 'empty result'}\n"
+                    f"Original SQL: {sql}\n"
+                    f"Request: {user_prompt}\n"
+                    "Tables: flattened_tests(test_name,status,duration,error,spec_file), "
+                    "test_cases(module_name,priority,title). JOIN: test_cases.title=flattened_tests.test_name\n"
+                    "Return ONLY corrected SQL:"
+                )
+                fixed = llm.generate(fix_prompt, temperature=0.1)
+                if fixed:
+                    sql = _sanitize_sql(fixed)
+                    df, err = data_loader.execute_sql(sql)
                 break
-        else:
-            break
 
-    if sql_error:
-        logger.error(f"SQL error after retries: {sql_error}")
-        fallback_sql = _fallback_sql_for_prompt(user_prompt)
-        if fallback_sql and fallback_sql != sql:
-            df, sql_error = data_loader.execute_sql(fallback_sql)
-            if not sql_error and _is_dataframe_usable(df):
-                sql = fallback_sql
-            else:
-                return None, f"SQL error: {sql_error}"
-        else:
-            return None, f"SQL error: {sql_error}"
-    if not _is_dataframe_usable(df):
-        return None, "No data found for chart (empty or null-only result)"
+    if err:
+        return None, f"SQL error: {err}"
+    if not _is_df_usable(df):
+        return None, "No data returned for this chart."
 
+    # Cache working SQL
     _sql_cache[cache_key] = sql
     if len(_sql_cache) > 100:
         for k in list(_sql_cache.keys())[:20]:
             del _sql_cache[k]
 
-    return _generate_chart_from_df(df, user_prompt, session_id, sql, system_context)
+    return _generate_chart_from_df(df, user_prompt, session_id, sql, chart_type, llm)
 
-def _detect_chart_type(prompt: str) -> str:
-    prompt_lower = prompt.lower()
-    if "line" in prompt_lower or "trend" in prompt_lower or "over time" in prompt_lower:
-        return "line"
-    elif "pie" in prompt_lower or "distribution" in prompt_lower or "percentage" in prompt_lower:
-        return "pie"
-    elif "heatmap" in prompt_lower or "matrix" in prompt_lower:
-        return "heatmap"
-    elif "bar" in prompt_lower or "top" in prompt_lower:
-        return "bar"
-    else:
-        return "auto"
 
-def _generate_chart_from_df(df: pd.DataFrame, user_prompt: str, session_id: str, sql: str, system_context: str = ""):
-    if not _is_dataframe_usable(df):
-        return None, "No data available for chart"
-    chart_type = _detect_chart_type(user_prompt)
-    if chart_type == "pie" and len(df.columns) < 2:
-        return None, "Pie chart requires at least 2 columns (category and value)"
-    elif chart_type == "line" and len(df) < 2:
-        return None, "Line chart requires at least 2 data points"
+def _generate_chart_from_df(
+    df: pd.DataFrame,
+    user_prompt: str,
+    session_id: str,
+    sql: str,
+    chart_type: str,
+    llm,
+):
+    if not _is_df_usable(df):
+        return None, "No data available."
+
     df = df.dropna(how="all")
     if df.empty:
-        return None, "Data contains only null values"
-    data_sample = df.head(100).to_dict(orient="records")
-    data_sample_serializable = _convert_timestamp(data_sample)
+        return None, "Data is empty after cleaning."
 
-    is_heatmap = 'heatmap' in user_prompt.lower()
-    chart_type_hint = ""
-    if is_heatmap:
-        chart_type_hint = """
-Use plotly.express.density_heatmap or plotly.graph_objects.Heatmap.
-Example:
-import plotly.express as px
-fig = px.density_heatmap(data, x='module_name', y='priority', z='failures', 
-                         title='Risk Heatmap',
-                         color_continuous_scale='Viridis')
-fig.update_layout(template='plotly_dark', title_x=0.5)
-"""
-    else:
-        chart_type_hint = """
-Example for bar chart:
-import plotly.express as px
-fig = px.bar(data, x='module_name', y='failure_count', 
-             title='Failures by Module',
-             color_discrete_sequence=['#3b82f6'])
-fig.update_layout(template='plotly_dark', title_x=0.5)
-"""
+    # Serialize data sample for the prompt
+    data_sample = _convert_timestamp(df.head(50).to_dict(orient="records"))
+    # Replace NaN
+    data_sample = [
+        {k: ("" if (isinstance(v, float) and np.isnan(v)) else v) for k, v in row.items()}
+        for row in data_sample
+    ]
 
-    chart_prompt = f"""{system_context}
+    code_prompt = CHART_CODE_PROMPT.format(
+        user_prompt=user_prompt,
+        chart_type=chart_type,
+        data_sample=json.dumps(data_sample, indent=2, ensure_ascii=False),
+        columns=list(df.columns),
+    )
 
-Generate Plotly Python code for a professional chart as described.
-
-User request: "{user_prompt}"
-
-Data (first 100 rows):
-{json.dumps(data_sample_serializable, indent=2)}
-
-STRICT REQUIREMENTS:
-1. Use plotly.express (px) for simplicity
-2. ALWAYS set title, xaxis_title, yaxis_title
-3. For bar charts: use px.bar()
-4. For line charts: use px.line()
-5. For pie charts: use px.pie() with ONLY: names, values, title, hole
-6. For heatmaps: use px.density_heatmap()
-7. For colors, use ONLY: 'Viridis', 'Blues', 'Set2', or color_discrete_sequence=['#3b82f6']
-8. Format numbers with commas for thousands
-9. Rotate x-axis labels if needed (tickangle=45)
-10. DO NOT use: 'Blues_d', 'Blues_r', hovertemplate, customdata
-11. ALWAYS add: fig.update_layout(template='plotly_dark', title_x=0.5)
-
-Example format:
-```python
-import plotly.express as px
-fig = px.bar(data, x='module_name', y='failure_count', 
-             title='Failures by Module',
-             labels={{'module_name': 'Module Name', 'failure_count': 'Number of Failures'}},
-             color_discrete_sequence=['#3b82f6'])
-fig.update_layout(template='plotly_dark', title_x=0.5)
-
-Return only Python code. Define variable `fig`.
-{chart_type_hint}
-"""
-    llm = llm_client.LLMClient()
-    code = llm.generate(chart_prompt, temperature=0.4)
+    code = llm.generate(code_prompt, temperature=0.2)
     if not code:
-        return None, "Chart generation failed"
+        return None, "Chart code generation failed."
 
     code = _sanitize_plotly_code(code)
-    
+    logger.debug(f"Chart code:\n{code}")
+
     try:
-        logger.info(f"Chart code execution - length: {len(code)}")
         import plotly.express as px
         import plotly.graph_objects as go
-        namespace = {"px": px, "go": go, "data": df, "pd": pd}
-        exec(code, namespace)
-        fig = namespace.get("fig")
+
+        # Build namespace — `data` is list of dicts (LLM uses it directly or converts to df)
+        ns = {
+            "px": px,
+            "go": go,
+            "pd": pd,
+            "np": np,
+            "data": data_sample,
+        }
+        exec(code, ns)  # noqa: S102
+        fig = ns.get("fig")
         if fig is None:
-            raise ValueError("No 'fig' variable defined")
-        
-        fig.update_layout(
-            template='plotly_dark',
-            autosize=True,
-            margin=dict(l=40, r=40, t=50, b=40),
-            paper_bgcolor='rgba(0,0,0,0)',
-            plot_bgcolor='rgba(0,0,0,0)',
-            font=dict(color='#e5e7eb'),
-            colorway=_SAFE_COLORWAY
-        )
-        
-        if not fig.layout.title or not fig.layout.title.text:
-            fig.update_layout(title=user_prompt[:50])
-        
-        if hasattr(fig, 'layout') and hasattr(fig.layout, 'xaxis'):
-            if not fig.layout.xaxis.title.text:
-                fig.update_xaxes(title_text=df.columns[0] if len(df.columns) > 0 else "X Axis")
-            fig.update_xaxes(title_font=dict(color='#9ca3af'), tickfont=dict(color='#9ca3af'))
-        
-        if hasattr(fig, 'layout') and hasattr(fig.layout, 'yaxis'):
-            if not fig.layout.yaxis.title.text:
-                fig.update_yaxes(title_text=df.columns[1] if len(df.columns) > 1 else "Y Axis")
-            fig.update_yaxes(title_font=dict(color='#9ca3af'), tickfont=dict(color='#9ca3af'))
-        
+            raise ValueError("No 'fig' variable produced by chart code.")
+
+        # Apply consistent layout overrides
+        fig = _apply_chart_layout(fig)
+
+        # Ensure title
+        if not getattr(fig.layout.title, "text", None):
+            fig.update_layout(title=dict(text=user_prompt[:60]))
+
         chart_json = fig.to_json()
-        logger.info(f"Chart JSON length: {len(chart_json)}")
-        result = memory.store_chart(session_id, user_prompt, chart_json, {"sql": sql})
-        logger.info(f"store_chart returned: {result}")
+        memory.store_chart(session_id, user_prompt, chart_json, {"sql": sql})
         return chart_json, None
-    except Exception as e:
-        logger.error(f"Chart code execution error: {e}")
-        import traceback
-        traceback.print_exc()
-        return None, f"Chart generation failed: {str(e)}"
+
+    except Exception as exc:
+        logger.error(f"Chart exec error: {exc}")
+        # Attempt minimal fallback chart
+        try:
+            import plotly.express as px
+
+            fallback_fig = _minimal_fallback_chart(df, user_prompt, chart_type, px)
+            if fallback_fig:
+                fallback_fig = _apply_chart_layout(fallback_fig)
+                chart_json = fallback_fig.to_json()
+                memory.store_chart(session_id, user_prompt, chart_json, {"sql": sql, "fallback": True})
+                return chart_json, None
+        except Exception as fb_exc:
+            logger.error(f"Fallback chart also failed: {fb_exc}")
+        return None, f"Chart generation failed: {exc}"
+
+
+def _minimal_fallback_chart(df: pd.DataFrame, prompt: str, chart_type: str, px):
+    """Generate a guaranteed-safe minimal chart from any dataframe."""
+    cols = list(df.columns)
+    if len(cols) < 2:
+        return None
+
+    # Find a numeric column and a categorical column
+    num_cols = df.select_dtypes(include="number").columns.tolist()
+    cat_cols = df.select_dtypes(include=["object", "category"]).columns.tolist()
+
+    if not num_cols:
+        return None
+
+    x_col = cat_cols[0] if cat_cols else cols[0]
+    y_col = num_cols[0]
+
+    title = prompt[:60]
+
+    if chart_type == "pie" and x_col and y_col:
+        return px.pie(df, names=x_col, values=y_col, title=title)
+    else:
+        fig = px.bar(
+            df,
+            x=x_col,
+            y=y_col,
+            title=title,
+            color_discrete_sequence=["#60a5fa"],
+        )
+        fig.update_traces(text=df[y_col], textposition="outside")
+        return fig

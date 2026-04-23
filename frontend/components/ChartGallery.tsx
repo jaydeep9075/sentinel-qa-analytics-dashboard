@@ -6,6 +6,7 @@ import { getChartHistory, deleteChart } from "@/lib/api";
 import { getSessionId } from "@/lib/session";
 import { useIngestion } from "@/lib/IngestionContext";
 import AIGeneratedChart from "./AIGeneratedChart";
+import { LayoutGrid, List, Trash2, GripVertical, Sparkles } from "lucide-react";
 import {
   DndContext,
   closestCenter,
@@ -98,64 +99,40 @@ function SortableItem({
     <div
       ref={setNodeRef}
       style={style}
-      className="bg-[#1a1a1a] rounded-xl border border-[#2a2a2a] overflow-hidden hover:border-blue-500/50 transition-all"
+      className="group bg-white/[0.02] rounded-2xl border border-white/[0.06] overflow-hidden hover:border-cyan-500/15 transition-all"
     >
-      <div className="p-4 border-b border-[#2a2a2a] bg-[#0f0f0f]">
-        <div className="flex justify-between items-start">
-          <div className="flex-1 min-w-0">
-            <div className="flex items-center space-x-2 mb-2">
-              <div
-                {...attributes}
-                {...listeners}
-                className="cursor-move p-1 hover:bg-[#2a2a2a] rounded-lg"
-              >
-                <svg
-                  className="h-5 w-5 text-gray-500"
-                  fill="none"
-                  viewBox="0 0 24 24"
-                  stroke="currentColor"
-                >
-                  <path
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    strokeWidth={2}
-                    d="M4 8h16M4 16h16"
-                  />
-                </svg>
-              </div>
-              <span className="px-2 py-1 bg-blue-500/20 text-blue-400 text-xs rounded-full">
-                Chart
-              </span>
-            </div>
-            <p className="text-sm text-gray-400 italic truncate">
-              "{chart.prompt}"
-            </p>
-          </div>
-          <button
-            onClick={() => onDelete(chart.id)}
-            className="text-gray-500 hover:text-red-400 p-2 hover:bg-red-500/10 rounded-lg"
-          >
-            <svg
-              className="h-5 w-5"
-              fill="none"
-              viewBox="0 0 24 24"
-              stroke="currentColor"
+      {/* card header */}
+      <div className="px-5 py-3.5 border-b border-white/[0.05] bg-white/[0.01] flex justify-between items-start">
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center gap-2 mb-1.5">
+            <div
+              {...attributes}
+              {...listeners}
+              className="cursor-move p-1 hover:bg-white/[0.06] rounded-lg transition-colors"
             >
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                strokeWidth={2}
-                d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"
-              />
-            </svg>
-          </button>
+              <GripVertical className="w-4 h-4 text-white/20" />
+            </div>
+            <span className="px-2 py-0.5 bg-cyan-500/[0.08] text-cyan-400 text-[10px] rounded-full uppercase tracking-wider font-semibold border border-cyan-500/15">
+              Chart
+            </span>
+          </div>
+          <p className="text-xs text-white/30 italic truncate pl-8">
+            &ldquo;{chart.prompt}&rdquo;
+          </p>
         </div>
+        <button
+          onClick={() => onDelete(chart.id)}
+          className="text-white/15 hover:text-red-400 p-2 hover:bg-red-500/[0.08] rounded-lg transition-all"
+        >
+          <Trash2 className="w-4 h-4" />
+        </button>
       </div>
+      {/* chart body */}
       <div className="p-4">
         {chart.config ? (
           <AIGeneratedChart config={chart.config} />
         ) : (
-          <div className="text-red-400 p-4 text-center">Invalid chart data</div>
+          <div className="text-red-400/60 p-4 text-center text-sm">Invalid chart data</div>
         )}
       </div>
     </div>
@@ -220,13 +197,13 @@ export default function ChartGallery() {
 
   if (isLoading)
     return (
-      <div className="text-center py-16 text-gray-400">Loading gallery...</div>
+      <div className="text-center py-16 text-white/25 text-sm">Loading gallery...</div>
     );
 
   if (error) {
     console.error("❌ Chart gallery error:", error);
     return (
-      <div className="text-red-400 p-4 border border-red-500/30 rounded-xl">
+      <div className="text-red-400/80 p-4 border border-red-500/20 rounded-xl bg-red-500/[0.04] text-sm">
         Error loading charts: {String(error)}
       </div>
     );
@@ -240,8 +217,9 @@ export default function ChartGallery() {
 
   if (chartList.length === 0) {
     return (
-      <div className="text-center py-16 text-gray-500">
-        No charts yet. Generate one using the chart generator!
+      <div className="text-center py-20">
+        <Sparkles className="w-10 h-10 mx-auto mb-4 text-cyan-500/20" />
+        <p className="text-white/25 text-sm">No charts yet. Generate one using the chart generator!</p>
       </div>
     );
   }
@@ -249,23 +227,33 @@ export default function ChartGallery() {
   return (
     <div>
       <div className="flex justify-between items-center mb-6">
-        <h2 className="text-2xl font-bold text-white">
+        <h2 className="text-xl font-bold text-white">
           Chart Gallery{" "}
-          <span className="text-sm font-normal text-gray-500">
+          <span className="text-sm font-normal text-white/25">
             ({chartList.length})
           </span>
         </h2>
-        <div className="flex space-x-2 bg-[#1a1a1a] p-1 rounded-lg border border-[#2a2a2a]">
+        <div className="flex bg-white/[0.03] p-1 rounded-xl border border-white/[0.06]">
           <button
             onClick={() => setLayout("grid")}
-            className={`p-2 rounded-lg ${layout === "grid" ? "bg-blue-500" : "text-gray-400"}`}
+            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-all ${
+              layout === "grid"
+                ? "bg-gradient-to-r from-cyan-500 to-blue-600 text-white shadow-[0_0_12px_rgba(0,240,255,0.15)]"
+                : "text-white/30 hover:text-white/50"
+            }`}
           >
+            <LayoutGrid className="w-3.5 h-3.5" />
             Grid
           </button>
           <button
             onClick={() => setLayout("list")}
-            className={`p-2 rounded-lg ${layout === "list" ? "bg-blue-500" : "text-gray-400"}`}
+            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-all ${
+              layout === "list"
+                ? "bg-gradient-to-r from-cyan-500 to-blue-600 text-white shadow-[0_0_12px_rgba(0,240,255,0.15)]"
+                : "text-white/30 hover:text-white/50"
+            }`}
           >
+            <List className="w-3.5 h-3.5" />
             List
           </button>
         </div>

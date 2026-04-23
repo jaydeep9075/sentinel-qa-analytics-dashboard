@@ -1,0 +1,251 @@
+================================================================================
+TEST RESULTS EXPORT
+Generated at: 2026-04-23 10:31:33
+================================================================================
+
+Total Records Found: 328
+
+================================================================================
+RECORD #1
+================================================================================
+ID: 300006
+Build ID: 180002
+Project ID: 30001
+Organization ID: org_user_38yhS31aNDnHaWzrJnjl6NNBnlk
+Spec File: titleCharges.spec.ts
+Executed At: 2026-02-03 16:39:25
+
+📋 TESTS JSON:
+----------------------------------------
+Total test cases: 1
+
+  Test Case #1:
+    - Name: N/A
+    - Status: PASSED
+    - Duration: N/A
+    - Error: None
+
+
+⏰ EXECUTED AT (separate):
+   2026-02-03 16:39:25
+
+================================================================================
+RECORD #2
+================================================================================
+ID: 300005
+Build ID: 180002
+Project ID: 30001
+Organization ID: org_user_38yhS31aNDnHaWzrJnjl6NNBnlk
+Spec File: summaryOfSellerTransaction.spec.ts
+Executed At: 2026-02-03 16:39:04
+
+📋 TESTS JSON:
+----------------------------------------
+Total test cases: 1
+
+  Test Case #1:
+    - Name: N/A
+    - Status: PASSED
+    - Duration: N/A
+    - Error: None
+
+
+⏰ EXECUTED AT (separate):
+   2026-02-03 16:39:04
+
+================================================================================
+RECORD #3
+================================================================================
+ID: 300004
+Build ID: 180002
+Project ID: 30001
+Organization ID: org_user_38yhS31aNDnHaWzrJnjl6NNBnlk
+Spec File: summaryOfBorrowerTransaction.spec.ts
+Executed At: 2026-02-03 16:34:39
+
+📋 TESTS JSON:
+----------------------------------------
+Total test cases: 1
+
+  Test Case #1:
+    - Name: N/A
+    - Status: PASSED
+    - Duration: N/A
+    - Error: None
+
+
+⏰ EXECUTED AT (separate):
+   2026-02-03 16:34:39
+
+================================================================================
+RECORD #4
+================================================================================
+ID: 300003
+Build ID: 180002
+Project ID: 30001
+Organization ID: org_user_38yhS31aNDnHaWzrJnjl6NNBnlk
+Spec File: settlementCharges.spec.ts
+Executed At: 2026-02-03 16:33:58
+
+📋 TESTS JSON:
+----------------------------------------
+Total test cases: 1
+
+  Test Case #1:
+    - Name: N/A
+    - Status: PASSED
+    - Duration: N/A
+    - Error: None
+
+
+⏰ EXECUTED AT (separate):
+   2026-02-03 16:33:58
+
+================================================================================
+RECORD #5
+================================================================================
+ID: 300002
+Build ID: 180002
+Project ID: 30001
+Organization ID: org_user_38yhS31aNDnHaWzrJnjl6NNBnlk
+Spec File: itemsRequiredByLender.spec.ts
+Executed At: 2026-02-03 16:29:35
+
+📋 TESTS JSON:
+----------------------------------------
+Total test cases: 1
+
+  Test Case #1:
+    - Name: N/A
+    - Status: PASSED
+    - Duration: N/A
+    - Error: None
+
+
+⏰ EXECUTED AT (separate):
+   2026-02-03 16:29:35
+
+================================================================================
+RECORD #6
+================================================================================
+ID: 300001
+Build ID: 180002
+Project ID: 30001
+Organization ID: org_user_38yhS31aNDnHaWzrJnjl6NNBnlk
+Spec File: reservesDepositedWithLender.spec.ts
+Executed At: 2026-02-03 16:29:26
+
+📋 TESTS JSON:
+----------------------------------------
+Total test cases: 1
+
+  Test Case #1:
+    - Name: N/A
+    - Status: PASSED
+    - Duration: N/A
+    - Error: None
+
+
+⏰ EXECUTED AT (separate):
+   2026-02-03 16:29:26
+
+================================================================================
+RECORD #7
+================================================================================
+ID: 270003
+Build ID: 180002
+Project ID: 30001
+Organization ID: org_user_38yhS31aNDnHaWzrJnjl6NNBnlk
+Spec File: itemsPayableInConnectionWithLoan.spec.ts
+Executed At: 2026-02-03 16:20:56
+
+📋 TESTS JSON:
+----------------------------------------
+Total test cases: 1
+
+  Test Case #1:
+    - Name: N/A
+    - Status: PASSED
+    - Duration: N/A
+    - Error: None
+
+
+⏰ EXECUTED AT (separate):
+   2026-02-03 16:20:56
+
+================================================================================
+RECORD #8
+================================================================================
+ID: 270002
+Build ID: 180002
+Project ID: 30001
+Organization ID: org_user_38yhS31aNDnHaWzrJnjl6NNBnlk
+Spec File: hudSettlementStatementSectionsA-I-test.spec.ts
+Executed At: 2026-02-03 16:19:32
+
+📋 TESTS JSON:
+----------------------------------------
+Total test cases: 1
+
+  Test Case #1:
+    - Name: N/A
+    - Status: PASSED
+    - Duration: N/A
+    - Error: None
+
+
+⏰ EXECUTED AT (separate):
+   2026-02-03 16:19:32
+
+================================================================================
+RECORD #9
+================================================================================
+ID: 270001
+Build ID: 180002
+Project ID: 30001
+Organization ID: org_user_38yhS31aNDnHaWzrJnjl6NNBnlk
+Spec File: governmentRecordingAndTransferCharges.spec.ts
+Executed At: 2026-02-03 16:14:26
+
+📋 TESTS JSON:
+----------------------------------------
+Total test cases: 1
+
+  Test Case #1:
+    - Name: N/A
+    - Status: PASSED
+    - Duration: N/A
+    - Error: None
+
+
+⏰ EXECUTED AT (separate):
+   2026-02-03 16:14:26
+
+================================================================================
+RECORD #10
+================================================================================
+ID: 240004
+Build ID: 180002
+Project ID: 30001
+Organization ID: org_user_38yhS31aNDnHaWzrJnjl6NNBnlk
+Spec File: additionalSettlementCharges.spec.ts
+Executed At: 2026-02-03 16:13:07
+
+📋 TESTS JSON:
+----------------------------------------
+Total test cases: 1
+
+  Test Case #1:
+    - Name: N/A
+    - Status: PASSED
+    - Duration: N/A
+    - Error: None
+
+
+⏰ EXECUTED AT (separate):
+   2026-02-03 16:13:07
+
+
+================================================================================
+... and 318 more records
+================================================================================

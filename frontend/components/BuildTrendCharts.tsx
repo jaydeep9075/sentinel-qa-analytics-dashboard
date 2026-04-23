@@ -13,6 +13,7 @@ interface Props {
     passRate: number;
     passed: number;
     failed: number;
+    skipped: number;          // new
     totalDuration: number;
     avgDuration: number;
   }[];
@@ -20,78 +21,83 @@ interface Props {
 
 export default function BuildTrendCharts({ chartData }: Props) {
   if (!chartData || chartData.length === 0) {
-    return <div className="p-8 text-center text-red-400">No chart data</div>;
+    return <div className="p-8 text-center text-red-400/60 text-sm">No chart data</div>;
   }
 
-  // Common X-axis categories (Build 1, Build 2, ...)
   const categories = chartData.map(d => d.label);
 
-  // 1. Pass Rate Trend (Line chart)
+  // shared theme tokens
+  const labelColor = "rgba(255,255,255,0.35)";
+  const gridColor = "rgba(255,255,255,0.06)";
+  const titleStyle = { color: "#fff", fontSize: "14px", fontWeight: "600" as const };
+
+  // 1. Pass Rate Trend
   const passRateOptions: ApexOptions = {
     chart: { type: "line", height: 350, toolbar: { show: false }, background: "transparent" },
     stroke: { curve: "smooth", width: 3 },
-    colors: ["#3b82f6"],
-    xaxis: { categories, labels: { style: { colors: "#9ca3af" } } },
-    yaxis: { title: { text: "Pass Rate (%)" }, min: 0, max: 100, labels: { style: { colors: "#9ca3af" } } },
-    title: { text: "Pass Rate Trend", align: "left", style: { color: "#fff", fontSize: "16px", fontWeight: "600" } },
+    colors: ["#00f0ff"],
+    xaxis: { categories, labels: { style: { colors: labelColor } } },
+    yaxis: { title: { text: "Pass Rate (%)", style: { color: labelColor } }, min: 0, max: 100, labels: { style: { colors: labelColor } } },
+    title: { text: "Pass Rate Trend (executed only)", align: "left", style: titleStyle },
     tooltip: { theme: "dark", y: { formatter: (val: number) => val.toFixed(1) + "%" } },
-    grid: { borderColor: "#374151" },
+    grid: { borderColor: gridColor },
   };
   const passRateSeries = [{ name: "Pass Rate", data: chartData.map(d => d.passRate) }];
 
-  // 2. Passed vs Failed (Stacked Bar)
+  // 2. Passed vs Failed vs Skipped (Stacked Bar)
   const stackedOptions: ApexOptions = {
     chart: { type: "bar", height: 350, stacked: true, toolbar: { show: false }, background: "transparent" },
-    colors: ["#10b981", "#ef4444"],
-    xaxis: { categories, labels: { style: { colors: "#9ca3af" } } },
-    yaxis: { title: { text: "Number of Tests" }, labels: { style: { colors: "#9ca3af" } } },
+    colors: ["#10b981", "#ef4444", "#6b7280"],
+    xaxis: { categories, labels: { style: { colors: labelColor } } },
+    yaxis: { title: { text: "Number of Tests", style: { color: labelColor } }, labels: { style: { colors: labelColor } } },
     legend: { position: "top", labels: { colors: "#fff" } },
-    title: { text: "Test Results Breakdown", align: "left", style: { color: "#fff", fontSize: "16px", fontWeight: "600" } },
+    title: { text: "Test Results Breakdown (incl. skipped)", align: "left", style: titleStyle },
     tooltip: { theme: "dark" },
-    grid: { borderColor: "#374151" },
+    grid: { borderColor: gridColor },
   };
   const stackedSeries = [
     { name: "Passed", data: chartData.map(d => d.passed) },
     { name: "Failed", data: chartData.map(d => d.failed) },
+    { name: "Skipped", data: chartData.map(d => d.skipped) },
   ];
 
-  // 3. Total Duration (Line chart)
+  // 3. Total Duration
   const totalDurationOptions: ApexOptions = {
     chart: { type: "line", height: 350, toolbar: { show: false }, background: "transparent" },
     stroke: { curve: "smooth", width: 3 },
     colors: ["#a855f7"],
-    xaxis: { categories, labels: { style: { colors: "#9ca3af" } } },
-    yaxis: { title: { text: "Total Duration (seconds)" }, labels: { style: { colors: "#9ca3af" } } },
-    title: { text: "Total Duration", align: "left", style: { color: "#fff", fontSize: "16px", fontWeight: "600" } },
+    xaxis: { categories, labels: { style: { colors: labelColor } } },
+    yaxis: { title: { text: "Total Duration (seconds)", style: { color: labelColor } }, labels: { style: { colors: labelColor } } },
+    title: { text: "Total Duration", align: "left", style: titleStyle },
     tooltip: { theme: "dark", y: { formatter: (val: number) => val.toFixed(2) + " s" } },
-    grid: { borderColor: "#374151" },
+    grid: { borderColor: gridColor },
   };
   const totalDurationSeries = [{ name: "Total Duration", data: chartData.map(d => d.totalDuration) }];
 
-  // 4. Average Test Duration (Bar chart)
+  // 4. Average Test Duration
   const avgDurationOptions: ApexOptions = {
     chart: { type: "bar", height: 350, toolbar: { show: false }, background: "transparent" },
     colors: ["#f59e0b"],
-    xaxis: { categories, labels: { style: { colors: "#9ca3af" } } },
-    yaxis: { title: { text: "Average Duration (seconds)" }, labels: { style: { colors: "#9ca3af" } } },
-    title: { text: "Average Test Duration per Build", align: "left", style: { color: "#fff", fontSize: "16px", fontWeight: "600" } },
+    xaxis: { categories, labels: { style: { colors: labelColor } } },
+    yaxis: { title: { text: "Average Duration (seconds)", style: { color: labelColor } }, labels: { style: { colors: labelColor } } },
+    title: { text: "Average Test Duration per Build", align: "left", style: titleStyle },
     tooltip: { theme: "dark", y: { formatter: (val: number) => val.toFixed(2) + " s" } },
-    grid: { borderColor: "#374151" },
+    grid: { borderColor: gridColor },
   };
   const avgDurationSeries = [{ name: "Avg Duration", data: chartData.map(d => d.avgDuration) }];
 
   return (
     <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-      <div className="bg-white/[0.03] backdrop-blur p-4 rounded-2xl border border-white/10">
+      <div className="bg-white/[0.02] backdrop-blur-sm p-5 rounded-2xl border border-white/[0.06] hover:border-cyan-500/15 transition-all">
         <Chart options={passRateOptions} series={passRateSeries} type="line" height={350} />
       </div>
-      <div className="bg-white/[0.03] backdrop-blur p-4 rounded-2xl border border-white/10">
+      <div className="bg-white/[0.02] backdrop-blur-sm p-5 rounded-2xl border border-white/[0.06] hover:border-emerald-500/15 transition-all">
         <Chart options={stackedOptions} series={stackedSeries} type="bar" height={350} />
       </div>
-      <div className="bg-white/[0.03] backdrop-blur p-4 rounded-2xl border border-white/10">
+      <div className="bg-white/[0.02] backdrop-blur-sm p-5 rounded-2xl border border-white/[0.06] hover:border-purple-500/15 transition-all">
         <Chart options={totalDurationOptions} series={totalDurationSeries} type="line" height={350} />
       </div>
-      <div className="bg-white/[0.03] backdrop-blur p-4 rounded-2xl border border-white/10">
+      <div className="bg-white/[0.02] backdrop-blur-sm p-5 rounded-2xl border border-white/[0.06] hover:border-amber-500/15 transition-all">
         <Chart options={avgDurationOptions} series={avgDurationSeries} type="bar" height={350} />
       </div>
     </div>

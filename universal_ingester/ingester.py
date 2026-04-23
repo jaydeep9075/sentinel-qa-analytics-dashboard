@@ -226,7 +226,8 @@ class UniversalIngester:
 
     def _generate_summary(self, build_id: str, total_rows: int):
         """Generate summary.md and summary.json from structured_test_results.
-        Works for both TiDB and Allure data formats."""
+        Handles both old format (JSON 'tests' column) and new normalized format.
+        Pass rate calculated as passed/(passed+failed) to match Allure behavior."""
         import json
         import re
         from datetime import datetime, timezone
@@ -238,6 +239,8 @@ class UniversalIngester:
 
         metrics = {
             "total_tests": 0,
+            "executed_tests": 0,
+            "skipped_tests": 0,
             "passed": 0,
             "failed": 0,
             "pass_rate": 0.0,
@@ -270,49 +273,82 @@ class UniversalIngester:
             logger.info(f"structured_test_results rows: {len(df_results)}")
             logger.info(f"Columns: {list(df_results.columns)}")
 
-            if 'tests' not in df_results.columns:
-                lines.append("## ⚠️ Test Metrics")
-                lines.append("No 'tests' column found in table.")
-                summary_md_path.write_text("\n".join(lines), encoding='utf-8')
-                return
-
-            # Extract all individual test records from the 'tests' column
             all_tests = []
-            for tests_raw in df_results['tests'].dropna():
-                # Parse if it's a JSON string
-                if isinstance(tests_raw, str):
-                    try:
-                        tests_data = json.loads(tests_raw)
-                    except Exception as e:
-                        logger.warning(f"Failed to parse tests JSON: {e}")
-                        continue
-                # Handle NumPy array (convert to list)
-                elif isinstance(tests_raw, np.ndarray):
-                    tests_data = tests_raw.tolist()
-                else:
-                    tests_data = tests_raw
+            
+            # Check which format we have
+            if 'tests' in df_results.columns:
+                # OLD FORMAT: JSON blob in 'tests' column
+                logger.info("Using old format: extracting tests from 'tests' JSON column")
+                for tests_raw in df_results['tests'].dropna():
+                    if isinstance(tests_raw, str):
+                        try:
+                            tests_data = json.loads(tests_raw)
+                        except Exception as e:
+                            logger.warning(f"Failed to parse tests JSON: {e}")
+                            continue
+                    elif isinstance(tests_raw, np.ndarray):
+                        tests_data = tests_raw.tolist()
+                    else:
+                        tests_data = tests_raw
 
-                # Handle both list and dict structures
-                if isinstance(tests_data, list):
-                    all_tests.extend(tests_data)
-                elif isinstance(tests_data, dict):
-                    # Some formats store tests under a key like 'test_cases' or 'tests'
-                    found = False
-                    for key in ['test_cases', 'tests', 'cases', 'results', 'items', 'data']:
-                        if key in tests_data and isinstance(tests_data[key], list):
-                            all_tests.extend(tests_data[key])
-                            found = True
-                            break
-                    if not found:
-                        all_tests.append(tests_data)
+                    if isinstance(tests_data, list):
+                        all_tests.extend(tests_data)
+                    elif isinstance(tests_data, dict):
+                        found = False
+                        for key in ['test_cases', 'tests', 'cases', 'results', 'items', 'data']:
+                            if key in tests_data and isinstance(tests_data[key], list):
+                                all_tests.extend(tests_data[key])
+                                found = True
+                                break
+                        if not found:
+                            all_tests.append(tests_data)
+            else:
+                # NEW FORMAT: normalized columns (one row per test)
+                logger.info("Using new normalized format: converting rows to test objects")
+                for _, row in df_results.iterrows():
+                    test_obj = {}
+                    
+                    # Map common fields
+                    test_obj['full_title'] = row.get('test_name') or row.get('full_name') or row.get('name') or ''
+                    test_obj['name'] = row.get('test_name') or row.get('name') or ''
+                    test_obj['status'] = row.get('status', '')
+                    test_obj['duration'] = row.get('duration', '0ms')
+                    test_obj['error'] = row.get('error_message', '')
+                    test_obj['spec_file'] = row.get('spec_file', '')
+                    test_obj['description'] = row.get('description', '')
+                    
+                    # Handle labels (might be JSON string or dict)
+                    labels_val = row.get('labels', {})
+                    if isinstance(labels_val, str):
+                        try:
+                            test_obj['labels'] = json.loads(labels_val)
+                        except:
+                            test_obj['labels'] = {}
+                    else:
+                        test_obj['labels'] = labels_val
+                    
+                    # Handle tags
+                    tags_val = row.get('tags', [])
+                    if isinstance(tags_val, str):
+                        try:
+                            test_obj['tags'] = json.loads(tags_val)
+                        except:
+                            test_obj['tags'] = []
+                    else:
+                        test_obj['tags'] = tags_val
+                    
+                    test_obj['uuid'] = row.get('id', '')
+                    test_obj['history_id'] = row.get('history_id', '')
+                    test_obj['duration_seconds'] = row.get('duration_seconds', 0)
+                    
+                    all_tests.append(test_obj)
 
             logger.info(f"Extracted {len(all_tests)} individual test records")
 
             if not all_tests:
                 lines.append("## ⚠️ Test Metrics")
-                lines.append("No test records found in 'tests' column.")
+                lines.append("No test records found in table.")
                 summary_md_path.write_text("\n".join(lines), encoding='utf-8')
-                # Still write JSON with empty metrics
                 json_data = {
                     "build_id": build_id,
                     "ingested_at": datetime.now(timezone.utc).isoformat(),
@@ -328,7 +364,7 @@ class UniversalIngester:
             df_tests = pd.DataFrame(all_tests)
             logger.info(f"Test DataFrame columns: {list(df_tests.columns)}")
 
-            # --- Flexible column detection (supports TiDB and Allure) ---
+            # --- Flexible column detection ---
             test_name_col = None
             for col in ['full_title', 'title', 'test_name', 'name']:
                 if col in df_tests.columns:
@@ -365,45 +401,59 @@ class UniversalIngester:
             def parse_duration(val):
                 if pd.isna(val):
                     return None
-                # Numeric (int/float) – assume milliseconds
+                # If it's already numeric (seconds)
                 if isinstance(val, (int, float)):
-                    return float(val) / 1000.0
+                    return float(val)
                 if isinstance(val, str):
                     val = val.strip().lower()
-                    # Extract number and optional unit
+                    # If it ends with 'ms'
+                    if val.endswith('ms'):
+                        try:
+                            return float(val[:-2]) / 1000.0
+                        except:
+                            pass
+                    # General number with optional unit
                     match = re.match(r'^([\d.]+)\s*(ms|s|m|h)?$', val)
-                    if not match:
-                        return None
-                    num = float(match.group(1))
-                    unit = match.group(2) or 's'
-                    if unit == 'ms':
-                        return num / 1000.0
-                    elif unit == 'm':
-                        return num * 60.0
-                    elif unit == 'h':
-                        return num * 3600.0
-                    else:  # seconds or no unit
-                        return num
+                    if match:
+                        num = float(match.group(1))
+                        unit = match.group(2) or 's'
+                        if unit == 'ms':
+                            return num / 1000.0
+                        elif unit == 'm':
+                            return num * 60.0
+                        elif unit == 'h':
+                            return num * 3600.0
+                        else:
+                            return num
                 return None
 
-            df_tests['duration_seconds'] = df_tests[duration_col].apply(parse_duration)
-            valid_durations = df_tests['duration_seconds'].dropna()
+            # Check if duration_seconds already exists (normalized format)
+            if 'duration_seconds' in df_tests.columns:
+                df_tests['duration_seconds'] = pd.to_numeric(df_tests['duration_seconds'], errors='coerce')
+                valid_durations = df_tests['duration_seconds'].dropna()
+            else:
+                df_tests['duration_seconds'] = df_tests[duration_col].apply(parse_duration)
+                valid_durations = df_tests['duration_seconds'].dropna()
+            
             logger.info(f"Valid durations: {len(valid_durations)} / {len(df_tests)}")
 
-            # --- Calculate metrics ---
+            # --- Calculate metrics (Allure-style pass rate) ---
             total_tests = len(df_tests)
-            # Normalize status strings (case‑insensitive)
             status_series = df_tests[status_col].astype(str).str.lower()
             passed = status_series.eq('passed').sum()
             failed = status_series.isin(['failed', 'broken', 'error']).sum()
-            pass_rate = (passed / total_tests * 100) if total_tests > 0 else 0.0
+            skipped = status_series.isin(['skipped', 'pending', 'unknown']).sum()
+            executed_tests = passed + failed
+            
+            # Pass rate based on executed tests only (ignores skipped/pending)
+            pass_rate = (passed / executed_tests * 100) if executed_tests > 0 else 0.0
 
             avg_duration = valid_durations.mean() if len(valid_durations) > 0 else 0.0
             total_duration = valid_durations.sum() if len(valid_durations) > 0 else 0.0
 
             # Top 15 slowest tests
             slowest = []
-            if not df_tests.empty:
+            if not df_tests.empty and len(valid_durations) > 0:
                 df_valid = df_tests[df_tests['duration_seconds'].notna()].copy()
                 if not df_valid.empty:
                     df_top = df_valid.nlargest(15, 'duration_seconds')
@@ -414,7 +464,7 @@ class UniversalIngester:
 
             # Most common error message (only from failed tests)
             common_error = ""
-            if error_col:
+            if error_col and error_col in df_tests.columns:
                 failed_mask = status_series.isin(['failed', 'broken', 'error'])
                 errors = df_tests.loc[failed_mask, error_col].dropna()
                 error_strings = []
@@ -423,13 +473,16 @@ class UniversalIngester:
                         msg = err.get('message', '') or str(err)
                     else:
                         msg = str(err)
-                    if msg and msg.strip() and msg != '{}':
+                    if msg and msg.strip() and msg != '{}' and msg != 'nan':
                         error_strings.append(msg.strip())
                 if error_strings:
+                    # Get most common error (truncate for display)
                     common_error = pd.Series(error_strings).mode().iloc[0][:200]
 
             metrics = {
                 "total_tests": int(total_tests),
+                "executed_tests": int(executed_tests),
+                "skipped_tests": int(skipped),
                 "passed": int(passed),
                 "failed": int(failed),
                 "pass_rate": round(pass_rate, 2),
@@ -442,9 +495,11 @@ class UniversalIngester:
             # Build markdown summary
             lines.append("## 📊 Test Metrics")
             lines.append(f"- **Total number of tests:** {total_tests}")
+            lines.append(f"- **Executed tests:** {executed_tests} (passed + failed)")
+            lines.append(f"- **Skipped/Pending tests:** {skipped}")
             lines.append(f"- **Passed tests:** {passed}")
             lines.append(f"- **Failed tests:** {failed}")
-            lines.append(f"- **Pass rate:** {pass_rate:.2f}%")
+            lines.append(f"- **Pass rate (executed only):** {pass_rate:.2f}%")
             lines.append(f"- **Average duration:** {avg_duration:.2f} seconds")
             lines.append(f"- **Total duration:** {total_duration:.2f} seconds")
             lines.append(f"- **Most common failure reason:** {common_error if common_error else '(no error messages captured)'}")
