@@ -10,6 +10,3 @@ build/
 .vscode/
 .env
 .env.local
-
-*.pyc
-__pycache__/

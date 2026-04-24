@@ -1,0 +1,8 @@
+$bb544c9e-6e51-4d31-b5fb-570061c5deec²òid ÿÿÿÿÿÿÿÿÿ*null0!
+project_id ÿÿÿÿÿÿÿÿÿ*null0&organization_id ÿÿÿÿÿÿÿÿÿ*null0 	case_code ÿÿÿÿÿÿÿÿÿ*null0case_key ÿÿÿÿÿÿÿÿÿ*null0"module_name ÿÿÿÿÿÿÿÿÿ*null0!
+test_suite ÿÿÿÿÿÿÿÿÿ*null0tags ÿÿÿÿÿÿÿÿÿ*null0title ÿÿÿÿÿÿÿÿÿ*null0"description	 ÿÿÿÿÿÿÿÿÿ*null0#precondition
+ ÿÿÿÿÿÿÿÿÿ*null0steps ÿÿÿÿÿÿÿÿÿ*null0&expected_result ÿÿÿÿÿÿÿÿÿ*null0type ÿÿÿÿÿÿÿÿÿ*null0priority ÿÿÿÿÿÿÿÿÿ*null0mode ÿÿÿÿÿÿÿÿÿ*null0$created_by_id ÿÿÿÿÿÿÿÿÿ*null0%shareable_link ÿÿÿÿÿÿÿÿÿ*null0!
+created_at ÿÿÿÿÿÿÿÿÿ*null0!
+updated_at ÿÿÿÿÿÿÿÿÿ*null0"'
+lance.auto_cleanup.older_than14days"!
+lance.auto_cleanup.interval20
