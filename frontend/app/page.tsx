@@ -199,35 +199,7 @@ export default function LandingPage() {
 
       <NeonDivider />
 
-      {/* ══════════ STATS ══════════ */}
-      <section id="stats" className="py-20 relative">
-        <div className="max-w-6xl mx-auto px-6">
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-6">
-            {[
-              { value: 99.9, suffix: "%", label: "Uptime SLA" },
-              { value: 50, suffix: "K+", label: "Tests Analyzed" },
-              { value: 3, suffix: "s", label: "Avg Response" },
-              { value: 100, suffix: "%", label: "Data Security" },
-            ].map((stat, i) => (
-              <motion.div
-                key={i}
-                initial={{ opacity: 0, y: 20 }}
-                whileInView={{ opacity: 1, y: 0 }}
-                viewport={{ once: true }}
-                transition={{ duration: 0.5, delay: i * 0.1 }}
-                className="text-center p-6 rounded-2xl border border-white/[0.05] bg-white/[0.02] hover:border-cyan-500/20 hover:bg-cyan-500/[0.03] transition-all group"
-              >
-                <div className="text-3xl md:text-4xl font-bold text-white mb-1 group-hover:text-cyan-400 transition-colors">
-                  <Counter target={stat.value} suffix={stat.suffix} />
-                </div>
-                <div className="text-xs text-white/30 uppercase tracking-widest font-medium">{stat.label}</div>
-              </motion.div>
-            ))}
-          </div>
-        </div>
-      </section>
-
-      <NeonDivider />
+  
 
       {/* ══════════ FEATURES ══════════ */}
       <section id="features" className="py-24 relative">
@@ -368,7 +340,7 @@ export default function LandingPage() {
               className="group relative inline-flex items-center gap-3 bg-gradient-to-r from-cyan-500 to-blue-600 text-white font-semibold px-10 py-4 rounded-full shadow-[0_0_50px_rgba(0,240,255,0.25)] hover:shadow-[0_0_70px_rgba(0,240,255,0.4)] hover:-translate-y-0.5 transition-all"
             >
               <span className="absolute inset-0 rounded-full bg-gradient-to-r from-cyan-400 to-blue-500 opacity-0 group-hover:opacity-100 blur-xl transition-opacity" />
-              <span className="relative">Get Started Free</span>
+              <span className="relative">Get Started</span>
               <ArrowRight className="relative w-5 h-5 group-hover:translate-x-1 transition-transform" />
             </Link>
           </motion.div>
@@ -385,7 +357,7 @@ export default function LandingPage() {
             <span className="text-sm font-semibold text-white/60">Sentinel Analytics</span>
           </div>
           <div className="flex items-center gap-6 text-xs text-white/25">
-            <span>© {new Date().getFullYear()} Sentinel. All rights reserved.</span>
+            <span>© {new Date().getFullYear()} Sentinel - testrig technologies pvt.ltd. All rights reserved.</span>
             <a href="#" className="hover:text-cyan-400 transition-colors">Privacy</a>
             <a href="#" className="hover:text-cyan-400 transition-colors">Terms</a>
           </div>

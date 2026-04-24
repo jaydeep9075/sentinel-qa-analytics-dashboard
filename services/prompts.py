@@ -185,6 +185,13 @@ FALLBACK_SQL_MAP = {
         "SELECT test_name, ROUND(duration, 2) AS duration_sec FROM flattened_tests "
         "WHERE duration IS NOT NULL AND duration > 0 ORDER BY duration DESC LIMIT 15"
     ),
+    "how many.*skip|how many.*pending|skipped|pending": (
+        "SELECT status, COUNT(*) AS count FROM flattened_tests WHERE status IN ('skipped','pending') GROUP BY status"
+    ),
+    "tests.*took more than|longer than|greater than.*second|duration.*above": (
+        "SELECT test_name, ROUND(duration, 2) AS duration_sec FROM flattened_tests "
+        "WHERE duration IS NOT NULL AND duration > 30 ORDER BY duration DESC LIMIT 20"
+    ),
 }
 
 CHART_FALLBACK_SQL_MAP = {

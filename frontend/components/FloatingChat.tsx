@@ -1,3 +1,4 @@
+// components/FloatingChat.tsx
 "use client";
 
 import { useState, useEffect } from "react";
@@ -6,25 +7,20 @@ import { useRB } from "@/lib/RBContext";
 import { useIngestion } from "@/lib/IngestionContext";
 import { sendChatMessage } from "@/lib/api";
 import ReactMarkdown from "react-markdown";
-
-// Predefined questions that are known to work with the backend's fallback SQL
-const SUGGESTED_QUESTIONS = [
-  "How many tests failed?",
-  "How many tests passed?",
-  "What is the pass rate?",
-  "List failed tests with errors",
-  "Show slowest 10 tests",
-  "Is this build ready for release?",
-  "Show test status distribution",
-];
+import { getRoleSuggestions } from "@/lib/roleSuggestions";
 
 export default function FloatingChat() {
   const { selectedRole } = useRB();
   const { selectedIngestion } = useIngestion();
   const [isOpen, setIsOpen] = useState(false);
-  const [messages, setMessages] = useState<{ role: "user" | "ai"; content: string }[]>([]);
+  const [messages, setMessages] = useState<
+    { role: "user" | "ai"; content: string }[]
+  >([]);
   const [isLoading, setIsLoading] = useState(false);
   const [customQuestion, setCustomQuestion] = useState("");
+
+  // Get role‑specific chat questions
+  const suggestions = getRoleSuggestions(selectedRole || "").chat;
 
   useEffect(() => {
     if (!isOpen) {
@@ -36,7 +32,10 @@ export default function FloatingChat() {
   const sendQuestion = async (question: string) => {
     if (!selectedIngestion) {
       setMessages([
-        { role: "ai", content: "⚠️ No ingestion selected. Please choose a test build first." },
+        {
+          role: "ai",
+          content: "⚠️ No ingestion selected. Please choose a test build first.",
+        },
       ]);
       setIsOpen(true);
       return;
@@ -46,12 +45,19 @@ export default function FloatingChat() {
     setMessages((prev) => [...prev, { role: "user", content: question }]);
 
     try {
-      const answer = await sendChatMessage(question, selectedIngestion, selectedRole);
+      const answer = await sendChatMessage(
+        question,
+        selectedIngestion,
+        selectedRole
+      );
       setMessages((prev) => [...prev, { role: "ai", content: answer }]);
     } catch (error: any) {
       setMessages((prev) => [
         ...prev,
-        { role: "ai", content: `❌ Error: ${error.message || "Could not get answer from AI service."}` },
+        {
+          role: "ai",
+          content: `❌ Error: ${error.message || "Could not get answer from AI service."}`,
+        },
       ]);
     } finally {
       setIsLoading(false);
@@ -87,9 +93,15 @@ export default function FloatingChat() {
                 <div className="w-7 h-7 rounded-lg bg-gradient-to-br from-cyan-500 to-blue-600 flex items-center justify-center shadow-[0_0_12px_rgba(0,240,255,0.2)]">
                   <MessageCircle className="w-4 h-4 text-white" />
                 </div>
-                <span>Sentinel <span className="text-white/50 font-normal">QA Assistant</span></span>
+                <span>
+                  Sentinel{" "}
+                  <span className="text-white/50 font-normal">QA Assistant</span>
+                </span>
               </h2>
-              <button onClick={() => setIsOpen(false)} className="text-white/30 hover:text-white hover:bg-white/[0.06] p-1.5 rounded-lg transition-all">
+              <button
+                onClick={() => setIsOpen(false)}
+                className="text-white/30 hover:text-white hover:bg-white/[0.06] p-1.5 rounded-lg transition-all"
+              >
                 <X className="w-5 h-5" />
               </button>
             </div>
@@ -99,12 +111,21 @@ export default function FloatingChat() {
               {messages.length === 0 ? (
                 <div className="text-center text-white/25 mt-12">
                   <Sparkles className="w-8 h-8 mx-auto mb-3 text-cyan-500/40" />
-                  <p className="text-sm">Ask a question about the test results.</p>
-                  <p className="text-[10px] mt-2 uppercase tracking-widest text-white/15">Role: {selectedRole || "QA Engineer"}</p>
+                  <p className="text-sm">
+                    Ask a question about the test results.
+                  </p>
+                  <p className="text-[10px] mt-2 uppercase tracking-widest text-white/15">
+                    Role: {selectedRole || "QA Engineer"}
+                  </p>
                 </div>
               ) : (
                 messages.map((msg, idx) => (
-                  <div key={idx} className={`flex ${msg.role === "user" ? "justify-end" : "justify-start"}`}>
+                  <div
+                    key={idx}
+                    className={`flex ${
+                      msg.role === "user" ? "justify-end" : "justify-start"
+                    }`}
+                  >
                     <div
                       className={`max-w-[80%] rounded-2xl px-4 py-2.5 text-sm ${
                         msg.role === "user"
@@ -115,10 +136,22 @@ export default function FloatingChat() {
                       {msg.role === "ai" ? (
                         <ReactMarkdown
                           components={{
-                            p: ({ children }) => <p className="my-1">{children}</p>,
-                            ul: ({ children }) => <ul className="list-disc pl-5 my-1">{children}</ul>,
-                            ol: ({ children }) => <ol className="list-decimal pl-5 my-1">{children}</ol>,
-                            li: ({ children }) => <li className="my-0.5">{children}</li>,
+                            p: ({ children }) => (
+                              <p className="my-1">{children}</p>
+                            ),
+                            ul: ({ children }) => (
+                              <ul className="list-disc pl-5 my-1">
+                                {children}
+                              </ul>
+                            ),
+                            ol: ({ children }) => (
+                              <ol className="list-decimal pl-5 my-1">
+                                {children}
+                              </ol>
+                            ),
+                            li: ({ children }) => (
+                              <li className="my-0.5">{children}</li>
+                            ),
                           }}
                         >
                           {msg.content}
@@ -142,9 +175,9 @@ export default function FloatingChat() {
 
             {/* bottom panel */}
             <div className="px-5 py-4 border-t border-white/[0.06] bg-white/[0.01] space-y-3">
-              {/* suggested questions */}
+              {/* suggested questions – now role‑based */}
               <div className="flex flex-wrap gap-1.5">
-                {SUGGESTED_QUESTIONS.map((q, i) => (
+                {suggestions.map((q, i) => (
                   <button
                     key={i}
                     onClick={() => sendQuestion(q)}
@@ -156,7 +189,7 @@ export default function FloatingChat() {
                 ))}
               </div>
 
-              {/* input */}
+              {/* custom input */}
               <form onSubmit={handleCustomSubmit} className="flex gap-2">
                 <input
                   type="text"
@@ -168,7 +201,9 @@ export default function FloatingChat() {
                 />
                 <button
                   type="submit"
-                  disabled={!customQuestion.trim() || isLoading || !selectedIngestion}
+                  disabled={
+                    !customQuestion.trim() || isLoading || !selectedIngestion
+                  }
                   className="bg-gradient-to-r from-cyan-500 to-blue-600 hover:from-cyan-400 hover:to-blue-500 disabled:opacity-30 rounded-xl px-4 py-2.5 shadow-[0_0_15px_rgba(0,240,255,0.15)] hover:shadow-[0_0_25px_rgba(0,240,255,0.3)] transition-all"
                 >
                   <Send className="w-4 h-4 text-white" />
