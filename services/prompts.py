@@ -125,33 +125,22 @@ STRICT REQUIREMENTS:
 3. Convert to DataFrame if needed: import pandas as pd; df = pd.DataFrame(data)
 4. Final figure MUST be stored in variable named `fig`
 5. ALLOWED color scales: 'Viridis', 'RdYlGn', 'Blues', 'Reds', 'Plasma'
-6. ALLOWED discrete colors: ['#60a5fa','#34d399','#f59e0b','#f87171','#a78bfa','#38bdf8']
+6. ALLOWED discrete colors: ['#6C8BFF','#22C55E','#F59E0B','#EF4444','#A855F7','#06B6D4','#EC4899']
 7. FORBIDDEN: hovertemplate, customdata, piecolorway, Blues_d, Blues_r, width=, height=
 8. Text on bars/pie slices: use textinfo or text_auto for readability
 9. Font sizes: axis labels 12px, title 15px, tick labels 11px
 10. For bar charts with long labels: fig.update_xaxes(tickangle=45)
 11. For pie charts: use ONLY px.pie(df, names=..., values=..., title=...) — nothing else
-12. ALWAYS end with this exact block:
-fig.update_layout(
-    template='plotly_dark',
-    paper_bgcolor='rgba(15,15,15,0)',
-    plot_bgcolor='rgba(15,15,15,0)',
-    font=dict(family='monospace', color='#e2e8f0', size=12),
-    title=dict(font=dict(size=15, color='#f1f5f9'), x=0.5, xanchor='center'),
-    margin=dict(l=60, r=40, t=70, b=80),
-    legend=dict(bgcolor='rgba(255,255,255,0.05)', bordercolor='rgba(255,255,255,0.1)', borderwidth=1),
-    xaxis=dict(gridcolor='rgba(255,255,255,0.05)', linecolor='rgba(255,255,255,0.1)'),
-    yaxis=dict(gridcolor='rgba(255,255,255,0.05)', linecolor='rgba(255,255,255,0.1)'),
-)
+12. DO NOT force a global template or global layout block; keep chart code focused on data mapping.
 
 CHART TYPE GUIDES:
-- Bar chart: px.bar(df, x=..., y=..., title=..., color_discrete_sequence=['#60a5fa'], text_auto=True)
+- Bar chart: px.bar(df, x=..., y=..., title=..., color_discrete_sequence=['#6C8BFF'], text_auto=True)
   Then: fig.update_traces(textfont_size=11, textangle=0, textposition='outside', cliponaxis=False)
 - Pie chart: px.pie(df, names=..., values=..., title=..., color_discrete_sequence=[...])
   Then: fig.update_traces(textposition='inside', textinfo='percent+label', textfont_size=12)
 - Heatmap: go.Figure(go.Heatmap(z=..., x=..., y=..., colorscale='Viridis', text=..., texttemplate='%{{text}}'))
-- Line chart: px.line(df, x=..., y=..., title=..., markers=True, color_discrete_sequence=['#60a5fa'])
-- Horizontal bar: px.bar(df, x=value_col, y=name_col, orientation='h', color_discrete_sequence=['#60a5fa'], text_auto=True)
+- Line chart: px.line(df, x=..., y=..., title=..., markers=True, color_discrete_sequence=['#6C8BFF'])
+- Horizontal bar: px.bar(df, x=value_col, y=name_col, orientation='h', color_discrete_sequence=['#6C8BFF'], text_auto=True)
 
 Return ONLY Python code. No markdown fences. No explanation."""
 

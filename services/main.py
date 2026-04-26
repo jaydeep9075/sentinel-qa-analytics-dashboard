@@ -95,8 +95,9 @@ async def get_chat_history_endpoint(
     x_ingestion_id: str = Header(...),
     current_user: dict = Depends(get_current_user)
 ):
-    if state.current_ingestion_id != x_ingestion_id:
-        data_loader.init_data(x_ingestion_id)
+    normalized_ingestion_id = str(x_ingestion_id or "").strip()
+    if state.current_ingestion_id != normalized_ingestion_id or state.duck_conn is None or state.lance_db is None:
+        data_loader.init_data(normalized_ingestion_id)
     history = memory.get_chat_history(session_id, limit=100)
     return {"session_id": session_id, "history": history}
 
@@ -106,8 +107,9 @@ async def get_chart_history_endpoint(
     x_ingestion_id: str = Header(...),
     current_user: dict = Depends(get_current_user)
 ):
-    if state.current_ingestion_id != x_ingestion_id:
-        data_loader.init_data(x_ingestion_id)
+    normalized_ingestion_id = str(x_ingestion_id or "").strip()
+    if state.current_ingestion_id != normalized_ingestion_id or state.duck_conn is None or state.lance_db is None:
+        data_loader.init_data(normalized_ingestion_id)
     history = memory.get_chart_history(session_id, limit=100)
     return {"session_id": session_id, "history": history}
 
@@ -118,8 +120,9 @@ async def delete_chart(
     x_ingestion_id: str = Header(...),
     current_user: dict = Depends(get_current_user)
 ):
-    if state.current_ingestion_id != x_ingestion_id:
-        data_loader.init_data(x_ingestion_id)
+    normalized_ingestion_id = str(x_ingestion_id or "").strip()
+    if state.current_ingestion_id != normalized_ingestion_id or state.duck_conn is None or state.lance_db is None:
+        data_loader.init_data(normalized_ingestion_id)
     if not state.lance_db or "chart_history" not in state.lance_db.table_names():
         return {"error": "Chart history not available"}
     try:
@@ -146,8 +149,9 @@ async def debug_data(
     x_ingestion_id: str = Header(...),
     current_user: dict = Depends(get_current_user)
 ):
-    if state.current_ingestion_id != x_ingestion_id:
-        data_loader.init_data(x_ingestion_id)
+    normalized_ingestion_id = str(x_ingestion_id or "").strip()
+    if state.current_ingestion_id != normalized_ingestion_id or state.duck_conn is None or state.lance_db is None:
+        data_loader.init_data(normalized_ingestion_id)
     data = {}
     if state.duck_conn:
         tables = state.duck_conn.execute("SHOW TABLES").fetchall()
@@ -163,8 +167,9 @@ async def data_status(
     x_ingestion_id: str = Header(...),
     current_user: dict = Depends(get_current_user)
 ):
-    if state.current_ingestion_id != x_ingestion_id:
-        data_loader.init_data(x_ingestion_id)
+    normalized_ingestion_id = str(x_ingestion_id or "").strip()
+    if state.current_ingestion_id != normalized_ingestion_id or state.duck_conn is None or state.lance_db is None:
+        data_loader.init_data(normalized_ingestion_id)
     if not state.duck_conn:
         return {"has_data": False, "total_rows": 0}
     try:
@@ -247,8 +252,9 @@ async def test_sql(
     x_ingestion_id: str = Header(...),
     current_user: dict = Depends(get_current_user)
 ):
-    if state.current_ingestion_id != x_ingestion_id:
-        data_loader.init_data(x_ingestion_id)
+    normalized_ingestion_id = str(x_ingestion_id or "").strip()
+    if state.current_ingestion_id != normalized_ingestion_id or state.duck_conn is None or state.lance_db is None:
+        data_loader.init_data(normalized_ingestion_id)
     if state.duck_conn:
         try:
             result = state.duck_conn.execute("SELECT COUNT(*) FROM flattened_tests").fetchone()

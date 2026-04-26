@@ -1,6 +1,6 @@
 "use client";
 import Link from "next/link";
-import { motion, useMotionValue, useTransform, animate } from "framer-motion";
+import { motion, useMotionValue, useTransform, animate, useSpring, useMotionTemplate } from "framer-motion";
 import { useEffect, useState, useRef } from "react";
 import {
   MessageSquare,
@@ -35,14 +35,34 @@ function Counter({ target, suffix = "" }: { target: number; suffix?: string }) {
 
 /* ───────── floating particles ───────── */
 function Particles() {
+  const [mounted, setMounted] = useState(false);
+  
+  useEffect(() => {
+    setMounted(true);
+  }, []);
+
+  if (!mounted) return null;
+
   return (
     <div className="pointer-events-none absolute inset-0 overflow-hidden" aria-hidden>
-      {Array.from({ length: 40 }).map((_, i) => {
-        const size = Math.random() * 3 + 1;
+      {/* Cool animated grid background */}
+      <div className="absolute inset-0 bg-[linear-gradient(to_right,#00f0ff15_1px,transparent_1px),linear-gradient(to_bottom,#00f0ff15_1px,transparent_1px)] bg-[size:4rem_4rem] [mask-image:radial-gradient(ellipse_60%_50%_at_50%_0%,#000_70%,transparent_100%)] opacity-40" />
+      
+      {/* Floating glowing orbs with slow-medium speed */}
+      {Array.from({ length: 30 }).map((_, i) => {
+        const size = Math.random() * 5 + 2;
         const left = Math.random() * 100;
-        const delay = Math.random() * 8;
-        const duration = Math.random() * 12 + 10;
-        const opacity = Math.random() * 0.4 + 0.1;
+        const top = Math.random() * 100;
+        const delay = Math.random() * 5;
+        const duration = Math.random() * 10 + 12; // Slow-medium: 12 to 22 seconds
+        const opacity = Math.random() * 0.5 + 0.2;
+        const colors = ["#00f0ff", "#a855f7", "#3b82f6"];
+        const color = colors[i % 3];
+        
+        // Randomize direction to make it look more organic
+        const yDist = (Math.random() * 40 + 30) * (Math.random() > 0.5 ? -1 : 1);
+        const xDist = (Math.random() * 30 + 20) * (Math.random() > 0.5 ? -1 : 1);
+        
         return (
           <motion.span
             key={i}
@@ -51,12 +71,18 @@ function Particles() {
               width: size,
               height: size,
               left: `${left}%`,
-              bottom: "-5%",
-              background: i % 3 === 0 ? "#00f0ff" : i % 3 === 1 ? "#a855f7" : "#3b82f6",
+              top: `${top}%`,
+              background: color,
               opacity,
+              boxShadow: `0 0 ${size * 3}px ${color}`
             }}
-            animate={{ y: [0, -1200], opacity: [opacity, 0] }}
-            transition={{ duration, delay, repeat: Infinity, ease: "linear" }}
+            animate={{ 
+              y: [0, yDist, 0], 
+              x: [0, xDist, 0],
+              scale: [1, 1.3, 1],
+              opacity: [opacity, opacity * 1.5, opacity] 
+            }}
+            transition={{ duration, delay, repeat: Infinity, ease: "easeInOut" }}
           />
         );
       })}
@@ -77,18 +103,31 @@ function NeonDivider() {
 /* ───────── main page ───────── */
 export default function LandingPage() {
   const heroRef = useRef<HTMLDivElement>(null);
-  const [mousePos, setMousePos] = useState({ x: 0, y: 0 });
+  
+  // Smooth, lazy mouse follower using Framer Motion physics
+  const mouseX = useMotionValue(0);
+  const mouseY = useMotionValue(0);
+  const smoothX = useSpring(mouseX, { stiffness: 20, damping: 25, mass: 1 });
+  const smoothY = useSpring(mouseY, { stiffness: 20, damping: 25, mass: 1 });
+  const backgroundTemplate = useMotionTemplate`radial-gradient(600px circle at ${smoothX}px ${smoothY}px, rgba(0,240,255,0.06), transparent 60%)`;
+
+  const [mounted, setMounted] = useState(false);
 
   useEffect(() => {
-    const handler = (e: MouseEvent) => setMousePos({ x: e.clientX, y: e.clientY });
+    setMounted(true);
+    // Center it initially to avoid snapping from top-left
+    mouseX.set(window.innerWidth / 2);
+    mouseY.set(window.innerHeight / 2);
+    
+    const handler = (e: MouseEvent) => {
+      mouseX.set(e.clientX);
+      mouseY.set(e.clientY);
+    };
     window.addEventListener("mousemove", handler);
     return () => window.removeEventListener("mousemove", handler);
-  }, []);
+  }, [mouseX, mouseY]);
 
-  const getHref = () => {
-    if (typeof window !== "undefined" && localStorage.getItem("token")) return "/dashboard";
-    return "/login";
-  };
+  const launchHref = mounted && localStorage.getItem("token") ? "/dashboard" : "/login";
 
   return (
     <div className="min-h-screen bg-black text-white selection:bg-cyan-500/30 overflow-x-hidden">
@@ -113,7 +152,6 @@ export default function LandingPage() {
           </div>
           <div className="hidden md:flex items-center gap-8 text-sm text-white/50">
             <a href="#features" className="hover:text-cyan-400 transition-colors">Features</a>
-            <a href="#stats" className="hover:text-cyan-400 transition-colors">Impact</a>
             <a href="#how-it-works" className="hover:text-cyan-400 transition-colors">How It Works</a>
             <a href="#tech" className="hover:text-cyan-400 transition-colors">Technology</a>
           </div>
@@ -129,24 +167,26 @@ export default function LandingPage() {
       {/* ══════════ HERO ══════════ */}
       <section ref={heroRef} className="relative pt-36 pb-28 lg:pt-52 lg:pb-40">
         {/* radial glow follows mouse */}
-        <div
-          className="pointer-events-none absolute inset-0"
-          style={{
-            background: `radial-gradient(600px circle at ${mousePos.x}px ${mousePos.y}px, rgba(0,240,255,0.04), transparent 60%)`,
-          }}
-        />
+        {mounted && (
+          <motion.div
+            className="pointer-events-none absolute inset-0 transition-opacity duration-300"
+            style={{
+              background: backgroundTemplate,
+            }}
+          />
+        )}
         {/* static glow orbs */}
-        <div className="absolute top-20 left-1/4 w-[500px] h-[500px] bg-cyan-500/[0.07] blur-[140px] rounded-full pointer-events-none" />
-        <div className="absolute bottom-0 right-1/4 w-[400px] h-[400px] bg-purple-600/[0.06] blur-[120px] rounded-full pointer-events-none" />
+        <div className="absolute top-20 left-1/4 w-[500px] h-[500px] bg-cyan-500/[0.09] blur-[140px] rounded-full pointer-events-none" />
+        <div className="absolute bottom-0 right-1/4 w-[400px] h-[400px] bg-purple-600/[0.08] blur-[120px] rounded-full pointer-events-none" />
 
         <div className="relative max-w-5xl mx-auto px-6 text-center">
           <motion.div
-            initial={{ opacity: 0, y: 24 }}
-            animate={{ opacity: 1, y: 0 }}
+            initial={{ opacity: 0, y: 24, scale: 0.9 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
             transition={{ duration: 0.7 }}
           >
-            <div className="inline-flex items-center gap-2 px-4 py-1.5 rounded-full bg-white/[0.04] border border-cyan-500/20 text-xs font-semibold uppercase tracking-widest text-cyan-400 mb-8 backdrop-blur-md shadow-[0_0_15px_rgba(0,240,255,0.08)]">
-              <Sparkles className="w-3.5 h-3.5" />
+            <div className="inline-flex items-center gap-2 px-4 py-1.5 rounded-full bg-white/[0.04] border border-cyan-500/30 text-xs font-semibold uppercase tracking-widest text-cyan-400 mb-8 backdrop-blur-md shadow-[0_0_20px_rgba(0,240,255,0.15)]">
+              <Sparkles className="w-3.5 h-3.5 animate-pulse" />
               AI-Powered QA Intelligence
             </div>
           </motion.div>
@@ -159,7 +199,7 @@ export default function LandingPage() {
           >
             <span className="text-white">Decode Your</span>
             <br />
-            <span className="bg-gradient-to-r from-cyan-400 via-blue-400 to-purple-500 bg-clip-text text-transparent drop-shadow-[0_0_30px_rgba(0,240,255,0.3)]">
+            <span className="bg-gradient-to-r from-cyan-400 via-blue-400 to-purple-500 bg-clip-text text-transparent drop-shadow-[0_0_40px_rgba(0,240,255,0.4)]">
               Software Quality
             </span>
           </motion.h1>
@@ -168,7 +208,7 @@ export default function LandingPage() {
             initial={{ opacity: 0, y: 24 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: 0.7, delay: 0.2 }}
-            className="text-base md:text-lg text-white/40 max-w-2xl mx-auto mb-12 leading-relaxed"
+            className="text-base md:text-lg text-white/60 max-w-2xl mx-auto mb-12 leading-relaxed"
           >
             Ask questions in plain English. Get instant AI-driven insights, auto&#8209;generated charts, and executive&#8209;ready summaries from your test data.
           </motion.p>
@@ -179,14 +219,18 @@ export default function LandingPage() {
             transition={{ duration: 0.7, delay: 0.3 }}
             className="flex flex-col sm:flex-row items-center justify-center gap-4"
           >
-            <Link
-              href={typeof window !== "undefined" && localStorage.getItem("token") ? "/dashboard" : "/login"}
-              className="group relative inline-flex items-center gap-3 bg-gradient-to-r from-cyan-500 to-blue-600 text-white font-semibold px-8 py-4 rounded-full shadow-[0_0_40px_rgba(0,240,255,0.25)] hover:shadow-[0_0_60px_rgba(0,240,255,0.4)] hover:-translate-y-0.5 transition-all"
-            >
-              <span className="absolute inset-0 rounded-full bg-gradient-to-r from-cyan-400 to-blue-500 opacity-0 group-hover:opacity-100 blur-xl transition-opacity" />
-              <span className="relative">Launch Dashboard</span>
-              <ArrowRight className="relative w-5 h-5 group-hover:translate-x-1 transition-transform" />
-            </Link>
+            {mounted ? (
+              <Link
+                href={launchHref}
+                className="group relative inline-flex items-center gap-3 bg-gradient-to-r from-cyan-500 to-blue-600 text-white font-semibold px-8 py-4 rounded-full shadow-[0_0_40px_rgba(0,240,255,0.35)] hover:shadow-[0_0_60px_rgba(0,240,255,0.5)] hover:-translate-y-0.5 transition-all"
+              >
+                <span className="absolute inset-0 rounded-full bg-gradient-to-r from-cyan-400 to-blue-500 opacity-0 group-hover:opacity-100 blur-xl transition-opacity" />
+                <span className="relative">Launch Dashboard</span>
+                <ArrowRight className="relative w-5 h-5 group-hover:translate-x-1 transition-transform" />
+              </Link>
+            ) : (
+              <div className="px-8 py-4 bg-white/5 rounded-full w-48 h-14 animate-pulse"></div>
+            )}
             <a
               href="#features"
               className="inline-flex items-center gap-2 px-6 py-4 rounded-full border border-white/10 text-white/60 hover:text-white hover:border-white/20 hover:bg-white/[0.03] transition-all text-sm font-medium"
@@ -198,8 +242,6 @@ export default function LandingPage() {
       </section>
 
       <NeonDivider />
-
-  
 
       {/* ══════════ FEATURES ══════════ */}
       <section id="features" className="py-24 relative">
@@ -217,7 +259,7 @@ export default function LandingPage() {
               Everything You Need,{" "}
               <span className="bg-gradient-to-r from-cyan-400 to-purple-400 bg-clip-text text-transparent">Nothing You Don&apos;t</span>
             </h2>
-            <p className="text-white/35 max-w-xl mx-auto">Powerful analytics wrapped in simplicity. Built for teams that ship fast and need clarity.</p>
+            <p className="text-white/40 max-w-xl mx-auto">Powerful analytics wrapped in simplicity. Built for teams that ship fast and need clarity.</p>
           </motion.div>
 
           <div className="grid md:grid-cols-3 gap-6">
@@ -228,15 +270,15 @@ export default function LandingPage() {
                 whileInView={{ opacity: 1, y: 0 }}
                 viewport={{ once: true }}
                 transition={{ duration: 0.5, delay: i * 0.08 }}
-                className="group relative p-8 rounded-2xl border border-white/[0.05] bg-white/[0.02] backdrop-blur-sm hover:border-cyan-500/20 hover:bg-white/[0.04] transition-all overflow-hidden"
+                className="group relative p-8 rounded-2xl border border-white/[0.05] bg-white/[0.02] backdrop-blur-sm hover:border-cyan-500/30 hover:bg-white/[0.04] transition-all overflow-hidden shadow-lg hover:shadow-[0_0_30px_rgba(0,240,255,0.1)]"
               >
                 {/* hover glow */}
-                <div className="absolute -top-20 -right-20 w-40 h-40 bg-cyan-500/[0.06] blur-3xl rounded-full opacity-0 group-hover:opacity-100 transition-opacity" />
+                <div className="absolute -top-20 -right-20 w-40 h-40 bg-cyan-500/[0.08] blur-3xl rounded-full opacity-0 group-hover:opacity-100 transition-opacity" />
                 <div className={`relative w-12 h-12 rounded-xl flex items-center justify-center mb-6 border border-white/[0.06] ${f.iconBg}`}>
                   {f.icon}
                 </div>
                 <h3 className="text-lg font-semibold mb-2 text-white">{f.title}</h3>
-                <p className="text-white/35 text-sm leading-relaxed">{f.desc}</p>
+                <p className="text-white/40 text-sm leading-relaxed">{f.desc}</p>
               </motion.div>
             ))}
           </div>
@@ -256,13 +298,13 @@ export default function LandingPage() {
           >
             <span className="text-xs font-semibold uppercase tracking-widest text-cyan-500 mb-3 block">Workflow</span>
             <h2 className="text-3xl md:text-5xl font-bold mb-4">Three Steps to <span className="bg-gradient-to-r from-cyan-400 to-blue-500 bg-clip-text text-transparent">Clarity</span></h2>
-            <p className="text-white/35 max-w-xl mx-auto">From raw test data to boardroom-ready insights in under a minute.</p>
+            <p className="text-white/40 max-w-xl mx-auto">From raw test data to boardroom-ready insights in under a minute.</p>
           </motion.div>
 
           <div className="grid md:grid-cols-3 gap-10 relative">
             {/* connector line */}
-            <div className="hidden md:block absolute top-16 left-[18%] right-[18%] h-px bg-gradient-to-r from-cyan-500/0 via-cyan-500/30 to-cyan-500/0" />
-            <div className="hidden md:block absolute top-16 left-[18%] right-[18%] h-px bg-gradient-to-r from-cyan-500/0 via-cyan-500/15 to-cyan-500/0 blur-sm" />
+            <div className="hidden md:block absolute top-16 left-[18%] right-[18%] h-px bg-gradient-to-r from-cyan-500/0 via-cyan-500/50 to-cyan-500/0" />
+            <div className="hidden md:block absolute top-16 left-[18%] right-[18%] h-px bg-gradient-to-r from-cyan-500/0 via-cyan-500/30 to-cyan-500/0 blur-sm" />
 
             {steps.map((step, i) => (
               <motion.div
@@ -273,11 +315,11 @@ export default function LandingPage() {
                 transition={{ duration: 0.5, delay: i * 0.15 }}
                 className="relative text-center z-10"
               >
-                <div className="w-[72px] h-[72px] mx-auto rounded-full bg-black border border-cyan-500/20 flex items-center justify-center text-2xl font-bold mb-6 shadow-[0_0_30px_rgba(0,240,255,0.1)]">
+                <div className="w-[72px] h-[72px] mx-auto rounded-full bg-black border border-cyan-500/30 flex items-center justify-center text-2xl font-bold mb-6 shadow-[0_0_30px_rgba(0,240,255,0.2)]">
                   <span className="bg-gradient-to-b from-cyan-400 to-blue-600 bg-clip-text text-transparent">{step.num}</span>
                 </div>
                 <h3 className="text-xl font-bold mb-3 text-white">{step.title}</h3>
-                <p className="text-white/35 text-sm leading-relaxed px-2">{step.desc}</p>
+                <p className="text-white/40 text-sm leading-relaxed px-2">{step.desc}</p>
               </motion.div>
             ))}
           </div>
@@ -310,9 +352,9 @@ export default function LandingPage() {
                 whileInView={{ opacity: 1, scale: 1 }}
                 viewport={{ once: true }}
                 transition={{ duration: 0.4, delay: i * 0.05 }}
-                className="group flex flex-col items-center gap-3 p-6 rounded-2xl border border-white/[0.05] bg-white/[0.02] hover:border-cyan-500/20 hover:bg-white/[0.04] transition-all"
+                className="group flex flex-col items-center gap-3 p-6 rounded-2xl border border-white/[0.05] bg-white/[0.02] hover:border-cyan-500/30 hover:bg-white/[0.04] hover:shadow-[0_0_20px_rgba(0,240,255,0.1)] transition-all"
               >
-                <div className="text-2xl group-hover:scale-110 transition-transform">{t.icon}</div>
+                <div className="text-2xl group-hover:scale-110 group-hover:drop-shadow-[0_0_15px_currentColor] transition-all">{t.icon}</div>
                 <span className="text-sm font-medium text-white/60 group-hover:text-cyan-400 transition-colors">{t.name}</span>
               </motion.div>
             ))}
@@ -324,7 +366,7 @@ export default function LandingPage() {
 
       {/* ══════════ CTA ══════════ */}
       <section className="py-28 relative">
-        <div className="absolute inset-0 bg-gradient-to-t from-cyan-500/[0.03] to-transparent pointer-events-none" />
+        <div className="absolute inset-0 bg-gradient-to-t from-cyan-500/[0.05] to-transparent pointer-events-none" />
         <div className="max-w-3xl mx-auto px-6 text-center relative">
           <motion.div
             initial={{ opacity: 0, y: 24 }}
@@ -332,23 +374,27 @@ export default function LandingPage() {
             viewport={{ once: true }}
           >
             <h2 className="text-3xl md:text-5xl font-bold mb-6">
-              Ready to <span className="bg-gradient-to-r from-cyan-400 to-blue-500 bg-clip-text text-transparent">Transform</span> Your QA?
+              Ready to <span className="bg-gradient-to-r from-cyan-400 to-blue-500 bg-clip-text text-transparent drop-shadow-[0_0_20px_rgba(0,240,255,0.3)]">Transform</span> Your QA?
             </h2>
-            <p className="text-white/35 mb-10 max-w-lg mx-auto">Stop drowning in spreadsheets. Start making decisions backed by AI-powered insights.</p>
-            <Link
-              href="/login"
-              className="group relative inline-flex items-center gap-3 bg-gradient-to-r from-cyan-500 to-blue-600 text-white font-semibold px-10 py-4 rounded-full shadow-[0_0_50px_rgba(0,240,255,0.25)] hover:shadow-[0_0_70px_rgba(0,240,255,0.4)] hover:-translate-y-0.5 transition-all"
-            >
-              <span className="absolute inset-0 rounded-full bg-gradient-to-r from-cyan-400 to-blue-500 opacity-0 group-hover:opacity-100 blur-xl transition-opacity" />
-              <span className="relative">Get Started</span>
-              <ArrowRight className="relative w-5 h-5 group-hover:translate-x-1 transition-transform" />
-            </Link>
+            <p className="text-white/40 mb-10 max-w-lg mx-auto">Stop drowning in spreadsheets. Start making decisions backed by AI-powered insights.</p>
+            {mounted ? (
+              <Link
+                href={launchHref}
+                className="group relative inline-flex items-center gap-3 bg-gradient-to-r from-cyan-500 to-blue-600 text-white font-semibold px-10 py-4 rounded-full shadow-[0_0_50px_rgba(0,240,255,0.35)] hover:shadow-[0_0_70px_rgba(0,240,255,0.5)] hover:-translate-y-0.5 transition-all"
+              >
+                <span className="absolute inset-0 rounded-full bg-gradient-to-r from-cyan-400 to-blue-500 opacity-0 group-hover:opacity-100 blur-xl transition-opacity" />
+                <span className="relative">Get Started</span>
+                <ArrowRight className="relative w-5 h-5 group-hover:translate-x-1 transition-transform" />
+              </Link>
+            ) : (
+              <div className="px-10 py-4 bg-white/5 rounded-full w-48 h-14 mx-auto animate-pulse"></div>
+            )}
           </motion.div>
         </div>
       </section>
 
       {/* ══════════ FOOTER ══════════ */}
-      <footer className="border-t border-white/[0.05] py-12">
+      <footer className="border-t border-white/[0.05] py-12 relative z-10">
         <div className="max-w-6xl mx-auto px-6 flex flex-col md:flex-row items-center justify-between gap-6">
           <div className="flex items-center gap-2">
             <div className="w-7 h-7 rounded-md bg-gradient-to-br from-cyan-500 to-blue-600 flex items-center justify-center shadow-[0_0_12px_rgba(0,240,255,0.2)]">
@@ -356,7 +402,7 @@ export default function LandingPage() {
             </div>
             <span className="text-sm font-semibold text-white/60">Sentinel Analytics</span>
           </div>
-          <div className="flex items-center gap-6 text-xs text-white/25">
+          <div className="flex items-center gap-6 text-xs text-white/40">
             <span>© {new Date().getFullYear()} Sentinel - testrig technologies pvt.ltd. All rights reserved.</span>
             <a href="#" className="hover:text-cyan-400 transition-colors">Privacy</a>
             <a href="#" className="hover:text-cyan-400 transition-colors">Terms</a>

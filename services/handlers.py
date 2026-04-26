@@ -90,9 +90,8 @@ def _sanitize_plotly_code(code: str) -> str:
     # Strip explicit size (we control via update_layout)
     s = re.sub(r",?\s*width\s*=\s*\d+\s*,?", "", s)
     s = re.sub(r",?\s*height\s*=\s*\d+\s*,?", "", s)
-    # Ensure template is always plotly_dark
-    if "plotly_dark" not in s:
-        s += "\nfig.update_layout(template='plotly_dark')"
+    # Remove hardcoded template so we can enforce house style centrally.
+    s = re.sub(r"template\s*=\s*['\"]plotly_dark['\"]", "", s)
     return s
 
 
@@ -112,35 +111,74 @@ def _detect_chart_type(prompt: str) -> str:
 
 
 def _apply_chart_layout(fig):
-    """Apply consistent dark theme layout overrides."""
+    """Apply consistent modern chart styling and readability improvements."""
+    # Frontend-aligned vivid but balanced palette
+    modern_palette = ["#6C8BFF", "#22C55E", "#F59E0B", "#EF4444", "#A855F7", "#06B6D4", "#EC4899"]
+
+    # Better defaults for dense labels.
+    fig.update_xaxes(automargin=True, tickangle=0, tickfont=dict(size=12, color="#CBD5E1"))
+    fig.update_yaxes(automargin=True, tickfont=dict(size=12, color="#CBD5E1"))
+
+    # Improve trace readability.
+    fig.update_traces(
+        textfont=dict(size=12, color="#E2E8F0"),
+        marker=dict(line=dict(width=1, color="rgba(15,23,42,0.55)"))
+    )
+
     fig.update_layout(
-        template="plotly_dark",
+        template="plotly",
         autosize=True,
-        paper_bgcolor="rgba(15,15,15,0)",
-        plot_bgcolor="rgba(15,15,15,0)",
-        font=dict(family="monospace", color="#e2e8f0", size=12),
-        title=dict(font=dict(size=15, color="#f1f5f9"), x=0.5, xanchor="center"),
-        margin=dict(l=60, r=40, t=70, b=80),
+        paper_bgcolor="rgba(15,23,42,0)",
+        plot_bgcolor="rgba(15,23,42,0)",
+        font=dict(family="Inter, Segoe UI, Roboto, sans-serif", color="#E2E8F0", size=12),
+        title=dict(font=dict(size=18, color="#F8FAFC"), x=0.5, xanchor="center", y=0.97),
+        margin=dict(l=72, r=38, t=84, b=88),
         legend=dict(
-            bgcolor="rgba(255,255,255,0.05)",
-            bordercolor="rgba(255,255,255,0.1)",
+            orientation="h",
+            yanchor="bottom",
+            y=1.02,
+            xanchor="right",
+            x=1,
+            bgcolor="rgba(15,23,42,0.35)",
+            bordercolor="rgba(148,163,184,0.35)",
             borderwidth=1,
-            font=dict(color="#cbd5e1"),
+            font=dict(color="#CBD5E1", size=11),
         ),
         xaxis=dict(
-            gridcolor="rgba(255,255,255,0.06)",
-            linecolor="rgba(255,255,255,0.12)",
-            tickfont=dict(color="#94a3b8", size=11),
-            title_font=dict(color="#cbd5e1"),
+            showgrid=True,
+            zeroline=False,
+            gridcolor="rgba(148,163,184,0.17)",
+            linecolor="rgba(148,163,184,0.32)",
+            tickfont=dict(color="#CBD5E1", size=12),
+            title_font=dict(color="#E2E8F0", size=13),
         ),
         yaxis=dict(
-            gridcolor="rgba(255,255,255,0.06)",
-            linecolor="rgba(255,255,255,0.12)",
-            tickfont=dict(color="#94a3b8", size=11),
-            title_font=dict(color="#cbd5e1"),
+            showgrid=True,
+            zeroline=False,
+            gridcolor="rgba(148,163,184,0.17)",
+            linecolor="rgba(148,163,184,0.32)",
+            tickfont=dict(color="#CBD5E1", size=12),
+            title_font=dict(color="#E2E8F0", size=13),
         ),
-        colorway=["#60a5fa", "#34d399", "#f59e0b", "#f87171", "#a78bfa", "#38bdf8"],
+        hoverlabel=dict(
+            bgcolor="rgba(15,23,42,0.95)",
+            bordercolor="rgba(148,163,184,0.5)",
+            font=dict(size=12, color="#F8FAFC")
+        ),
+        colorway=modern_palette,
     )
+
+    # Long category labels get auto rotation.
+    try:
+        x_vals = []
+        for tr in getattr(fig, "data", []):
+            if hasattr(tr, "x") and tr.x is not None:
+                x_vals.extend([str(v) for v in tr.x if v is not None])
+        if any(len(v) > 18 for v in x_vals):
+            fig.update_xaxes(tickangle=-25)
+    except Exception:
+        pass
+
     return fig
 
 
@@ -155,9 +193,10 @@ async def handle_chat(
     role: str = None,
     project_id: str = None,
 ):
-    # Load data if needed
-    if state.current_ingestion_id != ingestion_id:
-        if not data_loader.init_data(ingestion_id):
+    normalized_ingestion_id = str(ingestion_id or "").strip()
+    # Load data once per ingestion id.
+    if state.current_ingestion_id != normalized_ingestion_id or state.duck_conn is None or state.lance_db is None:
+        if not data_loader.init_data(normalized_ingestion_id):
             return f"❌ Ingestion '{ingestion_id}' not found or data unavailable."
 
     llm = llm_client.LLMClient()
@@ -300,8 +339,9 @@ async def handle_chart(
     role: str = None,
     project_id: str = None,
 ):
-    if state.current_ingestion_id != ingestion_id:
-        if not data_loader.init_data(ingestion_id):
+    normalized_ingestion_id = str(ingestion_id or "").strip()
+    if state.current_ingestion_id != normalized_ingestion_id or state.duck_conn is None or state.lance_db is None:
+        if not data_loader.init_data(normalized_ingestion_id):
             return None, f"❌ Ingestion '{ingestion_id}' not found."
 
     llm = llm_client.LLMClient()

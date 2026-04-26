@@ -43,7 +43,7 @@ venv\Scripts\activate  # Windows
 # source venv/bin/activate  # Mac/Linux
 
 # Install Python dependencies
-pip install fastapi uvicorn pydantic python-multipart pandas numpy duckdb lancedb pyarrow google-generativeai sentence-transformers requests openai anthropic plotly kaleido python-dotenv pymysql sqlalchemy typing-extensions
+pip install fastapi uvicorn pydantic python-multipart pandas numpy duckdb lancedb pyarrow google-generativeai sentence-transformers requests openai anthropic plotly kaleido python-dotenv pymysql sqlalchemy typing-extensions python-jose
 
 # Configure environment variables
 # Add LLM_PROVIDER, LLM_API_KEY, LLM_MODEL to .env file

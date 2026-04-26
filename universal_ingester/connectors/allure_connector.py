@@ -3,6 +3,7 @@ import os
 import glob
 import uuid
 from typing import List, Dict, Any
+from collections import defaultdict
 import pandas as pd
 from datetime import datetime, timezone
 from .base import BaseConnector
@@ -63,6 +64,72 @@ class AllureConnector(BaseConnector):
         if name:
             return name
         return data.get("uuid", str(uuid.uuid4()))
+
+    def _extract_project_name(self, data: Dict[str, Any], label_dict: Dict[str, Any]) -> str:
+        parameters = data.get("parameters", [])
+        for param in parameters:
+            if not isinstance(param, dict):
+                continue
+            param_name = str(param.get("name", "")).strip().lower()
+            if param_name == "project":
+                value = str(param.get("value", "")).strip()
+                if value:
+                    return value
+
+        title_path = label_dict.get("titlePath", "")
+        if isinstance(title_path, str) and title_path:
+            parts = [p.strip() for p in title_path.split(">") if p.strip()]
+            if len(parts) >= 2:
+                return parts[1]
+
+        thread = label_dict.get("thread", "")
+        if isinstance(thread, str) and "-playwright-worker-" in thread:
+            return "Playwright"
+
+        return "unknown"
+
+    def _extract_module_name(self, full_name: str, spec_file: str, label_dict: Dict[str, Any]) -> str:
+        normalized_spec = (spec_file or "").replace("\\", "/")
+        spec_looks_like_path = "/" in normalized_spec or normalized_spec.endswith(".spec.ts") or normalized_spec.endswith(".spec.js")
+        if normalized_spec and spec_looks_like_path:
+            parts = [p for p in normalized_spec.split("/") if p]
+            if len(parts) >= 3:
+                return "/".join(parts[:3])
+            if parts:
+                return parts[-1]
+
+        normalized_full = (full_name or "").replace("\\", "/")
+        if normalized_full:
+            path_like = normalized_full.split("#")[0]
+            path_parts = [p for p in path_like.split("/") if p]
+            if len(path_parts) >= 3:
+                return "/".join(path_parts[:3])
+            if path_parts:
+                return path_parts[-1]
+
+        parent_suite = str(label_dict.get("parentSuite", "")).strip()
+        sub_suite = str(label_dict.get("subSuite", "")).strip()
+        if parent_suite and sub_suite:
+            return f"{parent_suite}/{sub_suite}"
+        if parent_suite:
+            return parent_suite
+        if sub_suite:
+            return sub_suite
+        return "unknown"
+
+    def _detect_platform_type(self, project_name: str, module_name: str, full_name: str, tags: List[str]) -> str:
+        source = " ".join([
+            str(project_name or ""),
+            str(module_name or ""),
+            str(full_name or ""),
+            " ".join([str(t) for t in tags or []]),
+        ]).lower()
+        mobile_keywords = [
+            "iphone", "ipad", "android", "mobile", "pixel", "samsung", "ios", "appium"
+        ]
+        if any(k in source for k in mobile_keywords):
+            return "mobile"
+        return "desktop"
 
     def _merge_test_runs(self, tests: List[Dict[str, Any]]) -> Dict[str, Any]:
         """Merge multiple runs of the same test case using Allure's optimistic retry logic:
@@ -157,6 +224,9 @@ class AllureConnector(BaseConnector):
             spec_file = label_dict.get("suite", "")
             history_id = self._extract_history_id(data)
             tags = [l["value"] for l in labels if l.get("name") == "tag"]
+            project_name = self._extract_project_name(data, label_dict)
+            module_name = self._extract_module_name(full_name, spec_file, label_dict)
+            platform_type = self._detect_platform_type(project_name, module_name, full_name, tags)
 
             if start is not None:
                 min_start = min(min_start, start)
@@ -173,6 +243,9 @@ class AllureConnector(BaseConnector):
                 "description": description,
                 "labels": label_dict,
                 "tags": tags,
+                "project_name": project_name,
+                "module_name": module_name,
+                "platform_type": platform_type,
                 "uuid": data.get("uuid"),
                 "start": start,
                 "stop": stop,
@@ -221,6 +294,9 @@ class AllureConnector(BaseConnector):
                 "labels": json.dumps(test.get("labels", {})),
                 "tags": json.dumps(test.get("tags", [])),
                 "full_name": test.get("full_name", ""),
+                "project_name": test.get("project_name", "unknown"),
+                "module_name": test.get("module_name", "unknown"),
+                "platform_type": test.get("platform_type", "desktop"),
                 "description": test.get("description", ""),
                 "steps_count": test.get("steps_count", 0),
                 "attachments_count": test.get("attachments_count", 0),
@@ -229,6 +305,115 @@ class AllureConnector(BaseConnector):
 
         df = pd.DataFrame(rows)
         logger.info(f"Created DataFrame with {len(df)} rows (logical tests)")
+        
+        grouped = defaultdict(lambda: {
+            "total_tests": 0,
+            "passed": 0,
+            "failed": 0,
+            "skipped": 0,
+            "pending": 0,
+            "unknown": 0,
+            "total_duration_seconds": 0.0
+        })
+
+        for test in merged_tests:
+            project_name = test.get("project_name", "unknown")
+            module_name = test.get("module_name", "unknown")
+            platform_type = test.get("platform_type", "desktop")
+            status = test.get("status", "unknown")
+            duration = float(test.get("duration_seconds", 0.0) or 0.0)
+
+            key = (project_name, module_name, platform_type)
+            agg = grouped[key]
+            agg["total_tests"] += 1
+            agg["total_duration_seconds"] += duration
+            if status == "passed":
+                agg["passed"] += 1
+            elif status in ("failed", "broken"):
+                agg["failed"] += 1
+            elif status == "skipped":
+                agg["skipped"] += 1
+            elif status == "pending":
+                agg["pending"] += 1
+            else:
+                agg["unknown"] += 1
+
+        module_rows = []
+        for (project_name, module_name, platform_type), agg in grouped.items():
+            total = agg["total_tests"]
+            executed = agg["passed"] + agg["failed"]
+            pass_rate = round((agg["passed"] / executed * 100), 2) if executed > 0 else 0.0
+            module_rows.append({
+                "id": str(uuid.uuid4()),
+                "project_name": project_name,
+                "module_name": module_name,
+                "platform_type": platform_type,
+                "total_tests": total,
+                "passed": agg["passed"],
+                "failed": agg["failed"],
+                "skipped": agg["skipped"],
+                "pending": agg["pending"],
+                "unknown": agg["unknown"],
+                "pass_rate": pass_rate,
+                "total_duration_seconds": round(agg["total_duration_seconds"], 2),
+                "avg_duration_seconds": round((agg["total_duration_seconds"] / total), 2) if total else 0.0,
+                "status_breakdown": json.dumps({
+                    "passed": agg["passed"],
+                    "failed": agg["failed"],
+                    "skipped": agg["skipped"],
+                    "pending": agg["pending"],
+                    "unknown": agg["unknown"],
+                }),
+                "executed_at": executed_at
+            })
+
+        df_module = pd.DataFrame(module_rows)
+
+        project_grouped = defaultdict(lambda: {
+            "total_tests": 0,
+            "passed": 0,
+            "failed": 0,
+            "skipped": 0,
+            "pending": 0,
+            "unknown": 0,
+            "total_duration_seconds": 0.0,
+            "module_names": set()
+        })
+        for row in module_rows:
+            key = (row["project_name"], row["platform_type"])
+            agg = project_grouped[key]
+            agg["total_tests"] += int(row["total_tests"])
+            agg["passed"] += int(row["passed"])
+            agg["failed"] += int(row["failed"])
+            agg["skipped"] += int(row["skipped"])
+            agg["pending"] += int(row["pending"])
+            agg["unknown"] += int(row["unknown"])
+            agg["total_duration_seconds"] += float(row["total_duration_seconds"])
+            agg["module_names"].add(row["module_name"])
+
+        project_rows = []
+        for (project_name, platform_type), agg in project_grouped.items():
+            executed = agg["passed"] + agg["failed"]
+            pass_rate = round((agg["passed"] / executed * 100), 2) if executed > 0 else 0.0
+            project_rows.append({
+                "id": str(uuid.uuid4()),
+                "project_name": project_name,
+                "platform_type": platform_type,
+                "module_count": len(agg["module_names"]),
+                "total_tests": agg["total_tests"],
+                "passed": agg["passed"],
+                "failed": agg["failed"],
+                "skipped": agg["skipped"],
+                "pending": agg["pending"],
+                "unknown": agg["unknown"],
+                "pass_rate": pass_rate,
+                "total_duration_seconds": round(agg["total_duration_seconds"], 2),
+                "avg_duration_seconds": round((agg["total_duration_seconds"] / agg["total_tests"]), 2) if agg["total_tests"] else 0.0,
+                "executed_at": executed_at
+            })
+
+        df_project = pd.DataFrame(project_rows)
+
         return [{
             'name': 'test_results',
             'data': df,
@@ -239,6 +424,24 @@ class AllureConnector(BaseConnector):
                 'raw_files': len(result_files),
                 'logical_tests': len(merged_tests),
                 'status_breakdown': status_counts,
+                'executed_at': executed_at
+            }
+        }, {
+            'name': 'test_module_metrics',
+            'data': df_module,
+            'type': 'structured',
+            'metadata': {
+                'source': 'allure',
+                'rows': len(df_module),
+                'executed_at': executed_at
+            }
+        }, {
+            'name': 'test_project_metrics',
+            'data': df_project,
+            'type': 'structured',
+            'metadata': {
+                'source': 'allure',
+                'rows': len(df_project),
                 'executed_at': executed_at
             }
         }]

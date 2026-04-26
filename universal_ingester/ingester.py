@@ -244,10 +244,13 @@ class UniversalIngester:
             "passed": 0,
             "failed": 0,
             "pass_rate": 0.0,
+            "module_count": 0,
             "avg_duration_sec": 0.0,
             "total_duration_sec": 0.0,
             "most_common_error": "",
-            "slowest_tests": []
+            "slowest_tests": [],
+            "modules": {},
+            "projects": {}
         }
 
         lines = [
@@ -316,6 +319,9 @@ class UniversalIngester:
                     test_obj['error'] = row.get('error_message', '')
                     test_obj['spec_file'] = row.get('spec_file', '')
                     test_obj['description'] = row.get('description', '')
+                    test_obj['project_name'] = row.get('project_name', 'unknown')
+                    test_obj['module_name'] = row.get('module_name', 'unknown')
+                    test_obj['platform_type'] = row.get('platform_type', 'desktop')
                     
                     # Handle labels (might be JSON string or dict)
                     labels_val = row.get('labels', {})
@@ -486,11 +492,89 @@ class UniversalIngester:
                 "passed": int(passed),
                 "failed": int(failed),
                 "pass_rate": round(pass_rate, 2),
+                "module_count": 0,
                 "avg_duration_sec": round(avg_duration, 2),
                 "total_duration_sec": round(total_duration, 2),
                 "most_common_error": common_error,
-                "slowest_tests": slowest
+                "slowest_tests": slowest,
+                "modules": {},
+                "projects": {}
             }
+
+            module_metrics = {}
+            if "structured_test_module_metrics" in tables_in_db:
+                df_module = self.lance_db.open_table("structured_test_module_metrics").to_pandas()
+                for _, row in df_module.iterrows():
+                    module_name = str(row.get("module_name", "unknown"))
+                    if not module_name:
+                        module_name = "unknown"
+                    module_metrics[module_name] = {
+                        "project_name": str(row.get("project_name", "unknown")),
+                        "platform_type": str(row.get("platform_type", "desktop")),
+                        "tests_per_module": int(row.get("total_tests", 0) or 0),
+                        "passed": int(row.get("passed", 0) or 0),
+                        "failed": int(row.get("failed", 0) or 0),
+                        "skipped": int(row.get("skipped", 0) or 0),
+                        "pending": int(row.get("pending", 0) or 0),
+                        "unknown": int(row.get("unknown", 0) or 0),
+                        "pass_rate": float(row.get("pass_rate", 0.0) or 0.0),
+                        "total_execution_time_sec": float(row.get("total_duration_seconds", 0.0) or 0.0),
+                        "avg_execution_time_sec": float(row.get("avg_duration_seconds", 0.0) or 0.0),
+                    }
+            else:
+                # Fallback: compute from test-level table if module table is unavailable.
+                if "module_name" in df_tests.columns:
+                    if "project_name" not in df_tests.columns:
+                        df_tests["project_name"] = "unknown"
+                    if "platform_type" not in df_tests.columns:
+                        df_tests["platform_type"] = "desktop"
+                    df_module = df_tests.copy()
+                    df_module["normalized_status"] = status_series
+                    grouped_module = df_module.groupby(["module_name", "project_name", "platform_type"], dropna=False)
+                    for (module_name, project_name, platform_type), grp in grouped_module:
+                        statuses = grp["normalized_status"].astype(str).str.lower()
+                        passed_m = int(statuses.eq("passed").sum())
+                        failed_m = int(statuses.isin(["failed", "broken", "error"]).sum())
+                        skipped_m = int(statuses.isin(["skipped"]).sum())
+                        pending_m = int(statuses.isin(["pending"]).sum())
+                        unknown_m = int(statuses.isin(["unknown"]).sum())
+                        executed_m = passed_m + failed_m
+                        total_m = int(len(grp))
+                        module_metrics[str(module_name)] = {
+                            "project_name": str(project_name),
+                            "platform_type": str(platform_type),
+                            "tests_per_module": total_m,
+                            "passed": passed_m,
+                            "failed": failed_m,
+                            "skipped": skipped_m,
+                            "pending": pending_m,
+                            "unknown": unknown_m,
+                            "pass_rate": round((passed_m / executed_m * 100), 2) if executed_m else 0.0,
+                            "total_execution_time_sec": round(float(grp["duration_seconds"].sum()), 2),
+                            "avg_execution_time_sec": round(float(grp["duration_seconds"].mean()), 2) if total_m else 0.0,
+                        }
+
+            project_metrics = {}
+            if "structured_test_project_metrics" in tables_in_db:
+                df_project = self.lance_db.open_table("structured_test_project_metrics").to_pandas()
+                for _, row in df_project.iterrows():
+                    project_name = str(row.get("project_name", "unknown"))
+                    key = f"{project_name}:{str(row.get('platform_type', 'desktop'))}"
+                    project_metrics[key] = {
+                        "project_name": project_name,
+                        "platform_type": str(row.get("platform_type", "desktop")),
+                        "module_count": int(row.get("module_count", 0) or 0),
+                        "total_tests": int(row.get("total_tests", 0) or 0),
+                        "passed": int(row.get("passed", 0) or 0),
+                        "failed": int(row.get("failed", 0) or 0),
+                        "skipped": int(row.get("skipped", 0) or 0),
+                        "pass_rate": float(row.get("pass_rate", 0.0) or 0.0),
+                        "total_execution_time_sec": float(row.get("total_duration_seconds", 0.0) or 0.0),
+                    }
+
+            metrics["modules"] = module_metrics
+            metrics["projects"] = project_metrics
+            metrics["module_count"] = len(module_metrics)
 
             # Build markdown summary
             lines.append("## 📊 Test Metrics")
