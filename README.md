@@ -6,6 +6,9 @@ Sentinel QA Analytics Dashboard is an intelligent analytics platform designed fo
 
 ### Key Capabilities
 
+- **Build Trend Analysis**: Interactive dashboards with Recharts for visualizing and comparing metrics across multiple build runs
+- **Persona-Driven AI Insights**: Context-aware natural language querying tailored for CTOs and QA Engineers
+- **Resilient Analytics**: Robust SQL validation, sanitization, and multi-table fallback mechanisms
 - Real-time KPI monitoring and test status visualization
 - Historical trend analysis for quality improvements
 - Module stability metrics
@@ -57,7 +60,7 @@ cd ..
 python -m services.main
 
 # In new terminal, setup frontend
-cd frontend/qa-dashboard
+cd frontend
 npm install
 npm run dev
 ```
@@ -92,7 +95,6 @@ sentinel-qa-analytics-dashboard/
 │   ├── memory.py      # History persistence
 │   └── config.py      # Configuration
 ├── frontend/          # Next.js dashboard
-│   └── qa-dashboard/
 ├── universal_ingester/# Data ingestion
 └── data/              # LanceDB storage
 ```
@@ -107,5 +109,5 @@ sentinel-qa-analytics-dashboard/
 | Frontend | Next.js, TypeScript, Tailwind CSS |
 | Database | LanceDB, DuckDB |
 | AI/LLM | Google Gemini, OpenAI, Anthropic, Ollama |
-| Visualization | Plotly |
+| Visualization | Plotly, Recharts |
 | Embeddings | Sentence Transformers |
