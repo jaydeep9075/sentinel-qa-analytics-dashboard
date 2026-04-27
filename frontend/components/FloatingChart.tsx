@@ -72,16 +72,16 @@ export default function FloatingChart() {
 
       {/* Popover panel */}
       {isOpen && (
-        <div className="fixed bottom-36 right-6 z-50 bg-black border border-white/[0.08] rounded-2xl w-72 shadow-[0_0_40px_rgba(0,0,0,0.8),0_0_20px_rgba(168,85,247,0.08)] overflow-hidden animate-in slide-in-from-bottom-2">
+        <div className="fixed bottom-36 right-6 z-50 bg-white border border-slate-200 dark:bg-black dark:border-white/[0.08] rounded-2xl w-72 shadow-[0_0_30px_rgba(15,23,42,0.12)] dark:shadow-[0_0_40px_rgba(0,0,0,0.8),0_0_20px_rgba(168,85,247,0.08)] overflow-hidden animate-in slide-in-from-bottom-2">
           {/* Header */}
-          <div className="flex items-center justify-between px-4 py-3 border-b border-white/[0.06] bg-white/[0.02]">
-            <h3 className="text-sm font-semibold text-white flex items-center gap-2">
+          <div className="flex items-center justify-between px-4 py-3 border-b border-slate-200 bg-slate-50 dark:border-white/[0.06] dark:bg-white/[0.02]">
+            <h3 className="text-sm font-semibold text-slate-900 dark:text-white flex items-center gap-2">
               <BarChart3 className="w-4 h-4 text-purple-400" />
               Chart Suggestion
             </h3>
             <button
               onClick={() => setIsOpen(false)}
-              className="text-white/40 hover:text-white p-1 rounded-lg hover:bg-white/[0.06] transition-all"
+              className="text-slate-400 hover:text-slate-700 dark:text-white/40 dark:hover:text-white p-1 rounded-lg hover:bg-slate-200 dark:hover:bg-white/[0.06] transition-all"
             >
               <X className="w-4 h-4" />
             </button>
@@ -96,7 +96,7 @@ export default function FloatingChart() {
               </div>
             ) : (
               <>
-                <p className="text-[10px] text-white/25 uppercase tracking-wider text-center mb-1">
+                <p className="text-[10px] text-slate-500 dark:text-white/25 uppercase tracking-wider text-center mb-1">
                   {selectedRole || "QA"} prompts
                 </p>
                 {suggestions.map((prompt, i) => (
@@ -104,7 +104,7 @@ export default function FloatingChart() {
                     key={i}
                     onClick={() => handleGenerateChart(prompt)}
                     disabled={isGenerating || !selectedIngestion}
-                    className="group w-full text-left text-xs bg-white/[0.03] hover:bg-purple-500/[0.08] border border-white/[0.06] hover:border-purple-500/20 rounded-lg px-3 py-2 text-white/50 hover:text-purple-300 transition-all disabled:opacity-30 flex justify-between items-center"
+                    className="group w-full text-left text-xs bg-slate-50 hover:bg-purple-500/[0.08] border border-slate-200 dark:bg-white/[0.03] dark:border-white/[0.06] hover:border-purple-500/20 rounded-lg px-3 py-2 text-slate-600 hover:text-purple-700 dark:text-white/50 dark:hover:text-purple-300 transition-all disabled:opacity-30 flex justify-between items-center"
                   >
                     <span>{prompt}</span>
                     <Sparkles className="w-3 h-3 opacity-0 group-hover:opacity-100 text-purple-400 transition-opacity flex-shrink-0" />

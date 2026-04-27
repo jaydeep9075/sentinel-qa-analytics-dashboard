@@ -2,7 +2,8 @@
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { motion } from "framer-motion";
-import { Shield, Eye, EyeOff, ArrowRight, Sparkles } from "lucide-react";
+import { Eye, EyeOff, ArrowRight, Sparkles } from "lucide-react";
+import BrandLogo from "@/components/BrandLogo";
 
 /* ───────── floating particles (login version — fewer, subtler) ───────── */
 function LoginParticles() {
@@ -76,7 +77,7 @@ export default function LoginPage() {
   };
 
   return (
-    <div className="min-h-screen bg-black flex items-center justify-center p-6 text-white relative overflow-hidden">
+    <div className="min-h-screen bg-[var(--background)] flex items-center justify-center p-6 text-[var(--foreground)] relative overflow-hidden">
       <LoginParticles />
 
       {/* mouse-tracking radial glow */}
@@ -98,7 +99,7 @@ export default function LoginPage() {
         className="relative w-full max-w-md z-10"
       >
         {/* card */}
-        <div className="relative bg-white/[0.03] backdrop-blur-2xl rounded-2xl p-8 md:p-10 border border-white/[0.08] shadow-[0_0_80px_rgba(0,240,255,0.04)] overflow-hidden">
+        <div className="relative bg-white border border-slate-200 dark:bg-white/[0.03] dark:border-white/[0.08] backdrop-blur-2xl rounded-2xl p-8 md:p-10 shadow-[0_0_80px_rgba(0,240,255,0.04)] overflow-hidden">
           {/* corner glow accents */}
           <div className="absolute -top-24 -right-24 w-48 h-48 bg-cyan-500/[0.08] blur-[80px] rounded-full pointer-events-none" />
           <div className="absolute -bottom-24 -left-24 w-48 h-48 bg-purple-500/[0.06] blur-[80px] rounded-full pointer-events-none" />
@@ -106,24 +107,22 @@ export default function LoginPage() {
           <div className="relative z-10">
             {/* logo + heading */}
             <div className="flex items-center gap-3 mb-8">
-              <div className="w-11 h-11 rounded-xl bg-gradient-to-br from-cyan-500 to-blue-600 flex items-center justify-center shadow-[0_0_24px_rgba(0,240,255,0.25)]">
-                <Shield className="w-6 h-6 text-white" />
-              </div>
+              <BrandLogo className="px-3 py-2 shadow-[0_0_24px_rgba(0,240,255,0.18)]" />
               <div>
-                <h2 className="text-2xl font-bold text-white">Welcome Back</h2>
-                <p className="text-white/30 text-xs tracking-wide">Sign in to Sentinel Analytics</p>
+                <h2 className="text-2xl font-bold text-slate-900 dark:text-white">Welcome Back</h2>
+                <p className="text-slate-500 dark:text-white/30 text-xs tracking-wide">Sign in to Sentinel Analytics</p>
               </div>
             </div>
 
             <form onSubmit={handleSubmit} className="space-y-5">
               {/* username */}
               <div>
-                <label className="block text-xs font-semibold uppercase tracking-widest text-white/40 mb-2">Username</label>
+                <label className="block text-xs font-semibold uppercase tracking-widest text-slate-500 dark:text-white/40 mb-2">Username</label>
                 <input
                   type="text"
                   value={username}
                   onChange={(e) => setUsername(e.target.value)}
-                  className="w-full bg-black/60 border border-white/[0.08] rounded-xl px-4 py-3 text-white focus:outline-none focus:border-cyan-500/40 focus:ring-1 focus:ring-cyan-500/30 focus:shadow-[0_0_15px_rgba(0,240,255,0.08)] transition-all placeholder:text-white/20"
+                  className="w-full bg-white border border-slate-300 dark:bg-black/60 dark:border-white/[0.08] rounded-xl px-4 py-3 text-slate-900 dark:text-white focus:outline-none focus:border-cyan-500/40 focus:ring-1 focus:ring-cyan-500/30 focus:shadow-[0_0_15px_rgba(0,240,255,0.08)] transition-all placeholder:text-slate-400 dark:placeholder:text-white/20"
                   placeholder="Enter your username"
                   required
                 />
@@ -131,20 +130,20 @@ export default function LoginPage() {
 
               {/* password */}
               <div>
-                <label className="block text-xs font-semibold uppercase tracking-widest text-white/40 mb-2">Password</label>
+                <label className="block text-xs font-semibold uppercase tracking-widest text-slate-500 dark:text-white/40 mb-2">Password</label>
                 <div className="relative">
                   <input
                     type={showPassword ? "text" : "password"}
                     value={password}
                     onChange={(e) => setPassword(e.target.value)}
-                    className="w-full bg-black/60 border border-white/[0.08] rounded-xl px-4 py-3 pr-12 text-white focus:outline-none focus:border-cyan-500/40 focus:ring-1 focus:ring-cyan-500/30 focus:shadow-[0_0_15px_rgba(0,240,255,0.08)] transition-all placeholder:text-white/20"
+                    className="w-full bg-white border border-slate-300 dark:bg-black/60 dark:border-white/[0.08] rounded-xl px-4 py-3 pr-12 text-slate-900 dark:text-white focus:outline-none focus:border-cyan-500/40 focus:ring-1 focus:ring-cyan-500/30 focus:shadow-[0_0_15px_rgba(0,240,255,0.08)] transition-all placeholder:text-slate-400 dark:placeholder:text-white/20"
                     placeholder="Enter your password"
                     required
                   />
                   <button
                     type="button"
                     onClick={() => setShowPassword(!showPassword)}
-                    className="absolute right-3 top-1/2 -translate-y-1/2 text-white/25 hover:text-cyan-400 transition-colors"
+                    className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 dark:text-white/25 hover:text-cyan-500 dark:hover:text-cyan-400 transition-colors"
                   >
                     {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
                   </button>
@@ -174,7 +173,7 @@ export default function LoginPage() {
             </form>
 
             {/* subtle footer badge */}
-            <div className="mt-8 flex items-center justify-center gap-1.5 text-[10px] text-white/20 uppercase tracking-widest">
+            <div className="mt-8 flex items-center justify-center gap-1.5 text-[10px] text-slate-500 dark:text-white/20 uppercase tracking-widest">
               <Sparkles className="w-3 h-3" />
               Sentinel QA Intelligence Platform
             </div>

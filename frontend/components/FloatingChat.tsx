@@ -86,21 +86,21 @@ export default function FloatingChat() {
       {/* ── Modal ── */}
       {isOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm">
-          <div className="bg-black border border-white/[0.08] rounded-2xl w-full max-w-2xl h-[600px] flex flex-col shadow-[0_0_60px_rgba(0,0,0,0.8),0_0_30px_rgba(0,240,255,0.05)] overflow-hidden">
+          <div className="bg-white border border-slate-200 dark:bg-black dark:border-white/[0.08] rounded-2xl w-full max-w-2xl h-[600px] flex flex-col shadow-[0_0_40px_rgba(15,23,42,0.15)] dark:shadow-[0_0_60px_rgba(0,0,0,0.8),0_0_30px_rgba(0,240,255,0.05)] overflow-hidden">
             {/* header */}
-            <div className="flex items-center justify-between px-5 py-4 border-b border-white/[0.06] bg-white/[0.02]">
-              <h2 className="text-base font-semibold text-white flex items-center gap-2">
+            <div className="flex items-center justify-between px-5 py-4 border-b border-slate-200 bg-slate-50 dark:border-white/[0.06] dark:bg-white/[0.02]">
+              <h2 className="text-base font-semibold text-slate-900 dark:text-white flex items-center gap-2">
                 <div className="w-7 h-7 rounded-lg bg-gradient-to-br from-cyan-500 to-blue-600 flex items-center justify-center shadow-[0_0_12px_rgba(0,240,255,0.2)]">
                   <MessageCircle className="w-4 h-4 text-white" />
                 </div>
                 <span>
                   Sentinel{" "}
-                  <span className="text-white/50 font-normal">QA Assistant</span>
+                  <span className="text-slate-500 dark:text-white/50 font-normal">QA Assistant</span>
                 </span>
               </h2>
               <button
                 onClick={() => setIsOpen(false)}
-                className="text-white/30 hover:text-white hover:bg-white/[0.06] p-1.5 rounded-lg transition-all"
+                className="text-slate-400 hover:text-slate-700 dark:text-white/30 dark:hover:text-white hover:bg-slate-200 dark:hover:bg-white/[0.06] p-1.5 rounded-lg transition-all"
               >
                 <X className="w-5 h-5" />
               </button>
@@ -109,12 +109,12 @@ export default function FloatingChat() {
             {/* messages */}
             <div className="flex-1 overflow-y-auto p-5 space-y-4 custom-scrollbar">
               {messages.length === 0 ? (
-                <div className="text-center text-white/25 mt-12">
+                <div className="text-center text-slate-500 dark:text-white/25 mt-12">
                   <Sparkles className="w-8 h-8 mx-auto mb-3 text-cyan-500/40" />
                   <p className="text-sm">
                     Ask a question about the test results.
                   </p>
-                  <p className="text-[10px] mt-2 uppercase tracking-widest text-white/15">
+                  <p className="text-[10px] mt-2 uppercase tracking-widest text-slate-400 dark:text-white/15">
                     Role: {selectedRole || "QA Engineer"}
                   </p>
                 </div>
@@ -130,7 +130,7 @@ export default function FloatingChat() {
                       className={`max-w-[80%] rounded-2xl px-4 py-2.5 text-sm ${
                         msg.role === "user"
                           ? "bg-gradient-to-r from-cyan-500 to-blue-600 text-white rounded-tr-sm shadow-[0_0_15px_rgba(0,240,255,0.1)]"
-                          : "bg-white/[0.04] text-white/70 border border-white/[0.06] rounded-tl-sm"
+                          : "bg-slate-100 text-slate-700 border border-slate-200 dark:bg-white/[0.04] dark:text-white/70 dark:border-white/[0.06] rounded-tl-sm"
                       }`}
                     >
                       {msg.role === "ai" ? (
@@ -165,16 +165,16 @@ export default function FloatingChat() {
               )}
               {isLoading && (
                 <div className="flex justify-start">
-                  <div className="bg-white/[0.04] border border-white/[0.06] rounded-2xl rounded-tl-sm px-4 py-2.5 flex gap-2 items-center">
+                  <div className="bg-slate-100 border border-slate-200 dark:bg-white/[0.04] dark:border-white/[0.06] rounded-2xl rounded-tl-sm px-4 py-2.5 flex gap-2 items-center">
                     <Loader2 className="w-4 h-4 animate-spin text-cyan-400" />
-                    <span className="text-white/30 text-sm">Thinking...</span>
+                    <span className="text-slate-500 dark:text-white/30 text-sm">Thinking...</span>
                   </div>
                 </div>
               )}
             </div>
 
             {/* bottom panel */}
-            <div className="px-5 py-4 border-t border-white/[0.06] bg-white/[0.01] space-y-3">
+            <div className="px-5 py-4 border-t border-slate-200 bg-slate-50 dark:border-white/[0.06] dark:bg-white/[0.01] space-y-3">
               {/* suggested questions – now role‑based */}
               <div className="flex flex-wrap gap-1.5">
                 {suggestions.map((q, i) => (
@@ -182,7 +182,7 @@ export default function FloatingChat() {
                     key={i}
                     onClick={() => sendQuestion(q)}
                     disabled={isLoading || !selectedIngestion}
-                    className="text-[11px] bg-white/[0.03] hover:bg-cyan-500/[0.1] border border-white/[0.06] hover:border-cyan-500/20 rounded-full px-3 py-1.5 text-white/40 hover:text-cyan-400 transition-all disabled:opacity-30"
+                    className="text-[11px] bg-white border border-slate-200 hover:bg-cyan-500/[0.1] hover:border-cyan-500/20 rounded-full px-3 py-1.5 text-slate-600 hover:text-cyan-700 dark:bg-white/[0.03] dark:border-white/[0.06] dark:text-white/40 dark:hover:text-cyan-400 transition-all disabled:opacity-30"
                   >
                     {q}
                   </button>
@@ -196,7 +196,7 @@ export default function FloatingChat() {
                   value={customQuestion}
                   onChange={(e) => setCustomQuestion(e.target.value)}
                   placeholder="Or type your own question..."
-                  className="flex-1 bg-white/[0.03] border border-white/[0.08] rounded-xl px-4 py-2.5 text-sm text-white placeholder-white/20 focus:outline-none focus:border-cyan-500/30 focus:ring-1 focus:ring-cyan-500/20 focus:shadow-[0_0_12px_rgba(0,240,255,0.06)] transition-all"
+                  className="flex-1 bg-white border border-slate-300 rounded-xl px-4 py-2.5 text-sm text-slate-800 placeholder:text-slate-400 focus:outline-none focus:border-cyan-500/30 focus:ring-1 focus:ring-cyan-500/20 focus:shadow-[0_0_12px_rgba(0,240,255,0.06)] transition-all dark:bg-white/[0.03] dark:border-white/[0.08] dark:text-white dark:placeholder:text-white/20"
                   disabled={isLoading || !selectedIngestion}
                 />
                 <button

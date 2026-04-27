@@ -24,9 +24,9 @@ export default function DashboardLayout({
 
   if (isAuth === null) {
     return (
-      <div className="min-h-screen bg-black flex flex-col items-center justify-center gap-4">
+      <div className="min-h-screen bg-[var(--background)] flex flex-col items-center justify-center gap-4">
         <div className="w-10 h-10 border-2 border-cyan-500 border-t-transparent rounded-full animate-spin shadow-[0_0_15px_rgba(0,240,255,0.2)]" />
-        <span className="text-[10px] text-white/20 uppercase tracking-widest font-semibold">Authenticating</span>
+        <span className="text-[10px] text-slate-500 dark:text-white/20 uppercase tracking-widest font-semibold">Authenticating</span>
       </div>
     );
   }

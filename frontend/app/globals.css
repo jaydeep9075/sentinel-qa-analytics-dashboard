@@ -1,7 +1,22 @@
 /* globals.css - Add these styles */
 @import "tailwindcss";
+@custom-variant dark (&:where(.dark, .dark *));
 
 :root {
+  --background: #f7f9fc;
+  --foreground: #0f172a;
+  --card-bg: #ffffff;
+  --card-border: #dbe1ea;
+  --hover-bg: #f2f5fb;
+  --primary: #2563eb;
+  --primary-hover: #1d4ed8;
+  --success: #059669;
+  --danger: #dc2626;
+  --warning: #d97706;
+  --info: #2563eb;
+}
+
+.dark {
   --background: #000000;
   --foreground: #ededed;
   --card-bg: #1a1a1a;
@@ -26,22 +41,34 @@ body {
   overflow-x: hidden;
 }
 
-/* Custom scrollbar for dark mode */
+/* Scrollbar defaults */
 ::-webkit-scrollbar {
   width: 10px;
   height: 10px;
 }
 
 ::-webkit-scrollbar-track {
-  background: #1a1a1a;
+  background: #e2e8f0;
 }
 
 ::-webkit-scrollbar-thumb {
-  background: #3a3a3a;
+  background: #94a3b8;
   border-radius: 5px;
 }
 
 ::-webkit-scrollbar-thumb:hover {
+  background: #64748b;
+}
+
+.dark ::-webkit-scrollbar-track {
+  background: #1a1a1a;
+}
+
+.dark ::-webkit-scrollbar-thumb {
+  background: #3a3a3a;
+}
+
+.dark ::-webkit-scrollbar-thumb:hover {
   background: #4a4a4a;
 }
 

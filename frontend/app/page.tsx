@@ -2,6 +2,7 @@
 import Link from "next/link";
 import { motion, useMotionValue, useTransform, animate, useSpring, useMotionTemplate } from "framer-motion";
 import { useEffect, useState, useRef } from "react";
+import BrandLogo from "@/components/BrandLogo";
 import {
   MessageSquare,
   BarChart3,
@@ -130,7 +131,7 @@ export default function LandingPage() {
   const launchHref = mounted && localStorage.getItem("token") ? "/dashboard" : "/login";
 
   return (
-    <div className="min-h-screen bg-black text-white selection:bg-cyan-500/30 overflow-x-hidden">
+    <div className="min-h-screen bg-[var(--background)] text-[var(--foreground)] selection:bg-cyan-500/30 overflow-x-hidden">
       <Particles />
 
       {/* ══════════ NAVBAR ══════════ */}
@@ -138,19 +139,17 @@ export default function LandingPage() {
         initial={{ y: -40, opacity: 0 }}
         animate={{ y: 0, opacity: 1 }}
         transition={{ duration: 0.6 }}
-        className="fixed top-0 inset-x-0 z-50 backdrop-blur-xl bg-black/60 border-b border-white/[0.06]"
+        className="fixed top-0 inset-x-0 z-50 backdrop-blur-xl bg-white/80 border-b border-slate-200 dark:bg-black/60 dark:border-white/[0.06]"
       >
         <div className="max-w-7xl mx-auto flex items-center justify-between px-6 py-4">
           <div className="flex items-center gap-2">
-            <div className="w-9 h-9 rounded-lg bg-gradient-to-br from-cyan-500 to-blue-600 flex items-center justify-center shadow-[0_0_20px_rgba(0,240,255,0.3)]">
-              <Shield className="w-5 h-5 text-white" />
-            </div>
+            <BrandLogo className="shadow-[0_0_20px_rgba(0,240,255,0.2)]" />
             <span className="text-lg font-bold tracking-tight">
               <span className="text-cyan-400">Sentinel</span>{" "}
-              <span className="text-white/70 font-normal">Analytics</span>
+              <span className="text-slate-500 dark:text-white/70 font-normal">Analytics</span>
             </span>
           </div>
-          <div className="hidden md:flex items-center gap-8 text-sm text-white/50">
+          <div className="hidden md:flex items-center gap-8 text-sm text-slate-500 dark:text-white/50">
             <a href="#features" className="hover:text-cyan-400 transition-colors">Features</a>
             <a href="#how-it-works" className="hover:text-cyan-400 transition-colors">How It Works</a>
             <a href="#tech" className="hover:text-cyan-400 transition-colors">Technology</a>
@@ -185,7 +184,7 @@ export default function LandingPage() {
             animate={{ opacity: 1, y: 0, scale: 1 }}
             transition={{ duration: 0.7 }}
           >
-            <div className="inline-flex items-center gap-2 px-4 py-1.5 rounded-full bg-white/[0.04] border border-cyan-500/30 text-xs font-semibold uppercase tracking-widest text-cyan-400 mb-8 backdrop-blur-md shadow-[0_0_20px_rgba(0,240,255,0.15)]">
+            <div className="inline-flex items-center gap-2 px-4 py-1.5 rounded-full bg-cyan-50 border border-cyan-500/30 text-xs font-semibold uppercase tracking-widest text-cyan-600 dark:bg-white/[0.04] dark:text-cyan-400 mb-8 backdrop-blur-md shadow-[0_0_20px_rgba(0,240,255,0.15)]">
               <Sparkles className="w-3.5 h-3.5 animate-pulse" />
               AI-Powered QA Intelligence
             </div>
@@ -197,7 +196,7 @@ export default function LandingPage() {
             transition={{ duration: 0.7, delay: 0.1 }}
             className="text-5xl md:text-7xl lg:text-8xl font-extrabold tracking-tight leading-[1.05] mb-8"
           >
-            <span className="text-white">Decode Your</span>
+            <span className="text-slate-900 dark:text-white">Decode Your</span>
             <br />
             <span className="bg-gradient-to-r from-cyan-400 via-blue-400 to-purple-500 bg-clip-text text-transparent drop-shadow-[0_0_40px_rgba(0,240,255,0.4)]">
               Software Quality
@@ -208,7 +207,7 @@ export default function LandingPage() {
             initial={{ opacity: 0, y: 24 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: 0.7, delay: 0.2 }}
-            className="text-base md:text-lg text-white/60 max-w-2xl mx-auto mb-12 leading-relaxed"
+            className="text-base md:text-lg text-slate-600 dark:text-white/60 max-w-2xl mx-auto mb-12 leading-relaxed"
           >
             Ask questions in plain English. Get instant AI-driven insights, auto&#8209;generated charts, and executive&#8209;ready summaries from your test data.
           </motion.p>
@@ -229,11 +228,11 @@ export default function LandingPage() {
                 <ArrowRight className="relative w-5 h-5 group-hover:translate-x-1 transition-transform" />
               </Link>
             ) : (
-              <div className="px-8 py-4 bg-white/5 rounded-full w-48 h-14 animate-pulse"></div>
+              <div className="px-8 py-4 bg-slate-200 dark:bg-white/5 rounded-full w-48 h-14 animate-pulse"></div>
             )}
             <a
               href="#features"
-              className="inline-flex items-center gap-2 px-6 py-4 rounded-full border border-white/10 text-white/60 hover:text-white hover:border-white/20 hover:bg-white/[0.03] transition-all text-sm font-medium"
+              className="inline-flex items-center gap-2 px-6 py-4 rounded-full border border-slate-300 text-slate-600 hover:text-slate-900 hover:border-slate-400 hover:bg-slate-100 dark:border-white/10 dark:text-white/60 dark:hover:text-white dark:hover:border-white/20 dark:hover:bg-white/[0.03] transition-all text-sm font-medium"
             >
               Explore Features <ChevronRight className="w-4 h-4" />
             </a>
@@ -259,7 +258,7 @@ export default function LandingPage() {
               Everything You Need,{" "}
               <span className="bg-gradient-to-r from-cyan-400 to-purple-400 bg-clip-text text-transparent">Nothing You Don&apos;t</span>
             </h2>
-            <p className="text-white/40 max-w-xl mx-auto">Powerful analytics wrapped in simplicity. Built for teams that ship fast and need clarity.</p>
+            <p className="text-slate-600 dark:text-white/40 max-w-xl mx-auto">Powerful analytics wrapped in simplicity. Built for teams that ship fast and need clarity.</p>
           </motion.div>
 
           <div className="grid md:grid-cols-3 gap-6">
@@ -270,15 +269,15 @@ export default function LandingPage() {
                 whileInView={{ opacity: 1, y: 0 }}
                 viewport={{ once: true }}
                 transition={{ duration: 0.5, delay: i * 0.08 }}
-                className="group relative p-8 rounded-2xl border border-white/[0.05] bg-white/[0.02] backdrop-blur-sm hover:border-cyan-500/30 hover:bg-white/[0.04] transition-all overflow-hidden shadow-lg hover:shadow-[0_0_30px_rgba(0,240,255,0.1)]"
+                className="group relative p-8 rounded-2xl border border-slate-200 bg-white backdrop-blur-sm dark:border-white/[0.05] dark:bg-white/[0.02] hover:border-cyan-500/30 dark:hover:bg-white/[0.04] transition-all overflow-hidden shadow-lg hover:shadow-[0_0_30px_rgba(0,240,255,0.1)]"
               >
                 {/* hover glow */}
                 <div className="absolute -top-20 -right-20 w-40 h-40 bg-cyan-500/[0.08] blur-3xl rounded-full opacity-0 group-hover:opacity-100 transition-opacity" />
-                <div className={`relative w-12 h-12 rounded-xl flex items-center justify-center mb-6 border border-white/[0.06] ${f.iconBg}`}>
+                <div className={`relative w-12 h-12 rounded-xl flex items-center justify-center mb-6 border border-slate-200 dark:border-white/[0.06] ${f.iconBg}`}>
                   {f.icon}
                 </div>
-                <h3 className="text-lg font-semibold mb-2 text-white">{f.title}</h3>
-                <p className="text-white/40 text-sm leading-relaxed">{f.desc}</p>
+                <h3 className="text-lg font-semibold mb-2 text-slate-900 dark:text-white">{f.title}</h3>
+                <p className="text-slate-600 dark:text-white/40 text-sm leading-relaxed">{f.desc}</p>
               </motion.div>
             ))}
           </div>
@@ -298,7 +297,7 @@ export default function LandingPage() {
           >
             <span className="text-xs font-semibold uppercase tracking-widest text-cyan-500 mb-3 block">Workflow</span>
             <h2 className="text-3xl md:text-5xl font-bold mb-4">Three Steps to <span className="bg-gradient-to-r from-cyan-400 to-blue-500 bg-clip-text text-transparent">Clarity</span></h2>
-            <p className="text-white/40 max-w-xl mx-auto">From raw test data to boardroom-ready insights in under a minute.</p>
+            <p className="text-slate-600 dark:text-white/40 max-w-xl mx-auto">From raw test data to boardroom-ready insights in under a minute.</p>
           </motion.div>
 
           <div className="grid md:grid-cols-3 gap-10 relative">
@@ -315,11 +314,11 @@ export default function LandingPage() {
                 transition={{ duration: 0.5, delay: i * 0.15 }}
                 className="relative text-center z-10"
               >
-                <div className="w-[72px] h-[72px] mx-auto rounded-full bg-black border border-cyan-500/30 flex items-center justify-center text-2xl font-bold mb-6 shadow-[0_0_30px_rgba(0,240,255,0.2)]">
+                <div className="w-[72px] h-[72px] mx-auto rounded-full bg-white border border-cyan-500/30 dark:bg-black flex items-center justify-center text-2xl font-bold mb-6 shadow-[0_0_30px_rgba(0,240,255,0.2)]">
                   <span className="bg-gradient-to-b from-cyan-400 to-blue-600 bg-clip-text text-transparent">{step.num}</span>
                 </div>
-                <h3 className="text-xl font-bold mb-3 text-white">{step.title}</h3>
-                <p className="text-white/40 text-sm leading-relaxed px-2">{step.desc}</p>
+                <h3 className="text-xl font-bold mb-3 text-slate-900 dark:text-white">{step.title}</h3>
+                <p className="text-slate-600 dark:text-white/40 text-sm leading-relaxed px-2">{step.desc}</p>
               </motion.div>
             ))}
           </div>
@@ -352,10 +351,10 @@ export default function LandingPage() {
                 whileInView={{ opacity: 1, scale: 1 }}
                 viewport={{ once: true }}
                 transition={{ duration: 0.4, delay: i * 0.05 }}
-                className="group flex flex-col items-center gap-3 p-6 rounded-2xl border border-white/[0.05] bg-white/[0.02] hover:border-cyan-500/30 hover:bg-white/[0.04] hover:shadow-[0_0_20px_rgba(0,240,255,0.1)] transition-all"
+                className="group flex flex-col items-center gap-3 p-6 rounded-2xl border border-slate-200 bg-white dark:border-white/[0.05] dark:bg-white/[0.02] hover:border-cyan-500/30 dark:hover:bg-white/[0.04] hover:shadow-[0_0_20px_rgba(0,240,255,0.1)] transition-all"
               >
                 <div className="text-2xl group-hover:scale-110 group-hover:drop-shadow-[0_0_15px_currentColor] transition-all">{t.icon}</div>
-                <span className="text-sm font-medium text-white/60 group-hover:text-cyan-400 transition-colors">{t.name}</span>
+                <span className="text-sm font-medium text-slate-600 dark:text-white/60 group-hover:text-cyan-500 dark:group-hover:text-cyan-400 transition-colors">{t.name}</span>
               </motion.div>
             ))}
           </div>
@@ -376,7 +375,7 @@ export default function LandingPage() {
             <h2 className="text-3xl md:text-5xl font-bold mb-6">
               Ready to <span className="bg-gradient-to-r from-cyan-400 to-blue-500 bg-clip-text text-transparent drop-shadow-[0_0_20px_rgba(0,240,255,0.3)]">Transform</span> Your QA?
             </h2>
-            <p className="text-white/40 mb-10 max-w-lg mx-auto">Stop drowning in spreadsheets. Start making decisions backed by AI-powered insights.</p>
+            <p className="text-slate-600 dark:text-white/40 mb-10 max-w-lg mx-auto">Stop drowning in spreadsheets. Start making decisions backed by AI-powered insights.</p>
             {mounted ? (
               <Link
                 href={launchHref}
@@ -387,22 +386,22 @@ export default function LandingPage() {
                 <ArrowRight className="relative w-5 h-5 group-hover:translate-x-1 transition-transform" />
               </Link>
             ) : (
-              <div className="px-10 py-4 bg-white/5 rounded-full w-48 h-14 mx-auto animate-pulse"></div>
+              <div className="px-10 py-4 bg-slate-200 dark:bg-white/5 rounded-full w-48 h-14 mx-auto animate-pulse"></div>
             )}
           </motion.div>
         </div>
       </section>
 
       {/* ══════════ FOOTER ══════════ */}
-      <footer className="border-t border-white/[0.05] py-12 relative z-10">
+      <footer className="border-t border-slate-200 dark:border-white/[0.05] py-12 relative z-10">
         <div className="max-w-6xl mx-auto px-6 flex flex-col md:flex-row items-center justify-between gap-6">
           <div className="flex items-center gap-2">
             <div className="w-7 h-7 rounded-md bg-gradient-to-br from-cyan-500 to-blue-600 flex items-center justify-center shadow-[0_0_12px_rgba(0,240,255,0.2)]">
               <Shield className="w-4 h-4 text-white" />
             </div>
-            <span className="text-sm font-semibold text-white/60">Sentinel Analytics</span>
+            <span className="text-sm font-semibold text-slate-600 dark:text-white/60">Sentinel Analytics</span>
           </div>
-          <div className="flex items-center gap-6 text-xs text-white/40">
+          <div className="flex items-center gap-6 text-xs text-slate-600 dark:text-white/40">
             <span>© {new Date().getFullYear()} Sentinel - testrig technologies pvt.ltd. All rights reserved.</span>
             <a href="#" className="hover:text-cyan-400 transition-colors">Privacy</a>
             <a href="#" className="hover:text-cyan-400 transition-colors">Terms</a>
