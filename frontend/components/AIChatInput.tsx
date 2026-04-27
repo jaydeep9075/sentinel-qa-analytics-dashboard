@@ -37,6 +37,7 @@ export default function AIChatInput({ onChartGenerated }: AIChatInputProps) {
 
     setLoading(true);
     setStatus("Generating chart...");
+    window.dispatchEvent(new CustomEvent("chart-generating-start", { detail: activePrompt }));
 
     try {
       const result = await generateChart(activePrompt, selectedIngestion);
@@ -54,6 +55,7 @@ export default function AIChatInput({ onChartGenerated }: AIChatInputProps) {
       setTimeout(() => setStatus(null), 5000);
     } finally {
       setLoading(false);
+      window.dispatchEvent(new CustomEvent("chart-generating-end", { detail: activePrompt }));
     }
   };
 

@@ -27,6 +27,7 @@ export default function FloatingChart() {
 
     setIsGenerating(true);
     setGeneratingPrompt(`Generating: "${prompt}"...`);
+    window.dispatchEvent(new CustomEvent("chart-generating-start", { detail: prompt }));
 
     try {
       await generateChart(prompt, selectedIngestion);
@@ -42,6 +43,7 @@ export default function FloatingChart() {
       setTimeout(() => setGeneratingPrompt(null), 4000);
     } finally {
       setIsGenerating(false);
+      window.dispatchEvent(new CustomEvent("chart-generating-end", { detail: prompt }));
     }
   };
 
