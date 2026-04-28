@@ -1,0 +1,682 @@
+{
+  "build_id": "ingestion_20260428_055815",
+  "ingested_at": "2026-04-28T05:58:28.029358+00:00",
+  "total_records_ingested": 102,
+  "metrics": {
+    "total_tests": 56,
+    "executed_tests": 56,
+    "skipped_tests": 0,
+    "passed": 25,
+    "failed": 31,
+    "pass_rate": 44.64,
+    "module_count": 43,
+    "avg_duration_sec": 447.18,
+    "total_duration_sec": 25041.8,
+    "most_common_error": "Error: Invalid range: min cannot be greater than max.",
+    "slowest_tests": [
+      {
+        "name": "Platforms/SOM_OCI/HSA/SOM_ReshipOrder.spec.ts#SOM_ReshipOrder @hsa_storefront @reship_order @hsa_som_oci @third_som_oci_core TS_17-SOM_reshipOrderTest @reship_order",
+        "duration_sec": 1222.47
+      },
+      {
+        "name": "Platforms/SOM_OCI/FSA/SOM_AllStatuses.spec.ts#SOM_AllOrderStatuses @fsa_storefront @all_order_statuses @fsa_som_oci @som_oci_extend TS_03-SOM_OrderStatus-ALL @all_order_statuses",
+        "duration_sec": 1217.17
+      },
+      {
+        "name": "Platforms/SOM_OCI/HSA/SOM_ReturnOrder.spec.ts#SOM_ReturnOrder @hsa_storefront @return_order @hsa_som_oci @second_som_oci_core TS_15-SOM_Initiate_ReturnOrder @initiate_return",
+        "duration_sec": 1197.7
+      },
+      {
+        "name": "Platforms/SOM_OCI/HSA/SOM_ReturnItemFrontEnd.spec.ts#SOM_ReturnOrder @hsa_storefront @return_order @hsa_som_oci @second_som_oci_core TS_16-SOM_Initiate_ReturnOrder_FrontEnd @return_order_frontend",
+        "duration_sec": 1172.8
+      },
+      {
+        "name": "Platforms/SOM_OCI/FSA/SOM_ReturnItemFrontEnd.spec.ts#SOM_ReturnOrder @fsa_storefront @return_order @fsa_som_oci @second_som_oci_core TS_16-SOM_Initiate_ReturnOrder_FrontEnd @return_order_frontend",
+        "duration_sec": 1166.47
+      },
+      {
+        "name": "Platforms/SOM_OCI/FSA/SOM_BackOrderStatus.spec.ts#SOM_BackOrderStatus @fsa_storefront @fsa_som_oci @third_som_oci_core TS_17-SOM_BackOrder @backorder",
+        "duration_sec": 1136.3
+      },
+      {
+        "name": "Platforms/SOM_OCI/HSA/SOM_AllStatuses.spec.ts#SOM_AllOrderStatuses @hsa_storefront @all_order_statuses @hsa_som_oci @som_oci_extend TS_03-SOM_OrderStatus-ALL @all_order_statuses",
+        "duration_sec": 1070.61
+      },
+      {
+        "name": "Platforms/SOM_OCI/FSA/SOM_ReturnOrder.spec.ts#SOM_ReturnOrder @fsa_storefront @return_order @fsa_som_oci @second_som_oci_core TS_15-SOM_Initiate_ReturnOrder @initiate_return",
+        "duration_sec": 929.24
+      },
+      {
+        "name": "Platforms/SOM_OCI/HSA/SOM_Payment.spec.ts#SOM_AddPayment @hsa_storefront @payment @hsa_som_oci TS_26-SOM_Add_Payment_Status_Waiting_Allocation @waiting_allocation @third_som_oci_core",
+        "duration_sec": 891.19
+      },
+      {
+        "name": "Platforms/SOM_OCI/FSA/SOM_Payment.spec.ts#SOM_AddPayment @fsa_storefront @payment @fsa_som_oci TS_26-SOM_Add_Payment_Status_Waiting_Allocation @payment_waiting_allocation @third_som_oci_core",
+        "duration_sec": 711.54
+      },
+      {
+        "name": "Platforms/SOM_OCI/FSA/SOM_CustomRefund.spec.ts#SOM_CustomRefundOrder @fsa_storefront @order_refund @fsa_som_oci @second_som_oci_core TS_12-Check Custom Refund order using issue new store credit option in SOM @custom_refund_store_credit",
+        "duration_sec": 467.68
+      },
+      {
+        "name": "Platforms/SOM_OCI/HSA/SOM_OrderLevelDiscount.spec.ts#SOM_OrderLevelDiscount @hsa_storefront @order_level_discount @hsa_som_oci @third_som_oci_core TS_18-SOM_orderLevelDiscountTest @order_level_discount",
+        "duration_sec": 464.66
+      },
+      {
+        "name": "Platforms/SOM_OCI/HSA/SOM_CancelOrder.spec.ts#SOM_CancelOrder @hsa_storefront @order_cancel @hsa_som_oci @first_som_oci_core TS_10-SOM_CancelItem @cancel_item",
+        "duration_sec": 452.47
+      },
+      {
+        "name": "Platforms/SOM_OCI/HSA/SOM_CancelOrder.spec.ts#SOM_CancelOrder @hsa_storefront @order_cancel @hsa_som_oci @first_som_oci_core TS_19-SOM_CancelAllItems @cancel_all_items",
+        "duration_sec": 450.16
+      },
+      {
+        "name": "Platforms/SOM_OCI/FSA/SOM_OrderLevelDiscount.spec.ts#SOM_OrderLevelDiscount @fsa_storefront @order_level_discount @fsa_som_oci @third_som_oci_core TS_18-SOM_orderLevelDiscountTest @order_level_discount",
+        "duration_sec": 440.67
+      }
+    ],
+    "modules": {
+      "SOM_OrderAmount_SOM_ProductSku @fsa_storefront @order_details @fsa_som_oci @som_oci_smoke @som_oci_sentinel": {
+        "project_name": "FSA",
+        "platform_type": "desktop",
+        "tests_per_module": 2,
+        "passed": 2,
+        "failed": 0,
+        "skipped": 0,
+        "pending": 0,
+        "unknown": 0,
+        "pass_rate": 100.0,
+        "total_execution_time_sec": 773.32,
+        "avg_execution_time_sec": 386.66
+      },
+      "SOM_CancelOrder @fsa_storefront @order_cancel @fsa_som_oci @first_som_oci_core": {
+        "project_name": "FSA",
+        "platform_type": "desktop",
+        "tests_per_module": 2,
+        "passed": 1,
+        "failed": 1,
+        "skipped": 0,
+        "pending": 0,
+        "unknown": 0,
+        "pass_rate": 50.0,
+        "total_execution_time_sec": 745.91,
+        "avg_execution_time_sec": 372.96
+      },
+      "SFCC_ProductDetails @hsa_storefront @order_details @hsa_som_oci @som_oci_smoke @som_oci_sentinel": {
+        "project_name": "HSA",
+        "platform_type": "desktop",
+        "tests_per_module": 1,
+        "passed": 0,
+        "failed": 1,
+        "skipped": 0,
+        "pending": 0,
+        "unknown": 0,
+        "pass_rate": 0.0,
+        "total_execution_time_sec": 341.66,
+        "avg_execution_time_sec": 341.66
+      },
+      "SOM_ReshipOrder @hsa_storefront @reship_order @hsa_som_oci @third_som_oci_core": {
+        "project_name": "HSA",
+        "platform_type": "desktop",
+        "tests_per_module": 1,
+        "passed": 0,
+        "failed": 1,
+        "skipped": 0,
+        "pending": 0,
+        "unknown": 0,
+        "pass_rate": 0.0,
+        "total_execution_time_sec": 1222.47,
+        "avg_execution_time_sec": 1222.47
+      },
+      "CancelAnItem @fsa_storefront @cancel_an_item @fsa_som_oci @first_som_oci_core @no_oci_stage": {
+        "project_name": "FSA",
+        "platform_type": "desktop",
+        "tests_per_module": 1,
+        "passed": 0,
+        "failed": 1,
+        "skipped": 0,
+        "pending": 0,
+        "unknown": 0,
+        "pass_rate": 0.0,
+        "total_execution_time_sec": 273.97,
+        "avg_execution_time_sec": 273.97
+      },
+      "SOM_ReshipOrder @fsa_storefront @reship_order @fsa_som_oci @third_som_oci_core": {
+        "project_name": "FSA",
+        "platform_type": "desktop",
+        "tests_per_module": 1,
+        "passed": 0,
+        "failed": 1,
+        "skipped": 0,
+        "pending": 0,
+        "unknown": 0,
+        "pass_rate": 0.0,
+        "total_execution_time_sec": 265.25,
+        "avg_execution_time_sec": 265.25
+      },
+      "SOM_AllOrderStatuses @fsa_storefront @all_order_statuses @fsa_som_oci @som_oci_extend": {
+        "project_name": "FSA",
+        "platform_type": "desktop",
+        "tests_per_module": 1,
+        "passed": 1,
+        "failed": 0,
+        "skipped": 0,
+        "pending": 0,
+        "unknown": 0,
+        "pass_rate": 100.0,
+        "total_execution_time_sec": 1217.17,
+        "avg_execution_time_sec": 1217.17
+      },
+      "SOM_userType @fsa_storefront @user_type @fsa_som_oci": {
+        "project_name": "FSA",
+        "platform_type": "desktop",
+        "tests_per_module": 2,
+        "passed": 2,
+        "failed": 0,
+        "skipped": 0,
+        "pending": 0,
+        "unknown": 0,
+        "pass_rate": 100.0,
+        "total_execution_time_sec": 693.0,
+        "avg_execution_time_sec": 346.5
+      },
+      "NormalOrder @fsa_storefront @normal_order @fsa_som_oci @som_oci_smoke @som_oci_sentinel @no_oci_stage": {
+        "project_name": "FSA",
+        "platform_type": "desktop",
+        "tests_per_module": 1,
+        "passed": 0,
+        "failed": 1,
+        "skipped": 0,
+        "pending": 0,
+        "unknown": 0,
+        "pass_rate": 0.0,
+        "total_execution_time_sec": 136.93,
+        "avg_execution_time_sec": 136.93
+      },
+      "SOM_userType @hsa_storefront @user_type @hsa_som_oci": {
+        "project_name": "HSA",
+        "platform_type": "desktop",
+        "tests_per_module": 2,
+        "passed": 2,
+        "failed": 0,
+        "skipped": 0,
+        "pending": 0,
+        "unknown": 0,
+        "pass_rate": 100.0,
+        "total_execution_time_sec": 687.48,
+        "avg_execution_time_sec": 343.74
+      },
+      "SOM_CancelOrder @hsa_storefront @order_cancel @hsa_som_oci @first_som_oci_core": {
+        "project_name": "HSA",
+        "platform_type": "desktop",
+        "tests_per_module": 2,
+        "passed": 2,
+        "failed": 0,
+        "skipped": 0,
+        "pending": 0,
+        "unknown": 0,
+        "pass_rate": 100.0,
+        "total_execution_time_sec": 902.63,
+        "avg_execution_time_sec": 451.32
+      },
+      "SOM_BackOrderStatus @hsa_storefront @back_order @hsa_som_oci @third_som_oci_core": {
+        "project_name": "HSA",
+        "platform_type": "desktop",
+        "tests_per_module": 1,
+        "passed": 0,
+        "failed": 1,
+        "skipped": 0,
+        "pending": 0,
+        "unknown": 0,
+        "pass_rate": 0.0,
+        "total_execution_time_sec": 153.34,
+        "avg_execution_time_sec": 153.34
+      },
+      "BundleOrder @hsa_storefront @bundle_order @hsa_som_oci @som_oci_extend @no_oci_stage": {
+        "project_name": "HSA",
+        "platform_type": "desktop",
+        "tests_per_module": 1,
+        "passed": 0,
+        "failed": 1,
+        "skipped": 0,
+        "pending": 0,
+        "unknown": 0,
+        "pass_rate": 0.0,
+        "total_execution_time_sec": 178.57,
+        "avg_execution_time_sec": 178.57
+      },
+      "CancelAnItem @hsa_storefront @cancel_an_item @hsa_som_oci @first_som_oci_core @no_oci_stage": {
+        "project_name": "HSA",
+        "platform_type": "desktop",
+        "tests_per_module": 1,
+        "passed": 0,
+        "failed": 1,
+        "skipped": 0,
+        "pending": 0,
+        "unknown": 0,
+        "pass_rate": 0.0,
+        "total_execution_time_sec": 304.68,
+        "avg_execution_time_sec": 304.68
+      },
+      "SOM_CustomRefundOrder @hsa_storefront @order_refund @hsa_som_oci @second_som_oci_core": {
+        "project_name": "HSA",
+        "platform_type": "desktop",
+        "tests_per_module": 2,
+        "passed": 1,
+        "failed": 1,
+        "skipped": 0,
+        "pending": 0,
+        "unknown": 0,
+        "pass_rate": 50.0,
+        "total_execution_time_sec": 639.85,
+        "avg_execution_time_sec": 319.93
+      },
+      "SFCC_PaymentDetails @wdh_storefront @payment_details @wdh_som_oci @som_oci_smoke": {
+        "project_name": "WDH",
+        "platform_type": "desktop",
+        "tests_per_module": 1,
+        "passed": 0,
+        "failed": 1,
+        "skipped": 0,
+        "pending": 0,
+        "unknown": 0,
+        "pass_rate": 0.0,
+        "total_execution_time_sec": 142.1,
+        "avg_execution_time_sec": 142.1
+      },
+      "SFCC_ProductDetails @wdh_storefront @order_details @wdh_som_oci @som_oci_smoke": {
+        "project_name": "WDH",
+        "platform_type": "desktop",
+        "tests_per_module": 1,
+        "passed": 0,
+        "failed": 1,
+        "skipped": 0,
+        "pending": 0,
+        "unknown": 0,
+        "pass_rate": 0.0,
+        "total_execution_time_sec": 331.12,
+        "avg_execution_time_sec": 331.12
+      },
+      "SFCC_ProductDetails @fsa_storefront @order_details @fsa_som_oci @som_oci_smoke @som_oci_sentinel": {
+        "project_name": "FSA",
+        "platform_type": "desktop",
+        "tests_per_module": 1,
+        "passed": 0,
+        "failed": 1,
+        "skipped": 0,
+        "pending": 0,
+        "unknown": 0,
+        "pass_rate": 0.0,
+        "total_execution_time_sec": 342.4,
+        "avg_execution_time_sec": 342.4
+      },
+      "SOM_OrderAmount_SOM_ProductSku @hsa_storefront @order_details @hsa_som_oci @som_oci_smoke @som_oci_sentinel": {
+        "project_name": "HSA",
+        "platform_type": "desktop",
+        "tests_per_module": 2,
+        "passed": 2,
+        "failed": 0,
+        "skipped": 0,
+        "pending": 0,
+        "unknown": 0,
+        "pass_rate": 100.0,
+        "total_execution_time_sec": 712.98,
+        "avg_execution_time_sec": 356.49
+      },
+      "ReshipItem @hsa_storefront @reship_item @hsa_som_oci @third_som_oci_core @no_oci_stage": {
+        "project_name": "HSA",
+        "platform_type": "desktop",
+        "tests_per_module": 1,
+        "passed": 0,
+        "failed": 1,
+        "skipped": 0,
+        "pending": 0,
+        "unknown": 0,
+        "pass_rate": 0.0,
+        "total_execution_time_sec": 332.46,
+        "avg_execution_time_sec": 332.46
+      },
+      "SOM_BackOrderStatus @fsa_storefront @fsa_som_oci @third_som_oci_core": {
+        "project_name": "FSA",
+        "platform_type": "desktop",
+        "tests_per_module": 1,
+        "passed": 1,
+        "failed": 0,
+        "skipped": 0,
+        "pending": 0,
+        "unknown": 0,
+        "pass_rate": 100.0,
+        "total_execution_time_sec": 1136.3,
+        "avg_execution_time_sec": 1136.3
+      },
+      "SOM_OrderAmount_SOM_ProductSku @wdh_storefront @order_details @wdh_som_oci @som_oci_smoke": {
+        "project_name": "WDH",
+        "platform_type": "desktop",
+        "tests_per_module": 2,
+        "passed": 2,
+        "failed": 0,
+        "skipped": 0,
+        "pending": 0,
+        "unknown": 0,
+        "pass_rate": 100.0,
+        "total_execution_time_sec": 749.01,
+        "avg_execution_time_sec": 374.5
+      },
+      "SFCC_PaymentDetails @hsa_storefront @payment_details @hsa_som_oci @som_oci_smoke @som_oci_sentinel": {
+        "project_name": "HSA",
+        "platform_type": "desktop",
+        "tests_per_module": 1,
+        "passed": 0,
+        "failed": 1,
+        "skipped": 0,
+        "pending": 0,
+        "unknown": 0,
+        "pass_rate": 0.0,
+        "total_execution_time_sec": 155.74,
+        "avg_execution_time_sec": 155.74
+      },
+      "BundleOrder @fsa_storefront @bundle_order @fsa_som_oci @som_oci_extend @no_oci_stage": {
+        "project_name": "FSA",
+        "platform_type": "desktop",
+        "tests_per_module": 1,
+        "passed": 0,
+        "failed": 1,
+        "skipped": 0,
+        "pending": 0,
+        "unknown": 0,
+        "pass_rate": 0.0,
+        "total_execution_time_sec": 179.04,
+        "avg_execution_time_sec": 179.04
+      },
+      "ReshipItem @fsa_storefront @reship_item @fsa_som_oci @third_som_oci_core @no_oci_stage": {
+        "project_name": "FSA",
+        "platform_type": "desktop",
+        "tests_per_module": 1,
+        "passed": 0,
+        "failed": 1,
+        "skipped": 0,
+        "pending": 0,
+        "unknown": 0,
+        "pass_rate": 0.0,
+        "total_execution_time_sec": 272.5,
+        "avg_execution_time_sec": 272.5
+      },
+      "SOM_AddPayment @wdh_storefront @payment @wdh_som_oci": {
+        "project_name": "WDH",
+        "platform_type": "desktop",
+        "tests_per_module": 1,
+        "passed": 0,
+        "failed": 1,
+        "skipped": 0,
+        "pending": 0,
+        "unknown": 0,
+        "pass_rate": 0.0,
+        "total_execution_time_sec": 366.79,
+        "avg_execution_time_sec": 366.79
+      },
+      "SOM_AddPayment @hsa_storefront @payment @hsa_som_oci": {
+        "project_name": "HSA",
+        "platform_type": "desktop",
+        "tests_per_module": 2,
+        "passed": 0,
+        "failed": 2,
+        "skipped": 0,
+        "pending": 0,
+        "unknown": 0,
+        "pass_rate": 0.0,
+        "total_execution_time_sec": 1265.55,
+        "avg_execution_time_sec": 632.77
+      },
+      "CancelAllItems @fsa_storefront @cancel_all_items @fsa_som_oci @first_som_oci_core @no_oci_stage": {
+        "project_name": "FSA",
+        "platform_type": "desktop",
+        "tests_per_module": 1,
+        "passed": 0,
+        "failed": 1,
+        "skipped": 0,
+        "pending": 0,
+        "unknown": 0,
+        "pass_rate": 0.0,
+        "total_execution_time_sec": 273.28,
+        "avg_execution_time_sec": 273.28
+      },
+      "NormalOrder @hsa_storefront @normal_order @hsa_som_oci @som_oci_smoke @som_oci_sentinel @no_oci_stage": {
+        "project_name": "HSA",
+        "platform_type": "desktop",
+        "tests_per_module": 1,
+        "passed": 0,
+        "failed": 1,
+        "skipped": 0,
+        "pending": 0,
+        "unknown": 0,
+        "pass_rate": 0.0,
+        "total_execution_time_sec": 135.19,
+        "avg_execution_time_sec": 135.19
+      },
+      "SOM_AddPayment @fsa_storefront @payment @fsa_som_oci": {
+        "project_name": "FSA",
+        "platform_type": "desktop",
+        "tests_per_module": 2,
+        "passed": 0,
+        "failed": 2,
+        "skipped": 0,
+        "pending": 0,
+        "unknown": 0,
+        "pass_rate": 0.0,
+        "total_execution_time_sec": 1088.6,
+        "avg_execution_time_sec": 544.3
+      },
+      "SFCC_PaymentStatus @hsa_storefront @payment_status @hsa_som_oci @som_oci_smoke @som_oci_sentinel": {
+        "project_name": "HSA",
+        "platform_type": "desktop",
+        "tests_per_module": 1,
+        "passed": 0,
+        "failed": 1,
+        "skipped": 0,
+        "pending": 0,
+        "unknown": 0,
+        "pass_rate": 0.0,
+        "total_execution_time_sec": 331.98,
+        "avg_execution_time_sec": 331.98
+      },
+      "SOM_ReturnOrder @fsa_storefront @return_order @fsa_som_oci @second_som_oci_core": {
+        "project_name": "FSA",
+        "platform_type": "desktop",
+        "tests_per_module": 2,
+        "passed": 2,
+        "failed": 0,
+        "skipped": 0,
+        "pending": 0,
+        "unknown": 0,
+        "pass_rate": 100.0,
+        "total_execution_time_sec": 2095.71,
+        "avg_execution_time_sec": 1047.85
+      },
+      "SOM_ReturnOrder @hsa_storefront @return_order @hsa_som_oci @second_som_oci_core": {
+        "project_name": "HSA",
+        "platform_type": "desktop",
+        "tests_per_module": 2,
+        "passed": 2,
+        "failed": 0,
+        "skipped": 0,
+        "pending": 0,
+        "unknown": 0,
+        "pass_rate": 100.0,
+        "total_execution_time_sec": 2370.51,
+        "avg_execution_time_sec": 1185.25
+      },
+      "CancelAllItems @hsa_storefront @cancel_all_items @hsa_som_oci @first_som_oci_core @no_oci_stage": {
+        "project_name": "HSA",
+        "platform_type": "desktop",
+        "tests_per_module": 1,
+        "passed": 0,
+        "failed": 1,
+        "skipped": 0,
+        "pending": 0,
+        "unknown": 0,
+        "pass_rate": 0.0,
+        "total_execution_time_sec": 339.51,
+        "avg_execution_time_sec": 339.51
+      },
+      "SFCC_PaymentDetails @fsa_storefront @payment_details @fsa_som_oci @som_oci_smoke @som_oci_sentinel": {
+        "project_name": "FSA",
+        "platform_type": "desktop",
+        "tests_per_module": 1,
+        "passed": 0,
+        "failed": 1,
+        "skipped": 0,
+        "pending": 0,
+        "unknown": 0,
+        "pass_rate": 0.0,
+        "total_execution_time_sec": 344.42,
+        "avg_execution_time_sec": 344.42
+      },
+      "SOM_userType @wdh_storefront @user_type @wdh_som_oci": {
+        "project_name": "WDH",
+        "platform_type": "desktop",
+        "tests_per_module": 1,
+        "passed": 1,
+        "failed": 0,
+        "skipped": 0,
+        "pending": 0,
+        "unknown": 0,
+        "pass_rate": 100.0,
+        "total_execution_time_sec": 342.22,
+        "avg_execution_time_sec": 342.22
+      },
+      "NormalOrder @wdh_storefront @normal_order @wdh_som_oci @som_oci_smoke @no_oci_stage": {
+        "project_name": "WDH",
+        "platform_type": "desktop",
+        "tests_per_module": 1,
+        "passed": 0,
+        "failed": 1,
+        "skipped": 0,
+        "pending": 0,
+        "unknown": 0,
+        "pass_rate": 0.0,
+        "total_execution_time_sec": 93.97,
+        "avg_execution_time_sec": 93.97
+      },
+      "SOM_CustomRefundOrder @fsa_storefront @order_refund @fsa_som_oci @second_som_oci_core": {
+        "project_name": "FSA",
+        "platform_type": "desktop",
+        "tests_per_module": 2,
+        "passed": 2,
+        "failed": 0,
+        "skipped": 0,
+        "pending": 0,
+        "unknown": 0,
+        "pass_rate": 100.0,
+        "total_execution_time_sec": 836.82,
+        "avg_execution_time_sec": 418.41
+      },
+      "SOM_AllOrderStatuses @hsa_storefront @all_order_statuses @hsa_som_oci @som_oci_extend": {
+        "project_name": "HSA",
+        "platform_type": "desktop",
+        "tests_per_module": 1,
+        "passed": 1,
+        "failed": 0,
+        "skipped": 0,
+        "pending": 0,
+        "unknown": 0,
+        "pass_rate": 100.0,
+        "total_execution_time_sec": 1070.61,
+        "avg_execution_time_sec": 1070.61
+      },
+      "SFCC_PaymentStatus @fsa_storefront @payment_status @fsa_som_oci @som_oci_smoke @som_oci_sentinel": {
+        "project_name": "FSA",
+        "platform_type": "desktop",
+        "tests_per_module": 1,
+        "passed": 0,
+        "failed": 1,
+        "skipped": 0,
+        "pending": 0,
+        "unknown": 0,
+        "pass_rate": 0.0,
+        "total_execution_time_sec": 152.04,
+        "avg_execution_time_sec": 152.04
+      },
+      "SOM_OrderLevelDiscount @hsa_storefront @order_level_discount @hsa_som_oci @third_som_oci_core": {
+        "project_name": "HSA",
+        "platform_type": "desktop",
+        "tests_per_module": 1,
+        "passed": 0,
+        "failed": 1,
+        "skipped": 0,
+        "pending": 0,
+        "unknown": 0,
+        "pass_rate": 0.0,
+        "total_execution_time_sec": 464.66,
+        "avg_execution_time_sec": 464.66
+      },
+      "SFCC_PaymentStatus @wdh_storefront @payment_status @wdh_som_oci @som_oci_smoke": {
+        "project_name": "WDH",
+        "platform_type": "desktop",
+        "tests_per_module": 1,
+        "passed": 0,
+        "failed": 1,
+        "skipped": 0,
+        "pending": 0,
+        "unknown": 0,
+        "pass_rate": 0.0,
+        "total_execution_time_sec": 139.39,
+        "avg_execution_time_sec": 139.39
+      },
+      "SOM_OrderLevelDiscount @fsa_storefront @order_level_discount @fsa_som_oci @third_som_oci_core": {
+        "project_name": "FSA",
+        "platform_type": "desktop",
+        "tests_per_module": 1,
+        "passed": 1,
+        "failed": 0,
+        "skipped": 0,
+        "pending": 0,
+        "unknown": 0,
+        "pass_rate": 100.0,
+        "total_execution_time_sec": 440.67,
+        "avg_execution_time_sec": 440.67
+      }
+    },
+    "projects": {
+      "FSA:desktop": {
+        "project_name": "FSA",
+        "platform_type": "desktop",
+        "module_count": 18,
+        "total_tests": 24,
+        "passed": 12,
+        "failed": 12,
+        "skipped": 0,
+        "pass_rate": 50.0,
+        "total_execution_time_sec": 11267.33
+      },
+      "HSA:desktop": {
+        "project_name": "HSA",
+        "platform_type": "desktop",
+        "module_count": 18,
+        "total_tests": 24,
+        "passed": 10,
+        "failed": 14,
+        "skipped": 0,
+        "pass_rate": 41.67,
+        "total_execution_time_sec": 11609.87
+      },
+      "WDH:desktop": {
+        "project_name": "WDH",
+        "platform_type": "desktop",
+        "module_count": 7,
+        "total_tests": 8,
+        "passed": 3,
+        "failed": 5,
+        "skipped": 0,
+        "pass_rate": 37.5,
+        "total_execution_time_sec": 2164.6
+      }
+    }
+  },
+  "tables": [
+    "documents",
+    "sources",
+    "structured_test_module_metrics",
+    "structured_test_project_metrics",
+    "structured_test_results"
+  ]
+}

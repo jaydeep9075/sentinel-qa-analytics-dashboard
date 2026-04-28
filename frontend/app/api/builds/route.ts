@@ -4,8 +4,8 @@ import path from 'path';
 
 export async function GET() {
   try {
-    // ✅ Correct path: data directory is inside the Next.js app root
-    const dataDir = path.join(process.cwd(), 'data');
+    // ✅ Correct path: data directory is outside the Next.js app root
+    const dataDir = path.join(process.cwd(), '../data');
     console.log('Looking for data at:', dataDir);
 
     if (!fs.existsSync(dataDir)) {

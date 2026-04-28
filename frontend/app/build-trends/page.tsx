@@ -22,7 +22,7 @@ export default function BuildTrends() {
       setLoading(true);
       setError(null);
       try {
-        const res = await fetch("/builds.json");
+        const res = await fetch("/api/builds");
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         const data = await res.json();
         if (data.builds && Array.isArray(data.builds)) {
