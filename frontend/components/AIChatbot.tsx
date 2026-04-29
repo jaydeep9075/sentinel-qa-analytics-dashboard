@@ -4,6 +4,7 @@ import { useState, useRef, useEffect, useCallback } from "react";
 import { sendChatMessage } from "@/lib/api";
 import { useIngestion } from "@/lib/IngestionContext";
 import { useRB } from "@/lib/RBContext";
+import { getRoleSuggestions } from "@/lib/roleSuggestions";
 import ReactMarkdown from "react-markdown";
 import { Trash2, RefreshCw } from "lucide-react";
 
@@ -14,17 +15,6 @@ interface Message {
 }
 
 const STORAGE_KEY_PREFIX = "sentinel_chat_";
-
-const SUGGESTED_QUESTIONS = [
-  "How many tests failed?",
-  "What is the pass rate?",
-  "List all modules",
-  "Show failed tests with errors",
-  "Top 15 slowest tests",
-  "Is this build ready for release?",
-  "Show status breakdown",
-  "Number of tests per module",
-];
 
 export default function AIChatbot() {
   const { selectedIngestion } = useIngestion();
@@ -131,6 +121,9 @@ export default function AIChatbot() {
     return new Date(ts).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
   };
 
+  // Role-specific suggestions
+  const chatSuggestions = getRoleSuggestions(selectedRole || "").chat.slice(0, 8);
+
   return (
     <div className="flex flex-col h-full bg-transparent">
       {/* Header */}
@@ -227,7 +220,7 @@ export default function AIChatbot() {
       {/* Suggestions */}
       <div className="px-4 pt-3 pb-1">
         <div className="flex gap-1.5 overflow-x-auto pb-2 no-scrollbar">
-          {SUGGESTED_QUESTIONS.map((q, i) => (
+          {chatSuggestions.map((q, i) => (
             <button
               key={i}
               onClick={() => handleSend(undefined, q)}

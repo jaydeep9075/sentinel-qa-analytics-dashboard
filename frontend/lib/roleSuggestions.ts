@@ -5,6 +5,9 @@ export type Suggestions = {
   chart: string[];
 };
 
+// ------------------------------------------------------------
+// Default suggestions – safe and always work
+// ------------------------------------------------------------
 const defaultSuggestions: Suggestions = {
   chat: [
     "How many tests failed?",
@@ -32,35 +35,48 @@ const defaultSuggestions: Suggestions = {
   ],
 };
 
+// ------------------------------------------------------------
+// Role‑specific suggestions – all mapped to real schema values
+// ------------------------------------------------------------
 const roleSuggestionsMap: Record<string, Suggestions> = {
   "QA Engineer": {
     chat: [
       "How many tests failed?",
       "List all failed tests with errors",
       "Show slowest 10 tests by platform",
-      "What is the pass rate?",
+      "What is the overall pass rate?",
       "Show test status breakdown",
       "How many tests passed on mobile?",
-      "List failures in the Eligibility module",
-      "Show failed tests in the Checkout module on desktop",
+      "List failures in the Eligibility Tests module",
+      "Show failed tests in the Checkout Tests module on desktop",
       "Which tests took more than 30 seconds?",
       "What are the test counts per module across platforms?",
       "Tests that failed on mobile but passed on desktop",
       "Show all failures in project FSA",
+      "List failed tests in the Cart Tests module",
+      "Show failures in the Expense Dashboard Tests module",
     ],
     chart: [
-      "Bar chart of test status distribution",
-      "Pie chart of passed vs failed",
-      "Bar chart of failures by module, grouped by platform",
-      "Horizontal bar of slowest 10 tests with platform coloring",
-      "Bar chart of pass rate by module and platform",
-      "Heatmap of failures by module and project",
-      "Duration histogram split by platform",
-      "Bar chart of test counts per module (stacked by platform)",
-      "Pie chart of status breakdown for mobile only",
-      "Bar chart of failed count by module (top offenders) with platform filter",
+      // Bar Charts (Technical Aspects)
+      "Bar chart of failed test count by module (Top Offenders)",
+      "Grouped bar chart: pass rate by platform (Mobile vs Desktop)",
+      "Bar chart of test execution status breakdown per project",
+      "Bar chart of total tests per module stacked by status",
+      // Line Charts (Trends & Stability)
+      "Line chart showing pass rate trend across all modules",
+      "Line chart of test duration distribution across executed tests",
+      // Heatmaps (Density & Risk)
+      "Heatmap of failures by module and platform type",
+      "Heatmap matrix showing failure density by project and module",
+      "Heatmap of test durations by browser and module",
+      // Simplified Charts (High-level Quality)
+      "Pie chart distribution of passed vs failed tests",
+      "Donut chart of full execution status breakdown",
+      "Horizontal bar chart of the top 15 slowest tests",
+      "Pie chart of failure distribution by project",
     ],
   },
+
   CTO: {
     chat: [
       "What is the overall pass rate?",
@@ -76,73 +92,27 @@ const roleSuggestionsMap: Record<string, Suggestions> = {
       "List modules with test counts and pass rate",
     ],
     chart: [
-      "Pie chart of passed vs failed",
-      "Bar chart of pass rate by module (worst to best)",
-      "Bar chart of test status distribution",
-      "Grouped bar: pass rate by project and platform",
-      "Heatmap of failures by module and priority",
-      "Bar chart: total tests per module with pass rate overlay",
-      "Horizontal bar of modules by failure count",
-      "Pie chart of status breakdown for desktop only",
-      "Bar chart of failed count by project",
-      "Line chart of pass rate over time (if date column available)",
+      // Bar Charts (Strategic Metrics)
+      "Bar chart comparing release readiness pass rate by project",
+      "Bar chart of project-level health and test density",
+      "Grouped bar chart: overall pass rate by project and platform",
+      // Line Charts (Quality Trends)
+      "Line chart trend of overall stability across all projects",
+      "Line chart of pass rate performance across modules",
+      // Heatmaps (Risk Management)
+      "Heatmap of strategic risk areas by project and failure count",
+      "Heatmap showing quality coverage by module and project",
+      // Simplified Charts (Executive Summary)
+      "Donut chart of overall project health and release status",
+      "Pie chart showing total test execution status distribution",
+      "Horizontal bar of modules ranked by failure impact",
     ],
-  },
-  Developer: {
-    chat: [
-      "How many tests failed?",
-      "List failed tests with errors in the API module",
-      "Show slowest 10 tests with browser info",
-      "What's the pass rate on Chrome desktop?",
-      "Show failures in the Login module on mobile",
-      "List tests that took more than 5 seconds",
-      "What are the failed tests in the Database module?",
-      "List all tests in the Checkout module",
-      "Which test is the slowest on iPhone?",
-      "How many tests passed in the Eligibility module?",
-      "Show me tests that failed only on mobile",
-    ],
-    chart: [
-      "Bar chart of failures by module, colored by project",
-      "Horizontal bar of slowest 10 tests with duration and platform",
-      "Duration histogram by platform",
-      "Bar chart of pass rate by module (filter by project HSA)",
-      "Pie chart of passed vs failed for mobile tests",
-      "Heatmap of failures by module and browser type",
-      "Bar chart of test counts per module for desktop only",
-      "Bar chart of failed tests per module (top offenders) with error details",
-      "Bar chart of slowest tests grouped by module",
-      "Scatter plot: duration vs status",
-    ],
-  },
-  Manager: {
-    chat: [
-      "What is the overall pass rate?",
-      "Is this build ready for release?",
-      "How many tests were executed?",
-      "How many failures across projects?",
-      "Show test status breakdown by platform",
-      "List modules and their test counts per project",
-      "Which modules have the most failures on desktop?",
-      "What's the pass rate of the most critical module on mobile?",
-      "How many tests passed in project WDH?",
-      "Show overall health summary with platform comparison",
-    ],
-    chart: [
-      "Pie chart of passed vs failed",
-      "Bar chart of pass rate by module, grouped by project",
-      "Bar chart of test status distribution with platform split",
-      "Bar chart of failures by module (top 5) for each platform",
-      "Grouped bar comparing passed vs failed counts by project",
-      "Horizontal bar of modules with highest failure count on mobile",
-      "Pie chart of status breakdown for desktop vs mobile side by side",
-      "Bar chart of test counts per module (stacked by project)",
-      "Heatmap of module vs failure count across projects",
-      "Bar chart showing failed count by module and platform",
-    ],
-  },
+  }
 };
 
+// ------------------------------------------------------------
+// Helper to get suggestions for a role (case‑insensitive)
+// ------------------------------------------------------------
 export function getRoleSuggestions(roleId: string): Suggestions {
   const clean = roleId?.toLowerCase().replace(/[^a-z]/g, "") || "";
   for (const [key, val] of Object.entries(roleSuggestionsMap)) {

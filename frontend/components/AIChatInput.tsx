@@ -4,6 +4,7 @@ import { useState } from "react";
 import { generateChart } from "@/lib/api";
 import { useIngestion } from "@/lib/IngestionContext";
 import { useRB } from "@/lib/RBContext";
+import { getRoleSuggestions } from "@/lib/roleSuggestions";
 
 interface AIChatInputProps {
   onChartGenerated: () => void;
@@ -12,23 +13,12 @@ interface AIChatInputProps {
 export default function AIChatInput({ onChartGenerated }: AIChatInputProps) {
   const { selectedIngestion } = useIngestion();
   const { selectedRole } = useRB();
-  const roleKey = (selectedRole || "qa").toLowerCase();
   const [prompt, setPrompt] = useState("");
   const [loading, setLoading] = useState(false);
   const [status, setStatus] = useState<string | null>(null);
 
-  const shortcuts =
-    roleKey === "cto"
-      ? [
-          "Release health summary pie chart (passed vs failed)",
-          "Line chart of failure trend over time",
-          "Bar chart of failures by module",
-        ]
-      : [
-          "Bar chart of test status distribution",
-          "Pie chart of passed vs failed",
-          "Slowest 5 tests",
-        ];
+  // Get dynamic shortcuts from role suggestions
+  const shortcuts = getRoleSuggestions(selectedRole || "").chart.slice(0, 4);
 
   const handleSubmit = async (e?: React.FormEvent, manualPrompt?: string) => {
     e?.preventDefault();
