@@ -6,7 +6,14 @@ import { getChartHistory, deleteChart } from "@/lib/api";
 import { getSessionId } from "@/lib/session";
 import { useIngestion } from "@/lib/IngestionContext";
 import AIGeneratedChart from "./AIGeneratedChart";
-import { LayoutGrid, List, Trash2, GripVertical, Sparkles, Loader2 } from "lucide-react";
+import {
+  LayoutGrid,
+  List,
+  Trash2,
+  GripVertical,
+  Sparkles,
+  Loader2,
+} from "lucide-react";
 import {
   DndContext,
   closestCenter,
@@ -132,7 +139,9 @@ function SortableItem({
         {chart.config ? (
           <AIGeneratedChart config={chart.config} />
         ) : (
-          <div className="text-red-400/60 p-4 text-center text-sm">Invalid chart data</div>
+          <div className="text-red-400/60 p-4 text-center text-sm">
+            Invalid chart data
+          </div>
         )}
       </div>
     </div>
@@ -141,91 +150,194 @@ function SortableItem({
 
 function ChartSkeleton({ prompt }: { prompt: string }) {
   return (
-    <div className="group bg-[#0a0a0a] rounded-2xl border border-white/[0.06] overflow-hidden relative shadow-[0_8px_32px_rgba(0,0,0,0.4)]">
+    <div className="group bg-[var(--card-bg)] rounded-2xl border border-[var(--skeleton-border)] overflow-hidden relative shadow-[0_8px_32px_rgba(0,0,0,0.12)] dark:shadow-[0_8px_32px_rgba(0,0,0,0.4)] transition-colors duration-300">
       {/* card header */}
-      <div className="px-5 py-3.5 border-b border-white/[0.05] bg-gradient-to-b from-white/[0.02] to-transparent flex justify-between items-start">
+      <div className="px-5 py-3.5 border-b border-[var(--skeleton-border)] bg-gradient-to-b from-[var(--skeleton-highlight)]/30 to-transparent flex justify-between items-start">
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2 mb-1.5">
-            <div className="w-6 h-6 rounded-lg bg-cyan-500/10 animate-pulse border border-cyan-500/20" />
-            <div className="w-16 h-5 rounded-full bg-cyan-500/10 border border-cyan-500/20 animate-pulse" />
+            <div
+              className="w-6 h-6 rounded-lg skeleton-shimmer skeleton-shimmer-delay-1"
+              style={{ background: "var(--skeleton-bg)" }}
+            />
+            <div
+              className="w-16 h-5 rounded-full skeleton-shimmer skeleton-shimmer-delay-2"
+              style={{ background: "var(--skeleton-bg)" }}
+            />
           </div>
           {prompt ? (
-            <p className="text-xs text-white/40 italic truncate pl-8">
+            <p className="text-xs text-[var(--skeleton-text)] italic truncate pl-8">
               &ldquo;{prompt}&rdquo;
             </p>
           ) : (
-            <div className="h-3.5 w-48 bg-white/[0.03] rounded ml-8 mt-1 animate-pulse" />
+            <div
+              className="h-3.5 w-48 rounded ml-8 mt-1 skeleton-shimmer skeleton-shimmer-delay-1"
+              style={{ background: "var(--skeleton-bg)" }}
+            />
           )}
         </div>
       </div>
-      
+
       {/* chart body skeleton */}
       <div className="p-6 h-[400px] flex flex-col relative">
         {/* Y-axis labels and grid lines */}
         <div className="absolute inset-0 px-6 py-6 pb-14 flex flex-col justify-between z-0">
           {[1, 2, 3, 4, 5].map((i) => (
             <div key={i} className="flex items-center w-full gap-3">
-              <div className="w-6 h-2 bg-white/[0.03] rounded animate-pulse" />
-              <div className="flex-1 border-b border-white/[0.03] border-dashed" />
+              <div
+                className={`w-6 h-2 rounded skeleton-shimmer skeleton-shimmer-delay-${i}`}
+                style={{ background: "var(--skeleton-bg)" }}
+              />
+              <div
+                className="flex-1 border-b border-dashed"
+                style={{ borderColor: "var(--skeleton-grid)" }}
+              />
             </div>
           ))}
         </div>
 
         {/* X & Y Axis lines */}
-        <div className="absolute left-[3.25rem] top-6 bottom-14 border-l border-white/[0.08] z-0" />
-        <div className="absolute left-[3.25rem] right-6 bottom-14 border-b border-white/[0.08] z-0" />
+        <div
+          className="absolute left-[3.25rem] top-6 bottom-14 border-l z-0"
+          style={{ borderColor: "var(--skeleton-axis)" }}
+        />
+        <div
+          className="absolute left-[3.25rem] right-6 bottom-14 border-b z-0"
+          style={{ borderColor: "var(--skeleton-axis)" }}
+        />
 
         {/* Bars Container */}
         <div className="absolute left-[3.25rem] right-6 bottom-14 top-6 flex items-end justify-around px-4 z-10 gap-2">
           {/* Group 1 */}
           <div className="flex items-end gap-1 h-full w-full justify-center">
-            <div className="w-full max-w-[20px] bg-gradient-to-t from-cyan-600/40 to-cyan-400/80 rounded-t-sm h-[40%] animate-pulse shadow-[0_0_15px_rgba(34,211,238,0.2)]" style={{ animationDelay: "100ms" }} />
-            <div className="w-full max-w-[20px] bg-gradient-to-t from-purple-600/40 to-purple-400/80 rounded-t-sm h-[60%] animate-pulse shadow-[0_0_15px_rgba(192,132,252,0.2)]" style={{ animationDelay: "150ms" }} />
+            <div
+              className="w-full max-w-[20px] rounded-t-sm h-[40%] skeleton-shimmer skeleton-shimmer-delay-1 shadow-[0_0_15px_rgba(34,211,238,0.15)] dark:shadow-[0_0_15px_rgba(34,211,238,0.2)]"
+              style={{
+                background:
+                  "linear-gradient(to top, var(--skeleton-bar-cyan-start), var(--skeleton-bar-cyan-end))",
+              }}
+            />
+            <div
+              className="w-full max-w-[20px] rounded-t-sm h-[60%] skeleton-shimmer skeleton-shimmer-delay-2 shadow-[0_0_15px_rgba(192,132,252,0.15)] dark:shadow-[0_0_15px_rgba(192,132,252,0.2)]"
+              style={{
+                background:
+                  "linear-gradient(to top, var(--skeleton-bar-purple-start), var(--skeleton-bar-purple-end))",
+              }}
+            />
           </div>
           {/* Group 2 */}
           <div className="flex items-end gap-1 h-full w-full justify-center">
-            <div className="w-full max-w-[20px] bg-gradient-to-t from-cyan-600/40 to-cyan-400/80 rounded-t-sm h-[70%] animate-pulse shadow-[0_0_15px_rgba(34,211,238,0.2)]" style={{ animationDelay: "200ms" }} />
-            <div className="w-full max-w-[20px] bg-gradient-to-t from-purple-600/40 to-purple-400/80 rounded-t-sm h-[30%] animate-pulse shadow-[0_0_15px_rgba(192,132,252,0.2)]" style={{ animationDelay: "250ms" }} />
+            <div
+              className="w-full max-w-[20px] rounded-t-sm h-[70%] skeleton-shimmer skeleton-shimmer-delay-3 shadow-[0_0_15px_rgba(34,211,238,0.15)] dark:shadow-[0_0_15px_rgba(34,211,238,0.2)]"
+              style={{
+                background:
+                  "linear-gradient(to top, var(--skeleton-bar-cyan-start), var(--skeleton-bar-cyan-end))",
+              }}
+            />
+            <div
+              className="w-full max-w-[20px] rounded-t-sm h-[30%] skeleton-shimmer skeleton-shimmer-delay-4 shadow-[0_0_15px_rgba(192,132,252,0.15)] dark:shadow-[0_0_15px_rgba(192,132,252,0.2)]"
+              style={{
+                background:
+                  "linear-gradient(to top, var(--skeleton-bar-purple-start), var(--skeleton-bar-purple-end))",
+              }}
+            />
           </div>
           {/* Group 3 */}
           <div className="flex items-end gap-1 h-full w-full justify-center">
-            <div className="w-full max-w-[20px] bg-gradient-to-t from-cyan-600/40 to-cyan-400/80 rounded-t-sm h-[50%] animate-pulse shadow-[0_0_15px_rgba(34,211,238,0.2)]" style={{ animationDelay: "300ms" }} />
-            <div className="w-full max-w-[20px] bg-gradient-to-t from-purple-600/40 to-purple-400/80 rounded-t-sm h-[90%] animate-pulse shadow-[0_0_15px_rgba(192,132,252,0.2)]" style={{ animationDelay: "350ms" }} />
+            <div
+              className="w-full max-w-[20px] rounded-t-sm h-[50%] skeleton-shimmer skeleton-shimmer-delay-5 shadow-[0_0_15px_rgba(34,211,238,0.15)] dark:shadow-[0_0_15px_rgba(34,211,238,0.2)]"
+              style={{
+                background:
+                  "linear-gradient(to top, var(--skeleton-bar-cyan-start), var(--skeleton-bar-cyan-end))",
+              }}
+            />
+            <div
+              className="w-full max-w-[20px] rounded-t-sm h-[90%] skeleton-shimmer skeleton-shimmer-delay-6 shadow-[0_0_15px_rgba(192,132,252,0.15)] dark:shadow-[0_0_15px_rgba(192,132,252,0.2)]"
+              style={{
+                background:
+                  "linear-gradient(to top, var(--skeleton-bar-purple-start), var(--skeleton-bar-purple-end))",
+              }}
+            />
           </div>
           {/* Group 4 */}
           <div className="flex items-end gap-1 h-full w-full justify-center">
-            <div className="w-full max-w-[20px] bg-gradient-to-t from-cyan-600/40 to-cyan-400/80 rounded-t-sm h-[80%] animate-pulse shadow-[0_0_15px_rgba(34,211,238,0.2)]" style={{ animationDelay: "400ms" }} />
-            <div className="w-full max-w-[20px] bg-gradient-to-t from-purple-600/40 to-purple-400/80 rounded-t-sm h-[40%] animate-pulse shadow-[0_0_15px_rgba(192,132,252,0.2)]" style={{ animationDelay: "450ms" }} />
+            <div
+              className="w-full max-w-[20px] rounded-t-sm h-[80%] skeleton-shimmer skeleton-shimmer-delay-2 shadow-[0_0_15px_rgba(34,211,238,0.15)] dark:shadow-[0_0_15px_rgba(34,211,238,0.2)]"
+              style={{
+                background:
+                  "linear-gradient(to top, var(--skeleton-bar-cyan-start), var(--skeleton-bar-cyan-end))",
+              }}
+            />
+            <div
+              className="w-full max-w-[20px] rounded-t-sm h-[40%] skeleton-shimmer skeleton-shimmer-delay-3 shadow-[0_0_15px_rgba(192,132,252,0.15)] dark:shadow-[0_0_15px_rgba(192,132,252,0.2)]"
+              style={{
+                background:
+                  "linear-gradient(to top, var(--skeleton-bar-purple-start), var(--skeleton-bar-purple-end))",
+              }}
+            />
           </div>
           {/* Group 5 */}
           <div className="flex items-end gap-1 h-full w-full justify-center">
-            <div className="w-full max-w-[20px] bg-gradient-to-t from-cyan-600/40 to-cyan-400/80 rounded-t-sm h-[30%] animate-pulse shadow-[0_0_15px_rgba(34,211,238,0.2)]" style={{ animationDelay: "500ms" }} />
-            <div className="w-full max-w-[20px] bg-gradient-to-t from-purple-600/40 to-purple-400/80 rounded-t-sm h-[65%] animate-pulse shadow-[0_0_15px_rgba(192,132,252,0.2)]" style={{ animationDelay: "550ms" }} />
+            <div
+              className="w-full max-w-[20px] rounded-t-sm h-[30%] skeleton-shimmer skeleton-shimmer-delay-4 shadow-[0_0_15px_rgba(34,211,238,0.15)] dark:shadow-[0_0_15px_rgba(34,211,238,0.2)]"
+              style={{
+                background:
+                  "linear-gradient(to top, var(--skeleton-bar-cyan-start), var(--skeleton-bar-cyan-end))",
+              }}
+            />
+            <div
+              className="w-full max-w-[20px] rounded-t-sm h-[65%] skeleton-shimmer skeleton-shimmer-delay-5 shadow-[0_0_15px_rgba(192,132,252,0.15)] dark:shadow-[0_0_15px_rgba(192,132,252,0.2)]"
+              style={{
+                background:
+                  "linear-gradient(to top, var(--skeleton-bar-purple-start), var(--skeleton-bar-purple-end))",
+              }}
+            />
           </div>
         </div>
 
         {/* Legend */}
         <div className="absolute bottom-4 left-0 right-0 flex justify-center gap-6 z-10">
           <div className="flex items-center gap-2">
-            <div className="w-3 h-3 rounded-sm bg-cyan-400/80 animate-pulse shadow-[0_0_8px_rgba(34,211,238,0.5)]" />
-            <div className="w-12 h-2 rounded bg-white/[0.05] animate-pulse" />
+            <div
+              className="w-3 h-3 rounded-sm animate-pulse shadow-[0_0_8px_rgba(34,211,238,0.4)] dark:shadow-[0_0_8px_rgba(34,211,238,0.5)]"
+              style={{ background: "var(--skeleton-bar-cyan-end)" }}
+            />
+            <div
+              className="w-12 h-2 rounded skeleton-shimmer skeleton-shimmer-delay-1"
+              style={{ background: "var(--skeleton-bg)" }}
+            />
           </div>
           <div className="flex items-center gap-2">
-            <div className="w-3 h-3 rounded-sm bg-purple-400/80 animate-pulse shadow-[0_0_8px_rgba(192,132,252,0.5)]" />
-            <div className="w-12 h-2 rounded bg-white/[0.05] animate-pulse" />
+            <div
+              className="w-3 h-3 rounded-sm animate-pulse shadow-[0_0_8px_rgba(192,132,252,0.4)] dark:shadow-[0_0_8px_rgba(192,132,252,0.5)]"
+              style={{ background: "var(--skeleton-bar-purple-end)" }}
+            />
+            <div
+              className="w-12 h-2 rounded skeleton-shimmer skeleton-shimmer-delay-2"
+              style={{ background: "var(--skeleton-bg)" }}
+            />
           </div>
         </div>
       </div>
-      
+
       {/* Status Overlay */}
-      <div className="absolute inset-0 flex flex-col items-center justify-center z-20 bg-black/40 backdrop-blur-[2px]">
-        <div className="bg-[#0a0a0a]/90 border border-cyan-500/30 px-6 py-4 rounded-2xl flex flex-col items-center gap-3 shadow-[0_0_30px_rgba(34,211,238,0.15)] relative overflow-hidden">
-          <div className="absolute inset-0 bg-gradient-to-r from-cyan-500/0 via-purple-500/10 to-cyan-500/0 animate-pulse" />
+      <div className="absolute inset-0 flex flex-col items-center justify-center z-20 bg-black/20 dark:bg-black/40 backdrop-blur-[2px]">
+        <div className="bg-[var(--card-bg)]/95 border border-cyan-500/30 px-6 py-4 rounded-2xl flex flex-col items-center gap-3 status-glow relative overflow-hidden">
+          <div
+            className="absolute inset-0 skeleton-shimmer opacity-50"
+            style={{
+              background:
+                "linear-gradient(90deg, transparent, rgba(34,211,238,0.1), transparent)",
+            }}
+          />
           <div className="flex items-center gap-3 relative z-10">
-            <Loader2 className="w-5 h-5 text-cyan-400 animate-spin" />
-            <span className="text-xs font-mono text-cyan-400 tracking-widest font-bold">CRAFTING CHART...</span>
+            <Loader2 className="w-5 h-5 text-cyan-500 dark:text-cyan-400 animate-spin" />
+            <span className="text-xs font-mono text-cyan-600 dark:text-cyan-400 tracking-widest font-bold">
+              CRAFTING CHART...
+            </span>
           </div>
-          <p className="text-[10px] text-white/40 font-mono relative z-10 uppercase">Analyzing Data</p>
+          <p className="text-[10px] text-slate-500 dark:text-white/40 font-mono relative z-10 uppercase">
+            Analyzing Data
+          </p>
         </div>
       </div>
     </div>
@@ -257,16 +369,16 @@ export default function ChartGallery() {
     if (charts) {
       setLocalOrder((prev) => {
         if (prev.length === 0) return charts;
-        
+
         const existingIds = new Set(prev.map((c) => c.id));
         const chartMap = new Map(charts.map((c) => [c.id, c]));
-        
+
         const orderedExisting = prev
           .filter((c) => chartMap.has(c.id))
           .map((c) => chartMap.get(c.id)!);
-          
+
         const newItems = charts.filter((c) => !existingIds.has(c.id));
-        
+
         return [...newItems, ...orderedExisting];
       });
     }
@@ -309,7 +421,9 @@ export default function ChartGallery() {
 
   if (isLoading)
     return (
-      <div className="text-center py-16 text-slate-500 dark:text-white/25 text-sm">Loading gallery...</div>
+      <div className="text-center py-16 text-slate-500 dark:text-white/25 text-sm">
+        Loading gallery...
+      </div>
     );
 
   if (error) {
@@ -331,7 +445,9 @@ export default function ChartGallery() {
     return (
       <div className="text-center py-20">
         <Sparkles className="w-10 h-10 mx-auto mb-4 text-cyan-500/20" />
-        <p className="text-slate-500 dark:text-white/25 text-sm">No charts yet. Generate one using the chart generator!</p>
+        <p className="text-slate-500 dark:text-white/25 text-sm">
+          No charts yet. Generate one using the chart generator!
+        </p>
       </div>
     );
   }
