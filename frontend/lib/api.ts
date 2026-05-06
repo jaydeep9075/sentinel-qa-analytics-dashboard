@@ -103,3 +103,16 @@ export async function deleteChart(chartId: string, ingestionId: string) {
   });
   return res.json();
 }
+
+export async function ingestFromConfigPath(sourcePath: string) {
+  const res = await fetch(`${API_BASE}/ingest/config2`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...getAuthHeaders() },
+    body: JSON.stringify({ source_path: sourcePath }),
+  });
+  const data = await res.json();
+  if (!res.ok) {
+    throw new Error(data?.detail || data?.error || "Failed to ingest build");
+  }
+  return data;
+}

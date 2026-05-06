@@ -1,5 +1,6 @@
 import logging
 import uuid
+import json
 import pandas as pd
 from fastapi import FastAPI, HTTPException, Header, Depends
 from fastapi.middleware.cors import CORSMiddleware
@@ -7,8 +8,10 @@ from contextlib import asynccontextmanager
 from pydantic import BaseModel
 import uvicorn
 from typing import Optional
+from datetime import datetime, timezone
 from . import config, state, data_loader, handlers, memory, llm_client
 from .auth import authenticate_user, create_access_token, get_current_user
+from universal_ingester.ingester import UniversalIngester
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -20,6 +23,9 @@ class ChatRequest(BaseModel):
 class ChartRequest(BaseModel):
     message: str
     session_id: Optional[str] = None
+
+class IngestRequest(BaseModel):
+    source_path: str
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -49,6 +55,49 @@ async def login(username: str, password: str):
         raise HTTPException(status_code=401, detail="Invalid credentials")
     access_token = create_access_token(data={"sub": user["username"], "role": user["role"]})
     return {"access_token": access_token, "token_type": "bearer", "role": user["role"]}
+
+@app.post("/ingest/config2")
+async def ingest_from_config2(
+    request: IngestRequest,
+    current_user: dict = Depends(get_current_user)
+):
+    source_path = str(request.source_path or "").strip()
+    if not source_path:
+        raise HTTPException(status_code=400, detail="source_path is required")
+
+    config2_path = config.BASE_DIR / "config2.json"
+    if not config2_path.exists():
+        raise HTTPException(status_code=404, detail="config2.json not found")
+
+    try:
+        with open(config2_path, "r", encoding="utf-8") as f:
+            cfg = json.load(f)
+    except Exception as e:
+        logger.exception(f"Failed to read config2.json: {e}")
+        raise HTTPException(status_code=500, detail="Failed to read config2.json")
+
+    if not isinstance(cfg.get("sources"), list) or len(cfg["sources"]) == 0:
+        raise HTTPException(status_code=400, detail="Invalid config2.json: sources missing")
+
+    cfg["sources"][0]["path"] = source_path
+    with open(config2_path, "w", encoding="utf-8") as f:
+        json.dump(cfg, f, indent=4, ensure_ascii=False)
+
+    build_id = f"ingestion_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}"
+
+    try:
+        ingester = UniversalIngester(data_base_path=str(config.DATA_BASE_PATH))
+        ingester.run_ingestion_from_config(str(config2_path), build_id=build_id)
+    except Exception as e:
+        logger.exception(f"Ingestion failed: {e}")
+        raise HTTPException(status_code=500, detail=f"Ingestion failed: {str(e)}")
+
+    return {
+        "success": True,
+        "build_id": build_id,
+        "source_path": source_path,
+        "triggered_by": current_user.get("username"),
+    }
 
 # -------------------- PROTECTED ENDPOINTS (all require valid token) --------------------
 @app.post("/chat")

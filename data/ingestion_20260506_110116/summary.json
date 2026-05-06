@@ -1,0 +1,429 @@
+{
+  "build_id": "ingestion_20260506_110116",
+  "ingested_at": "2026-05-06T11:01:52.772515+00:00",
+  "total_records_ingested": 708,
+  "metrics": {
+    "total_tests": 610,
+    "executed_tests": 608,
+    "skipped_tests": 2,
+    "passed": 549,
+    "failed": 59,
+    "pass_rate": 90.3,
+    "module_count": 21,
+    "avg_duration_sec": 246.14,
+    "total_duration_sec": 150147.68,
+    "most_common_error": "Error: Action failed after 3 attempts - Error: TimeoutError: locator.click: Timeout 30000ms exceeded.\nCall log:\n  - waiting for getByRole('button', { name: 'Sign In' })\n    - locator resolved to <butt",
+    "slowest_tests": [
+      {
+        "name": "Platforms/SFRA/Perks Feature/HSA/EarnPointsBySpend.spec.ts#EarnPointsBySpend @hsa_storefront @hsa-earnPointsBySpend @hsa-flaky-second-group TS_40-EarnPointsBySpend @earnPointsBySpend",
+        "duration_sec": 1187.63
+      },
+      {
+        "name": "Platforms/SFRA/Perks Feature/FSA/EarnPointsBySpend.spec.ts#EarnPointsBySpend @fsa_storefront @fsa-earnPointsBySpend @fsa-flaky-group TS_40: EarnPointsBySpend @earnPointsBySpend",
+        "duration_sec": 1171.55
+      },
+      {
+        "name": "Platforms/SFRA/Checkout/WDH/RestartedRegisteredCheckout.spec.ts#RestartedCheckoutTests @wdh_storefront @sixth_wdh-group TS_13-RestartedRegisteredCheckoutTest @restarted_registered_checkout ",
+        "duration_sec": 883.84
+      },
+      {
+        "name": "Platforms/SFRA/Checkout/FSA/RestartedRegisteredCheckout.spec.ts#RestartedCheckoutTests @fsa_storefront @sixth_fsa-group TS_13-RestartedRegisteredCheckout @restarted_registered_checkout ",
+        "duration_sec": 830.19
+      },
+      {
+        "name": "Platforms/SFRA/Perks Feature/FSA/EarnPointsBySpend.spec.ts#EarnPointsBySpend @fsa_storefront @fsa-earnPointsBySpend @fsa-flaky-group TS_40: EarnPointsBySpend @earnPointsBySpend",
+        "duration_sec": 813.69
+      },
+      {
+        "name": "Platforms/SFRA/Checkout/HSA/RestartedRegisteredCheckout.spec.ts#RestartedCheckoutTests @hsa_storefront @sixth_hsa-group TS_13-RestartedRegisteredCheckout @restarted_registered_checkout ",
+        "duration_sec": 811.08
+      },
+      {
+        "name": "Platforms/SFRA/Perks Feature/HSA/EarnPointsBySpend.spec.ts#EarnPointsBySpend @hsa_storefront @hsa-earnPointsBySpend @hsa-flaky-second-group TS_40-EarnPointsBySpend @earnPointsBySpend",
+        "duration_sec": 767.7
+      },
+      {
+        "name": "Platforms/SFRA/Checkout/HSA/SplitPayWithPerksStoreCreditCoupon.spec.ts#SplitPayWithPerksStoreCreditCoupon @hsa_storefront @hsa-splitPayWithPerksStoreCreditCoupon @hsa-flaky-second-group TS_93-SplitPayWithPerksStoreCreditCoupon @split_pay_with_perks_store_credit_coupon",
+        "duration_sec": 701.14
+      },
+      {
+        "name": "Platforms/SFRA/Favorites Feature/WDH/AddToFavorites.spec.ts#AddToFavorites @wdh_storefront @addToFavorites @sixth_wdh-group TS_54-UnfavoriteProductFromPLPAndPDP @unfavorite_product_from_plp_pdp",
+        "duration_sec": 693.13
+      },
+      {
+        "name": "Platforms/SFRA/Order History_Status/WDH/OrderStatus.spec.ts#OrderStatusTest @wdh_storefront @order_status_test @third_wdh-group TS_21-CanPlaceOrderAsRegisteredUser @can_place_order_as_registered",
+        "duration_sec": 689.57
+      },
+      {
+        "name": "Platforms/SFRA/Favorites Feature/WDH/AddToFavorites.spec.ts#AddToFavorites @wdh_storefront @addToFavorites @sixth_wdh-group TS_53-IncreaseDecreaseProductQuantityFromFavorites @increase_decrease_product_quantity_from_favorites",
+        "duration_sec": 682.91
+      },
+      {
+        "name": "Platforms/SFRA/Favorites Feature/FSA/AddToFavorites.spec.ts#AddToFavorites @fsa_storefront @fsa-addToFavorites @sixth_fsa-group TS_53-IncreaseDecreaseProductQuantityFromFavorites @increase_decrease_product_quantity_from_favorites",
+        "duration_sec": 680.01
+      },
+      {
+        "name": "Platforms/SFRA/Favorites Feature/HSA/AddToFavorites.spec.ts#AddToFavorites @hsa_storefront @addToFavorites @sixth_hsa-group TS_53-IncreaseDecreaseProductQuantityFromFavorites @increase_decrease_product_quantity_from_favorites",
+        "duration_sec": 675.96
+      },
+      {
+        "name": "Platforms/SFRA/Checkout/HSA/RestartedGuestCheckout.spec.ts#RestartedCheckout @hsa_storefront @fifth_hsa-group TS_13-RestartedGuestCheckoutTest @restarted_guest_checkout ",
+        "duration_sec": 673.44
+      },
+      {
+        "name": "Platforms/SFRA/Checkout/FSA/RestartedGuestCheckout.spec.ts#RestartedCheckout @fsa_storefront @fifth_fsa-group TS_13-RestartedGuestCheckoutTest @restarted_guest_checkout",
+        "duration_sec": 672.12
+      }
+    ],
+    "modules": {
+      "Cart Tests": {
+        "project_name": "HSA",
+        "platform_type": "mobile",
+        "tests_per_module": 7,
+        "passed": 6,
+        "failed": 1,
+        "skipped": 0,
+        "pending": 0,
+        "unknown": 0,
+        "pass_rate": 85.71,
+        "total_execution_time_sec": 2634.7,
+        "avg_execution_time_sec": 376.39
+      },
+      "Categories Tests": {
+        "project_name": "FSA",
+        "platform_type": "mobile",
+        "tests_per_module": 11,
+        "passed": 11,
+        "failed": 0,
+        "skipped": 0,
+        "pending": 0,
+        "unknown": 0,
+        "pass_rate": 100.0,
+        "total_execution_time_sec": 1814.46,
+        "avg_execution_time_sec": 164.95
+      },
+      "Add to Favorites Tests": {
+        "project_name": "HSA",
+        "platform_type": "mobile",
+        "tests_per_module": 11,
+        "passed": 11,
+        "failed": 0,
+        "skipped": 0,
+        "pending": 0,
+        "unknown": 0,
+        "pass_rate": 100.0,
+        "total_execution_time_sec": 5021.52,
+        "avg_execution_time_sec": 456.5
+      },
+      "HSA Perks Tests": {
+        "project_name": "HSA",
+        "platform_type": "mobile",
+        "tests_per_module": 7,
+        "passed": 7,
+        "failed": 0,
+        "skipped": 0,
+        "pending": 0,
+        "unknown": 0,
+        "pass_rate": 100.0,
+        "total_execution_time_sec": 2278.15,
+        "avg_execution_time_sec": 325.45
+      },
+      "Catalog/Products Tests": {
+        "project_name": "HSA",
+        "platform_type": "mobile",
+        "tests_per_module": 3,
+        "passed": 0,
+        "failed": 3,
+        "skipped": 0,
+        "pending": 0,
+        "unknown": 0,
+        "pass_rate": 0.0,
+        "total_execution_time_sec": 857.96,
+        "avg_execution_time_sec": 285.99
+      },
+      "Search Products Tests": {
+        "project_name": "WDH",
+        "platform_type": "mobile",
+        "tests_per_module": 11,
+        "passed": 11,
+        "failed": 0,
+        "skipped": 0,
+        "pending": 0,
+        "unknown": 0,
+        "pass_rate": 100.0,
+        "total_execution_time_sec": 978.1,
+        "avg_execution_time_sec": 88.92
+      },
+      "Sign-up/Registration Tests": {
+        "project_name": "FSA",
+        "platform_type": "desktop",
+        "tests_per_module": 8,
+        "passed": 8,
+        "failed": 0,
+        "skipped": 0,
+        "pending": 0,
+        "unknown": 0,
+        "pass_rate": 100.0,
+        "total_execution_time_sec": 1432.01,
+        "avg_execution_time_sec": 179.0
+      },
+      "Registered Checkout Tests": {
+        "project_name": "FSA",
+        "platform_type": "mobile",
+        "tests_per_module": 7,
+        "passed": 7,
+        "failed": 0,
+        "skipped": 0,
+        "pending": 0,
+        "unknown": 0,
+        "pass_rate": 100.0,
+        "total_execution_time_sec": 3827.72,
+        "avg_execution_time_sec": 546.82
+      },
+      "My Account Tests": {
+        "project_name": "WDH",
+        "platform_type": "mobile",
+        "tests_per_module": 6,
+        "passed": 6,
+        "failed": 0,
+        "skipped": 0,
+        "pending": 0,
+        "unknown": 0,
+        "pass_rate": 100.0,
+        "total_execution_time_sec": 1954.31,
+        "avg_execution_time_sec": 325.72
+      },
+      "Add to Favorite Tests": {
+        "project_name": "FSA",
+        "platform_type": "desktop",
+        "tests_per_module": 11,
+        "passed": 11,
+        "failed": 0,
+        "skipped": 0,
+        "pending": 0,
+        "unknown": 0,
+        "pass_rate": 100.0,
+        "total_execution_time_sec": 3067.74,
+        "avg_execution_time_sec": 278.89
+      },
+      "Guest Checkout Tests": {
+        "project_name": "WDH",
+        "platform_type": "mobile",
+        "tests_per_module": 1,
+        "passed": 1,
+        "failed": 0,
+        "skipped": 0,
+        "pending": 0,
+        "unknown": 0,
+        "pass_rate": 100.0,
+        "total_execution_time_sec": 355.42,
+        "avg_execution_time_sec": 355.42
+      },
+      "Split Payment Tests": {
+        "project_name": "WDH",
+        "platform_type": "mobile",
+        "tests_per_module": 3,
+        "passed": 3,
+        "failed": 0,
+        "skipped": 0,
+        "pending": 0,
+        "unknown": 0,
+        "pass_rate": 100.0,
+        "total_execution_time_sec": 1785.74,
+        "avg_execution_time_sec": 595.25
+      },
+      "Login/Password Tests": {
+        "project_name": "WDH",
+        "platform_type": "desktop",
+        "tests_per_module": 1,
+        "passed": 1,
+        "failed": 0,
+        "skipped": 0,
+        "pending": 0,
+        "unknown": 0,
+        "pass_rate": 100.0,
+        "total_execution_time_sec": 153.85,
+        "avg_execution_time_sec": 153.85
+      },
+      "Eligibility Tests": {
+        "project_name": "HSA",
+        "platform_type": "desktop",
+        "tests_per_module": 12,
+        "passed": 11,
+        "failed": 1,
+        "skipped": 0,
+        "pending": 0,
+        "unknown": 0,
+        "pass_rate": 91.67,
+        "total_execution_time_sec": 1512.2,
+        "avg_execution_time_sec": 126.02
+      },
+      "FSA Perks Tests": {
+        "project_name": "FSA",
+        "platform_type": "mobile",
+        "tests_per_module": 7,
+        "passed": 6,
+        "failed": 1,
+        "skipped": 0,
+        "pending": 0,
+        "unknown": 0,
+        "pass_rate": 85.71,
+        "total_execution_time_sec": 2500.74,
+        "avg_execution_time_sec": 357.25
+      },
+      "Eligibility TPA Tests": {
+        "project_name": "FSA",
+        "platform_type": "desktop",
+        "tests_per_module": 5,
+        "passed": 5,
+        "failed": 0,
+        "skipped": 0,
+        "pending": 0,
+        "unknown": 0,
+        "pass_rate": 100.0,
+        "total_execution_time_sec": 149.21,
+        "avg_execution_time_sec": 29.84
+      },
+      "Expense Dashboard Tests": {
+        "project_name": "HSA",
+        "platform_type": "mobile",
+        "tests_per_module": 22,
+        "passed": 21,
+        "failed": 0,
+        "skipped": 1,
+        "pending": 0,
+        "unknown": 0,
+        "pass_rate": 100.0,
+        "total_execution_time_sec": 4247.68,
+        "avg_execution_time_sec": 193.08
+      },
+      "Hybrid Login Tests": {
+        "project_name": "HSA",
+        "platform_type": "desktop",
+        "tests_per_module": 3,
+        "passed": 3,
+        "failed": 0,
+        "skipped": 0,
+        "pending": 0,
+        "unknown": 0,
+        "pass_rate": 100.0,
+        "total_execution_time_sec": 296.94,
+        "avg_execution_time_sec": 98.98
+      },
+      "Checkout Tests": {
+        "project_name": "FSA",
+        "platform_type": "mobile",
+        "tests_per_module": 4,
+        "passed": 2,
+        "failed": 2,
+        "skipped": 0,
+        "pending": 0,
+        "unknown": 0,
+        "pass_rate": 50.0,
+        "total_execution_time_sec": 1478.95,
+        "avg_execution_time_sec": 369.74
+      },
+      "Order History/Status Tests": {
+        "project_name": "FSA",
+        "platform_type": "desktop",
+        "tests_per_module": 3,
+        "passed": 3,
+        "failed": 0,
+        "skipped": 0,
+        "pending": 0,
+        "unknown": 0,
+        "pass_rate": 100.0,
+        "total_execution_time_sec": 1194.48,
+        "avg_execution_time_sec": 398.16
+      },
+      "Sign-Up/Registration Tests": {
+        "project_name": "WDH",
+        "platform_type": "mobile",
+        "tests_per_module": 1,
+        "passed": 1,
+        "failed": 0,
+        "skipped": 0,
+        "pending": 0,
+        "unknown": 0,
+        "pass_rate": 100.0,
+        "total_execution_time_sec": 278.58,
+        "avg_execution_time_sec": 278.58
+      }
+    },
+    "projects": {
+      "FSA:mobile": {
+        "project_name": "FSA",
+        "platform_type": "mobile",
+        "module_count": 16,
+        "total_tests": 109,
+        "passed": 94,
+        "failed": 15,
+        "skipped": 0,
+        "pass_rate": 86.24,
+        "total_execution_time_sec": 32429.79
+      },
+      "WDH:desktop": {
+        "project_name": "WDH",
+        "platform_type": "desktop",
+        "module_count": 12,
+        "total_tests": 61,
+        "passed": 60,
+        "failed": 1,
+        "skipped": 0,
+        "pass_rate": 98.36,
+        "total_execution_time_sec": 11681.55
+      },
+      "HSA:desktop": {
+        "project_name": "HSA",
+        "platform_type": "desktop",
+        "module_count": 18,
+        "total_tests": 135,
+        "passed": 125,
+        "failed": 9,
+        "skipped": 1,
+        "pass_rate": 93.28,
+        "total_execution_time_sec": 25635.6
+      },
+      "FSA:desktop": {
+        "project_name": "FSA",
+        "platform_type": "desktop",
+        "module_count": 16,
+        "total_tests": 109,
+        "passed": 85,
+        "failed": 24,
+        "skipped": 0,
+        "pass_rate": 77.98,
+        "total_execution_time_sec": 22608.83
+      },
+      "HSA:mobile": {
+        "project_name": "HSA",
+        "platform_type": "mobile",
+        "module_count": 18,
+        "total_tests": 135,
+        "passed": 125,
+        "failed": 9,
+        "skipped": 1,
+        "pass_rate": 93.28,
+        "total_execution_time_sec": 37723.79
+      },
+      "WDH:mobile": {
+        "project_name": "WDH",
+        "platform_type": "mobile",
+        "module_count": 12,
+        "total_tests": 61,
+        "passed": 60,
+        "failed": 1,
+        "skipped": 0,
+        "pass_rate": 98.36,
+        "total_execution_time_sec": 20068.11
+      }
+    }
+  },
+  "tables": [
+    "documents",
+    "sources",
+    "structured_test_module_metrics",
+    "structured_test_project_metrics",
+    "structured_test_results"
+  ]
+}

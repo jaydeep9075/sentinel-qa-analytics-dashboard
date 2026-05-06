@@ -12,10 +12,18 @@ import numpy as np
 import lancedb
 import duckdb
 
-from connectors.file_connector import FileConnector
-from connectors.db_connector import DBConnector
-from connectors.api_connector import APIConnector
-from utils import EmbeddingGenerator
+try:
+    # Package-style imports (works when app runs as modules, e.g. python -m services.main)
+    from .connectors.file_connector import FileConnector
+    from .connectors.db_connector import DBConnector
+    from .connectors.api_connector import APIConnector
+    from .utils import EmbeddingGenerator
+except ImportError:
+    # Fallback for direct script execution inside universal_ingester folder
+    from connectors.file_connector import FileConnector
+    from connectors.db_connector import DBConnector
+    from connectors.api_connector import APIConnector
+    from utils import EmbeddingGenerator
 
 logger = logging.getLogger(__name__)
 
@@ -56,7 +64,10 @@ class UniversalIngester:
                 params=params.get('params')
             )
         elif source_type == 'allure':
-            from connectors.allure_connector import AllureConnector
+            try:
+                from .connectors.allure_connector import AllureConnector
+            except ImportError:
+                from connectors.allure_connector import AllureConnector
             path = params.get('path') or params.get('directory')
             if not path:
                 raise ValueError("Allure source requires 'path' or 'directory' in config")
