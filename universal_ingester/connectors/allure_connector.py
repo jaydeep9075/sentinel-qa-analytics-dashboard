@@ -34,7 +34,7 @@ class AllureConnector(BaseConnector):
             raise ValueError(f"Path does not exist: {self.root_path}")
 
     # ---------- improved file discovery ----------
-        def _find_result_files(self) -> List[str]:
+    def _find_result_files(self):
         """Recursively find all files ending with -result.json (or result.json)."""
         matches = []
         for root, dirs, files in os.walk(self.root_path):
