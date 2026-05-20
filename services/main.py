@@ -57,10 +57,7 @@ async def login(username: str, password: str):
     return {"access_token": access_token, "token_type": "bearer", "role": user["role"]}
 
 @app.post("/ingest/config2")
-async def ingest_from_config2(
-    request: IngestRequest,
-    current_user: dict = Depends(get_current_user)
-):
+async def ingest_from_config2(request: IngestRequest):
     source_path = str(request.source_path or "").strip()
     if not source_path:
         raise HTTPException(status_code=400, detail="source_path is required")
