@@ -34,28 +34,14 @@ class AllureConnector(BaseConnector):
             raise ValueError(f"Path does not exist: {self.root_path}")
 
     # ---------- improved file discovery ----------
-    def _find_result_files(self) -> List[str]:
-        """Find all files ending with -result.json (or result.json) in any subdirectory."""
+        def _find_result_files(self) -> List[str]:
+        """Recursively find all files ending with -result.json (or result.json)."""
         matches = []
-        # 1. Directly in the given path
-        pattern = os.path.join(self.root_path, "*-result.json")
-        matches.extend(glob.glob(pattern))
-        # 2. Also try *result.json (for compatibility)
-        matches.extend(glob.glob(os.path.join(self.root_path, "*result.json")))
-        # 3. Recurse into subdirectories (max depth 3 to avoid infinite loops)
-        for root, _, _ in os.walk(self.root_path):
-            if root == self.root_path:
-                continue
-            # Look for allure-results folder
-            if os.path.basename(root) == "allure-results":
-                files = glob.glob(os.path.join(root, "*-result.json"))
-                matches.extend(files)
-            else:
-                # Also check directly in subdirs
-                files = glob.glob(os.path.join(root, "*-result.json"))
-                matches.extend(files)
-        # Deduplicate
-        return list(set(matches))
+        for root, dirs, files in os.walk(self.root_path):
+            for f in files:
+                if f.endswith("-result.json") or f.endswith("result.json"):
+                    matches.append(os.path.join(root, f))
+        return matches
 
     # ---------- helpers (unchanged) ----------
     def _map_status(self, raw: str) -> str:
