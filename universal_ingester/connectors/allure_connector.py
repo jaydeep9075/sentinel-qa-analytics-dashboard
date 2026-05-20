@@ -1,27 +1,3 @@
-"""
-allure_connector.py
-
-Hierarchy extracted from Allure JSON labels:
-  project_name  ← labels.parentSuite  ("FSA Store Tests" → "FSA", etc.)
-  module_name   ← labels.subSuite     ("Eligibility Tests", "Checkout Tests", …)
-                  [labels.suite is "Regression Tests Suite" – always skipped]
-  platform_type ← parameters[name="Project"].value
-                  "GoogleChrome"        → "desktop"
-                  "GoogleChromeiPhoneX" → "mobile"   (iPhone X simulation)
-                  "GoogleChromeiPad"    → "mobile"
-                  anything with mobile/iphone/ipad/android → "mobile"
-                  everything else       → "desktop"
-
-Each logical test row carries:
-  project_name, module_name, platform_type, status, duration_seconds,
-  error_message, test_name (fullName), history_id, …
-
-Three DataFrames returned:
-  test_results        – one row per logical test (after retry-merge)
-  test_module_metrics – aggregated per (project, module, platform)
-  test_project_metrics – aggregated per (project, platform)
-"""
-
 import glob
 import json
 import logging
@@ -37,66 +13,56 @@ from .base import BaseConnector
 
 logger = logging.getLogger(__name__)
 
-# ── project mapping ──────────────────────────────────────────────────────────
-_PARENT_SUITE_MAP: Dict[str, str] = {
+_PARENT_SUITE_MAP = {
     "fsa store tests": "FSA",
     "hsa store tests": "HSA",
     "wdh store tests": "WDH",
 }
-
-# Suite levels we never want as a module name
 _SKIP_SUITE_LEVELS = {
-    "regression tests suite",
-    "regression suite",
-    "smoke tests suite",
-    "smoke suite",
-    "regression",
-    "smoke",
+    "regression tests suite", "regression suite", "smoke tests suite",
+    "smoke suite", "regression", "smoke",
 }
-
-# Allure "Project" parameter values that indicate a mobile device
-_MOBILE_PROJECT_KEYWORDS = (
-    "iphone", "ipad", "android", "mobile", "pixel",
-    "samsung", "galaxy", "appium",
-)
+_MOBILE_PROJECT_KEYWORDS = ("iphone", "ipad", "android", "mobile", "pixel", "samsung", "galaxy", "appium")
 
 
 class AllureConnector(BaseConnector):
     def __init__(self, allure_results_path: str):
         if not allure_results_path:
             raise ValueError("Allure results path is required")
-        self.root_path = allure_results_path
+        self.root_path = os.path.abspath(allure_results_path)
         if not os.path.isdir(self.root_path):
             raise ValueError(f"Path does not exist: {self.root_path}")
 
-    # ── file discovery ────────────────────────────────────────────────────────
-
+    # ---------- improved file discovery ----------
     def _find_result_files(self) -> List[str]:
-        # 1. direct allure-results dir
-        if os.path.basename(self.root_path) == "allure-results":
-            files = glob.glob(os.path.join(self.root_path, "*-result.json"))
-            if files:
-                return files
-        # 2. artifact_* pattern
-        files = glob.glob(
-            os.path.join(self.root_path, "artifact_*", "allure-results", "*-result.json")
-        )
-        if files:
-            return files
-        # 3. recursive walk
-        files = []
+        """Find all files ending with -result.json (or result.json) in any subdirectory."""
+        matches = []
+        # 1. Directly in the given path
+        pattern = os.path.join(self.root_path, "*-result.json")
+        matches.extend(glob.glob(pattern))
+        # 2. Also try *result.json (for compatibility)
+        matches.extend(glob.glob(os.path.join(self.root_path, "*result.json")))
+        # 3. Recurse into subdirectories (max depth 3 to avoid infinite loops)
         for root, _, _ in os.walk(self.root_path):
+            if root == self.root_path:
+                continue
+            # Look for allure-results folder
             if os.path.basename(root) == "allure-results":
-                files.extend(glob.glob(os.path.join(root, "*-result.json")))
-        return files
+                files = glob.glob(os.path.join(root, "*-result.json"))
+                matches.extend(files)
+            else:
+                # Also check directly in subdirs
+                files = glob.glob(os.path.join(root, "*-result.json"))
+                matches.extend(files)
+        # Deduplicate
+        return list(set(matches))
 
-    # ── status / duration helpers ─────────────────────────────────────────────
-
+    # ---------- helpers (unchanged) ----------
     def _map_status(self, raw: str) -> str:
         return {
-            "passed":  "passed",
-            "failed":  "failed",
-            "broken":  "failed",   # broken counts as failed unless retry passes
+            "passed": "passed",
+            "failed": "failed",
+            "broken": "failed",
             "skipped": "skipped",
             "pending": "pending",
             "unknown": "unknown",
@@ -107,8 +73,6 @@ class AllureConnector(BaseConnector):
             return round((stop - start) / 1000.0, 3)
         return 0.0
 
-    # ── field extractors ──────────────────────────────────────────────────────
-
     def _extract_history_id(self, data: Dict[str, Any]) -> str:
         for key in ("historyId", "fullName", "name"):
             val = data.get(key)
@@ -117,46 +81,25 @@ class AllureConnector(BaseConnector):
         return data.get("uuid", str(uuid.uuid4()))
 
     def _extract_project_name(self, label_dict: Dict[str, str]) -> str:
-        """
-        Map parentSuite label → FSA / HSA / WDH.
-        Falls back to checking titlePath for the tokens.
-        """
-        parent = label_dict.get("parentSuite", "").strip()
-        key = parent.lower()
-        if key in _PARENT_SUITE_MAP:
-            return _PARENT_SUITE_MAP[key]
-        # partial match
+        parent = label_dict.get("parentSuite", "").strip().lower()
+        if parent in _PARENT_SUITE_MAP:
+            return _PARENT_SUITE_MAP[parent]
         for k, v in _PARENT_SUITE_MAP.items():
-            if k in key or v.lower() in key:
+            if k in parent or v.lower() in parent:
                 return v
-        # titlePath fallback
         title_path = label_dict.get("titlePath", "")
         for token in ("FSA", "HSA", "WDH"):
             if token in title_path.upper():
                 return token
         return "unknown"
 
-    def _extract_module_name(
-        self,
-        full_name: str,
-        label_dict: Dict[str, str],
-    ) -> str:
-        """
-        Priority:
-          1. labels.subSuite  (most precise: "Eligibility Tests", "Cart Tests" …)
-          2. labels.suite     (only if not in _SKIP_SUITE_LEVELS)
-          3. Derive from fullName path (last meaningful segment before #)
-        """
+    def _extract_module_name(self, full_name: str, label_dict: Dict[str, str]) -> str:
         sub_suite = label_dict.get("subSuite", "").strip()
         if sub_suite and sub_suite.lower() not in _SKIP_SUITE_LEVELS:
             return sub_suite
-
         suite = label_dict.get("suite", "").strip()
         if suite and suite.lower() not in _SKIP_SUITE_LEVELS:
             return suite
-
-        # derive from fullName  e.g.
-        # "Platforms/SFRA/PLP/FSA/Eligibility.spec.ts#Eligibility … TS_28 …"
         if full_name:
             path_part = full_name.split("#")[0].replace("\\", "/")
             parts = [p for p in path_part.split("/") if p]
@@ -166,17 +109,9 @@ class AllureConnector(BaseConnector):
                     last = last.replace(ext, "")
                 if last:
                     return last
-
         return "unknown"
 
     def _extract_platform_type(self, data: Dict[str, Any]) -> str:
-        """
-        Read the Allure 'Project' parameter value, e.g.
-          "GoogleChrome"        → desktop
-          "GoogleChromeiPhoneX" → mobile
-          "GoogleChromeiPad"    → mobile
-        This is the ONLY reliable signal; do NOT use thread/host strings.
-        """
         for param in data.get("parameters", []):
             if not isinstance(param, dict):
                 continue
@@ -188,7 +123,6 @@ class AllureConnector(BaseConnector):
         return "desktop"
 
     def _extract_browser(self, data: Dict[str, Any]) -> str:
-        """Return the raw Project parameter value for reference (e.g. 'GoogleChromeiPhoneX')."""
         for param in data.get("parameters", []):
             if not isinstance(param, dict):
                 continue
@@ -196,20 +130,10 @@ class AllureConnector(BaseConnector):
                 return str(param.get("value", "")).strip()
         return "GoogleChrome"
 
-    # ── retry merge ───────────────────────────────────────────────────────────
-
     def _merge_retries(self, runs: List[Dict[str, Any]]) -> Dict[str, Any]:
-        """
-        Allure optimistic retry logic:
-          • If ANY run passed  → final = passed
-          • Otherwise pick most-severe failure
-        Duration = max across all runs (worst-case).
-        """
         if not runs:
             return {}
-        # base = latest run for metadata
         base = sorted(runs, key=lambda x: x.get("stop", 0), reverse=True)[0].copy()
-
         if any(r["status"] == "passed" for r in runs):
             final_status = "passed"
             error = ""
@@ -218,31 +142,31 @@ class AllureConnector(BaseConnector):
             worst = max(runs, key=lambda r: priority.get(r.get("status", "unknown"), 0))
             final_status = worst["status"]
             error = worst.get("error", "")
-
         base["status"] = final_status
         base["error"] = error
-        base["duration_seconds"] = max(
-            (r.get("duration_seconds", 0.0) for r in runs), default=0.0
-        )
+        base["duration_seconds"] = max((r.get("duration_seconds", 0.0) for r in runs), default=0.0)
         return base
 
-    # ── main fetch ────────────────────────────────────────────────────────────
-
+    # ---------- main fetch ----------
     def fetch(self) -> List[Dict[str, Any]]:
         result_files = self._find_result_files()
-        logger.info(f"Found {len(result_files)} result.json files in {self.root_path}")
-
-        _empty_cols = [
-            "id", "executed_at", "test_name", "full_name", "history_id",
-            "status", "duration_seconds", "error_message",
-            "project_name", "module_name", "platform_type", "browser",
-            "spec_file", "description", "labels", "tags",
-            "steps_count", "attachments_count",
-        ]
+        logger.info(f"Found {len(result_files)} Allure result files in {self.root_path}")
         if not result_files:
-            return [_empty_result(pd.DataFrame(columns=_empty_cols))]
+            empty_df = pd.DataFrame(columns=[
+                "id", "executed_at", "test_name", "full_name", "history_id",
+                "status", "duration_seconds", "error_message",
+                "project_name", "module_name", "platform_type", "browser",
+                "spec_file", "description", "labels", "tags",
+                "steps_count", "attachments_count"
+            ])
+            return [{
+                "name": "test_results",
+                "data": empty_df,
+                "type": "structured",
+                "metadata": {"source": "allure", "rows": 0}
+            }]
 
-        raw_tests: List[Dict[str, Any]] = []
+        raw_tests = []
         min_start = float("inf")
 
         for fp in result_files:
@@ -253,76 +177,54 @@ class AllureConnector(BaseConnector):
                 logger.error(f"Failed to read {fp}: {exc}")
                 continue
 
-            # ── labels dict ──
             labels = data.get("labels", [])
-            label_dict: Dict[str, str] = {
-                lbl["name"]: lbl["value"]
-                for lbl in labels
-                if "name" in lbl and "value" in lbl
-            }
-
+            label_dict = {lbl["name"]: lbl["value"] for lbl in labels if "name" in lbl and "value" in lbl}
             full_name = data.get("fullName") or data.get("name", "")
-            start     = data.get("start")
-            stop      = data.get("stop")
-            status    = self._map_status(data.get("status", "unknown"))
-
+            start = data.get("start")
+            stop = data.get("stop")
+            status = self._map_status(data.get("status", "unknown"))
             status_details = data.get("statusDetails") or {}
-            err_msg   = status_details.get("message", "")
+            err_msg = status_details.get("message", "")
             err_trace = status_details.get("trace", "")
-            error     = err_msg if err_msg else (err_trace[:500] if err_trace else "")
-
+            error = err_msg if err_msg else (err_trace[:500] if err_trace else "")
             tags = [lbl["value"] for lbl in labels if lbl.get("name") == "tag"]
-
             if start is not None:
                 min_start = min(min_start, start)
 
             raw_tests.append({
-                "history_id":       self._extract_history_id(data),
-                "full_name":        full_name,
-                "name":             data.get("name", ""),
-                "status":           status,
+                "history_id": self._extract_history_id(data),
+                "full_name": full_name,
+                "name": data.get("name", ""),
+                "status": status,
                 "duration_seconds": self._duration_seconds(start, stop),
-                "error":            error,
-                "spec_file":        label_dict.get("suite", ""),
-                "description":      data.get("description", ""),
-                "labels":           label_dict,
-                "tags":             tags,
-                # ── key hierarchy fields ──
-                "project_name":     self._extract_project_name(label_dict),
-                "module_name":      self._extract_module_name(full_name, label_dict),
-                "platform_type":    self._extract_platform_type(data),
-                "browser":          self._extract_browser(data),
-                "uuid":             data.get("uuid"),
-                "start":            start,
-                "stop":             stop,
-                "steps_count":      len(data.get("steps", [])),
+                "error": error,
+                "spec_file": label_dict.get("suite", ""),
+                "description": data.get("description", ""),
+                "labels": label_dict,
+                "tags": tags,
+                "project_name": self._extract_project_name(label_dict),
+                "module_name": self._extract_module_name(full_name, label_dict),
+                "platform_type": self._extract_platform_type(data),
+                "browser": self._extract_browser(data),
+                "uuid": data.get("uuid"),
+                "start": start,
+                "stop": stop,
+                "steps_count": len(data.get("steps", [])),
                 "attachments_count": len(data.get("attachments", [])),
             })
 
-        logger.info(f"Parsed {len(raw_tests)} raw test results")
+        logger.info(f"Parsed {len(raw_tests)} raw test records")
 
-        # ── group by history_id and merge retries ─────────────────────────────
-        by_id: Dict[str, List] = {}
+        # group by history_id and merge retries
+        by_id = {}
         for t in raw_tests:
             by_id.setdefault(t["history_id"], []).append(t)
+        merged = [runs[0] if len(runs) == 1 else self._merge_retries(runs) for runs in by_id.values()]
 
-        merged: List[Dict[str, Any]] = [
-            runs[0] if len(runs) == 1 else self._merge_retries(runs)
-            for runs in by_id.values()
-        ]
-
-        status_counts: Dict[str, int] = {}
+        status_counts = {}
         for t in merged:
             status_counts[t["status"]] = status_counts.get(t["status"], 0) + 1
-        logger.info(f"After retry-merge: {len(merged)} logical tests | {status_counts}")
-
-        # ── log hierarchy for debugging ────────────────────────────────────────
-        summary: Dict[str, Dict[str, set]] = defaultdict(lambda: defaultdict(set))
-        for t in merged:
-            summary[t["project_name"]][t["module_name"]].add(t["platform_type"])
-        for proj, mods in sorted(summary.items()):
-            for mod, plats in sorted(mods.items()):
-                logger.info(f"  {proj} → {mod} [{', '.join(sorted(plats))}]")
+        logger.info(f"After retry‑merge: {len(merged)} logical tests | {status_counts}")
 
         executed_at = (
             datetime.fromtimestamp(min_start / 1000, tz=timezone.utc).isoformat()
@@ -330,147 +232,118 @@ class AllureConnector(BaseConnector):
             else datetime.now(timezone.utc).isoformat()
         )
 
-        # ── test_results DataFrame ────────────────────────────────────────────
+        # build DataFrame
         rows = []
         for t in merged:
             rows.append({
-                "id":                 str(uuid.uuid4()),
-                "executed_at":        executed_at,
-                "test_name":          t.get("full_name") or t.get("name", ""),
-                "full_name":          t.get("full_name", ""),
-                "history_id":         t.get("history_id", ""),
-                "status":             t["status"],
-                "duration_seconds":   round(float(t.get("duration_seconds", 0.0)), 3),
-                "error_message":      t.get("error", ""),
-                "project_name":       t["project_name"],
-                "module_name":        t["module_name"],
-                "platform_type":      t["platform_type"],
-                "browser":            t.get("browser", "GoogleChrome"),
-                "spec_file":          t.get("spec_file", ""),
-                "description":        t.get("description", ""),
-                "labels":             json.dumps(t.get("labels", {})),
-                "tags":               json.dumps(t.get("tags", [])),
-                "steps_count":        t.get("steps_count", 0),
-                "attachments_count":  t.get("attachments_count", 0),
+                "id": str(uuid.uuid4()),
+                "executed_at": executed_at,
+                "test_name": t.get("full_name") or t.get("name", ""),
+                "full_name": t.get("full_name", ""),
+                "history_id": t.get("history_id", ""),
+                "status": t["status"],
+                "duration_seconds": round(float(t.get("duration_seconds", 0.0)), 3),
+                "error_message": t.get("error", ""),
+                "project_name": t["project_name"],
+                "module_name": t["module_name"],
+                "platform_type": t["platform_type"],
+                "browser": t.get("browser", "GoogleChrome"),
+                "spec_file": t.get("spec_file", ""),
+                "description": t.get("description", ""),
+                "labels": json.dumps(t.get("labels", {})),
+                "tags": json.dumps(t.get("tags", [])),
+                "steps_count": t.get("steps_count", 0),
+                "attachments_count": t.get("attachments_count", 0),
             })
         df_results = pd.DataFrame(rows)
-        logger.info(f"test_results: {len(df_results)} rows")
 
-        # ── module_metrics: (project, module, platform) → aggregated ─────────
-        mod_agg: Dict[tuple, Dict] = defaultdict(lambda: {
-            "total": 0, "passed": 0, "failed": 0,
-            "skipped": 0, "pending": 0, "unknown": 0,
-            "duration": 0.0,
-        })
+        # module metrics
+        mod_agg = defaultdict(lambda: {"total": 0, "passed": 0, "failed": 0,
+                                       "skipped": 0, "pending": 0, "unknown": 0, "duration": 0.0})
         for t in merged:
             key = (t["project_name"], t["module_name"], t["platform_type"])
-            a   = mod_agg[key]
-            a["total"]    += 1
+            a = mod_agg[key]
+            a["total"] += 1
             a["duration"] += float(t.get("duration_seconds", 0.0) or 0.0)
             s = t["status"]
-            if s == "passed":         a["passed"]  += 1
-            elif s in ("failed", "broken"): a["failed"] += 1
-            elif s == "skipped":      a["skipped"] += 1
-            elif s == "pending":      a["pending"] += 1
-            else:                     a["unknown"] += 1
+            if s == "passed":
+                a["passed"] += 1
+            elif s in ("failed", "broken"):
+                a["failed"] += 1
+            elif s == "skipped":
+                a["skipped"] += 1
+            elif s == "pending":
+                a["pending"] += 1
+            else:
+                a["unknown"] += 1
 
         module_rows = []
         for (proj, mod, plat), a in mod_agg.items():
-            executed  = a["passed"] + a["failed"]
+            executed = a["passed"] + a["failed"]
             pass_rate = round(a["passed"] / executed * 100, 2) if executed else 0.0
             module_rows.append({
-                "id":                    str(uuid.uuid4()),
-                "project_name":          proj,
-                "module_name":           mod,
-                "platform_type":         plat,
-                "total_tests":           a["total"],
-                "passed":                a["passed"],
-                "failed":                a["failed"],
-                "skipped":               a["skipped"],
-                "pending":               a["pending"],
-                "unknown":               a["unknown"],
-                "pass_rate":             pass_rate,
+                "id": str(uuid.uuid4()),
+                "project_name": proj,
+                "module_name": mod,
+                "platform_type": plat,
+                "total_tests": a["total"],
+                "passed": a["passed"],
+                "failed": a["failed"],
+                "skipped": a["skipped"],
+                "pending": a["pending"],
+                "unknown": a["unknown"],
+                "pass_rate": pass_rate,
                 "total_duration_seconds": round(a["duration"], 2),
-                "avg_duration_seconds":   round(a["duration"] / a["total"], 2) if a["total"] else 0.0,
-                "executed_at":           executed_at,
+                "avg_duration_seconds": round(a["duration"] / a["total"], 2) if a["total"] else 0.0,
+                "executed_at": executed_at,
             })
         df_module = pd.DataFrame(module_rows)
-        logger.info(f"test_module_metrics: {len(df_module)} rows")
 
-        # ── project_metrics: (project, platform) → aggregated ─────────────────
-        proj_agg: Dict[tuple, Dict] = defaultdict(lambda: {
-            "total": 0, "passed": 0, "failed": 0,
-            "skipped": 0, "pending": 0, "unknown": 0,
-            "duration": 0.0, "modules": set(),
-        })
+        # project metrics
+        proj_agg = defaultdict(lambda: {"total": 0, "passed": 0, "failed": 0,
+                                        "skipped": 0, "pending": 0, "unknown": 0,
+                                        "duration": 0.0, "modules": set()})
         for r in module_rows:
             key = (r["project_name"], r["platform_type"])
-            a   = proj_agg[key]
-            a["total"]    += r["total_tests"]
-            a["passed"]   += r["passed"]
-            a["failed"]   += r["failed"]
-            a["skipped"]  += r["skipped"]
-            a["pending"]  += r["pending"]
-            a["unknown"]  += r["unknown"]
+            a = proj_agg[key]
+            a["total"] += r["total_tests"]
+            a["passed"] += r["passed"]
+            a["failed"] += r["failed"]
+            a["skipped"] += r["skipped"]
+            a["pending"] += r["pending"]
+            a["unknown"] += r["unknown"]
             a["duration"] += r["total_duration_seconds"]
             a["modules"].add(r["module_name"])
 
         project_rows = []
         for (proj, plat), a in proj_agg.items():
-            executed  = a["passed"] + a["failed"]
+            executed = a["passed"] + a["failed"]
             pass_rate = round(a["passed"] / executed * 100, 2) if executed else 0.0
             project_rows.append({
-                "id":                    str(uuid.uuid4()),
-                "project_name":          proj,
-                "platform_type":         plat,
-                "module_count":          len(a["modules"]),
-                "total_tests":           a["total"],
-                "passed":                a["passed"],
-                "failed":                a["failed"],
-                "skipped":               a["skipped"],
-                "pending":               a["pending"],
-                "unknown":               a["unknown"],
-                "pass_rate":             pass_rate,
+                "id": str(uuid.uuid4()),
+                "project_name": proj,
+                "platform_type": plat,
+                "module_count": len(a["modules"]),
+                "total_tests": a["total"],
+                "passed": a["passed"],
+                "failed": a["failed"],
+                "skipped": a["skipped"],
+                "pending": a["pending"],
+                "unknown": a["unknown"],
+                "pass_rate": pass_rate,
                 "total_duration_seconds": round(a["duration"], 2),
-                "avg_duration_seconds":   round(a["duration"] / a["total"], 2) if a["total"] else 0.0,
-                "executed_at":           executed_at,
+                "avg_duration_seconds": round(a["duration"] / a["total"], 2) if a["total"] else 0.0,
+                "executed_at": executed_at,
             })
         df_project = pd.DataFrame(project_rows)
-        logger.info(f"test_project_metrics: {len(df_project)} rows")
 
         return [
-            {
-                "name": "test_results",
-                "data": df_results,
-                "type": "structured",
-                "metadata": {
-                    "source":          "allure",
-                    "rows":            len(df_results),
-                    "raw_files":       len(result_files),
-                    "logical_tests":   len(merged),
-                    "status_breakdown": status_counts,
-                    "executed_at":     executed_at,
-                },
-            },
-            {
-                "name": "test_module_metrics",
-                "data": df_module,
-                "type": "structured",
-                "metadata": {"source": "allure", "rows": len(df_module)},
-            },
-            {
-                "name": "test_project_metrics",
-                "data": df_project,
-                "type": "structured",
-                "metadata": {"source": "allure", "rows": len(df_project)},
-            },
+            {"name": "test_results", "data": df_results, "type": "structured",
+             "metadata": {"source": "allure", "rows": len(df_results), "raw_files": len(result_files),
+                          "logical_tests": len(merged), "status_breakdown": status_counts,
+                          "executed_at": executed_at}},
+            {"name": "test_module_metrics", "data": df_module, "type": "structured",
+             "metadata": {"source": "allure", "rows": len(df_module)}},
+            {"name": "test_project_metrics", "data": df_project, "type": "structured",
+             "metadata": {"source": "allure", "rows": len(df_project)}},
         ]
-
-
-def _empty_result(df: pd.DataFrame) -> Dict[str, Any]:
-    return {
-        "name": "test_results",
-        "data": df,
-        "type": "structured",
-        "metadata": {"source": "allure", "rows": 0},
-    }
