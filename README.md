@@ -92,14 +92,41 @@ The API uses **Bearer JWT** tokens. After login, the frontend stores the token i
 | `POST /ingest/config2` | Public |
 | `/chat`, `/chart`, `/ingestions`, `/data/status`, etc. | **Bearer token required** |
 
-Demo users are defined in `services/auth.py` (e.g. `aditya`, `jaydeep` → `qa-engineer`; `ali` → `cto`). Default password for seeded hashes is documented in that file (`Pass@123`). Generate new hashes with:
+Auth users are managed through the local DB-backed store (SQLite by default).
 
-```python
-import bcrypt
-bcrypt.hashpw(b"YourPassword", bcrypt.gensalt(rounds=12)).decode()
+Initialize DB schema:
+
+```bash
+python -m services.admin_users init-db
 ```
 
+Create/update a user:
+
+```bash
+python -m services.admin_users create-user --username admin --role cto
+```
+
+Reset password:
+
+```bash
+python -m services.admin_users reset-password --username admin
+```
+
+List users:
+
+```bash
+python -m services.admin_users list-users
+```
+
+Optional seed bootstrap:
+- Copy `auth_seed_users.json.example` to `auth_seed_users.json`
+- Set `AUTH_AUTO_SEED_USERS=true` in `.env`
+- Set `AUTH_SEED_FILE=./auth_seed_users.json` (or your custom path)
+
 Set a strong `SECRET_KEY` in `.env` before production use.
+
+For complete user bootstrap, add-user, and validation commands, see:
+- `USER_SEED_STEPS.md`
 
 ---
 

@@ -10,7 +10,7 @@ import uvicorn
 from typing import Optional
 from datetime import datetime, timezone
 from . import config, state, data_loader, handlers, memory, llm_client
-from .auth import authenticate_user, create_access_token, get_current_user
+from .auth import authenticate_user, create_access_token, get_current_user, initialize_auth_store
 from universal_ingester.ingester import UniversalIngester
 
 logging.basicConfig(level=logging.INFO)
@@ -30,6 +30,8 @@ class IngestRequest(BaseModel):
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     logger.info("Starting up...")
+    config.validate_runtime_config()
+    initialize_auth_store()
     yield
     logger.info("Shutting down...")
     if state.duck_conn:
@@ -38,7 +40,8 @@ async def lifespan(app: FastAPI):
 app = FastAPI(title="Unified QA Service", lifespan=lifespan)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=config.CORS_ALLOWED_ORIGINS,
+    allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
