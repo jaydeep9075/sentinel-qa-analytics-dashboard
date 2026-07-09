@@ -15,8 +15,8 @@ class LLMClient:
             genai.configure(api_key=self.api_key)
             self.client = genai.GenerativeModel(self.model)
         elif self.provider == "openai":
-            import openai
-            openai.api_key = self.api_key
+            from openai import OpenAI
+            self.client = OpenAI(api_key=self.api_key, base_url=config.OPENAI_BASE_URL)
         elif self.provider == "anthropic":
             import anthropic
             self.client = anthropic.Anthropic(api_key=self.api_key)
@@ -31,8 +31,7 @@ class LLMClient:
                 response = self.client.generate_content(prompt)
                 return response.text
             elif self.provider == "openai":
-                import openai
-                response = openai.ChatCompletion.create(
+                response = self.client.chat.completions.create(
                     model=self.model,
                     messages=[{"role": "user", "content": prompt}],
                     temperature=temperature,
