@@ -1,9 +1,8 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import useSWR from "swr";
 import { getChartHistory, deleteChart } from "@/lib/api";
-import { getSessionId } from "@/lib/session";
 import { useIngestion } from "@/lib/IngestionContext";
 import AIGeneratedChart from "./AIGeneratedChart";
 import {
@@ -35,17 +34,30 @@ import { CSS } from "@dnd-kit/utilities";
 interface Chart {
   id: string;
   prompt: string;
-  config: any;
+  config: unknown;
   created_at: string;
 }
 
+interface ChartHistoryItem {
+  id: string;
+  prompt?: string;
+  config?: string | unknown;
+  created_at: string;
+}
+
+interface ChartHistoryResponse {
+  history?: ChartHistoryItem[];
+}
+
 const fetchCharts = async (ingestionId: string) => {
-  const sessionId = getSessionId();
+  const sessionId = "__all__";
   console.log("📊 fetchCharts using sessionId:", sessionId);
-  const response = await getChartHistory(sessionId, ingestionId);
+  const response = (await getChartHistory(sessionId, ingestionId)) as
+    | ChartHistoryResponse
+    | ChartHistoryItem[];
   console.log("📊 fetchCharts - full response:", response);
 
-  let historyArray = response.history;
+  let historyArray = (response as ChartHistoryResponse).history;
   if (!historyArray && Array.isArray(response)) {
     historyArray = response;
   }
@@ -57,7 +69,7 @@ const fetchCharts = async (ingestionId: string) => {
     return [];
   }
 
-  const charts = historyArray.map((item: any) => {
+  const charts = historyArray.map((item: ChartHistoryItem) => {
     console.log("📊 Processing chart item:", item);
     let parsedConfig;
     try {
@@ -347,7 +359,7 @@ function ChartSkeleton({ prompt }: { prompt: string }) {
 export default function ChartGallery() {
   const { selectedIngestion } = useIngestion();
   const [layout, setLayout] = useState<"grid" | "list">("grid");
-  const [localOrder, setLocalOrder] = useState<Chart[]>([]);
+  const [orderedIds, setOrderedIds] = useState<string[]>([]);
   const [generatingPrompts, setGeneratingPrompts] = useState<string[]>([]);
 
   const {
@@ -366,30 +378,16 @@ export default function ChartGallery() {
   );
 
   useEffect(() => {
-    if (charts) {
-      setLocalOrder((prev) => {
-        if (prev.length === 0) return charts;
-
-        const existingIds = new Set(prev.map((c) => c.id));
-        const chartMap = new Map(charts.map((c) => [c.id, c]));
-
-        const orderedExisting = prev
-          .filter((c) => chartMap.has(c.id))
-          .map((c) => chartMap.get(c.id)!);
-
-        const newItems = charts.filter((c) => !existingIds.has(c.id));
-
-        return [...newItems, ...orderedExisting];
-      });
-    }
-  }, [charts]);
-
-  useEffect(() => {
-    const handleStart = (e: any) => {
-      setGeneratingPrompts((prev) => [...prev, e.detail]);
+    const handleStart = (event: Event) => {
+      const e = event as CustomEvent<string>;
+      const detail = String(e.detail || "");
+      if (!detail) return;
+      setGeneratingPrompts((prev) => [...prev, detail]);
     };
-    const handleEnd = (e: any) => {
-      setGeneratingPrompts((prev) => prev.filter((p) => p !== e.detail));
+    const handleEnd = (event: Event) => {
+      const e = event as CustomEvent<string>;
+      const detail = String(e.detail || "");
+      setGeneratingPrompts((prev) => prev.filter((p) => p !== detail));
       mutate();
     };
 
@@ -414,10 +412,23 @@ export default function ChartGallery() {
     try {
       await deleteChart(id, selectedIngestion);
       mutate();
-    } catch (err) {
+    } catch {
       alert("Failed to delete chart");
     }
   };
+
+  const chartList = useMemo(() => {
+    const source = charts || [];
+    if (!source.length || !orderedIds.length) return source;
+
+    const byId = new Map(source.map((c) => [c.id, c]));
+    const orderedExisting = orderedIds
+      .map((id) => byId.get(id))
+      .filter((c): c is Chart => Boolean(c));
+    const seen = new Set(orderedExisting.map((c) => c.id));
+    const newItems = source.filter((c) => !seen.has(c.id));
+    return [...newItems, ...orderedExisting];
+  }, [charts, orderedIds]);
 
   if (isLoading)
     return (
@@ -435,7 +446,6 @@ export default function ChartGallery() {
     );
   }
 
-  const chartList = localOrder || [];
   console.log(
     "📊 Rendering ChartGallery - chartList length:",
     chartList.length,
@@ -499,7 +509,7 @@ export default function ChartGallery() {
               (item: Chart) => item.id === over.id,
             );
             const newOrder = arrayMove(chartList, oldIndex, newIndex);
-            setLocalOrder(newOrder);
+            setOrderedIds(newOrder.map((c) => c.id));
           }
         }}
       >

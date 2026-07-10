@@ -11,8 +11,22 @@ const BuildTrendCharts = dynamic(() => import("@/components/BuildTrendCharts"), 
   loading: () => <div className="h-96 flex items-center justify-center text-slate-500 dark:text-white/30">Loading charts...</div>
 });
 
+interface BuildMetrics {
+  pass_rate?: number;
+  passed?: number;
+  failed?: number;
+  skipped_tests?: number;
+  total_duration_sec?: number;
+  avg_duration_sec?: number;
+}
+
+interface BuildSummary {
+  ingested_at?: string;
+  metrics?: BuildMetrics;
+}
+
 export default function BuildTrends() {
-  const [builds, setBuilds] = useState<any[]>([]);
+  const [builds, setBuilds] = useState<BuildSummary[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [limit, setLimit] = useState(5);
@@ -26,17 +40,21 @@ export default function BuildTrends() {
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         const data = await res.json();
         if (data.builds && Array.isArray(data.builds)) {
-          const sorted = [...data.builds].sort(
-            (a, b) => new Date(a.ingested_at).getTime() - new Date(b.ingested_at).getTime()
+          const buildRows = data.builds as BuildSummary[];
+          const sorted = [...buildRows].sort(
+            (a, b) =>
+              new Date(a.ingested_at || "1970-01-01T00:00:00Z").getTime() -
+              new Date(b.ingested_at || "1970-01-01T00:00:00Z").getTime()
           );
           setBuilds(sorted);
           if (sorted.length === 0) setError("No builds found.");
         } else {
           setError("Invalid data format.");
         }
-      } catch (err: any) {
+      } catch (err: unknown) {
         console.error(err);
-        setError(`Failed to load builds: ${err.message}`);
+        const message = err instanceof Error ? err.message : "Unknown error";
+        setError(`Failed to load builds: ${message}`);
       } finally {
         setLoading(false);
       }

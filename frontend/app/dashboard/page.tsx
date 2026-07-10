@@ -1,7 +1,6 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { TrendingUp, LogOut, Wifi, WifiOff, Plus, X } from "lucide-react";
 import ChartGallery from "@/components/ChartGallery";
@@ -15,9 +14,15 @@ import { getDataStatus, checkHealth, ingestFromConfigPath } from "@/lib/api";
 import { useIngestion } from "@/lib/IngestionContext";
 
 export default function Dashboard() {
-  const router = useRouter();
   const { selectedIngestion } = useIngestion();
-  const [dataStatus, setDataStatus] = useState<any>(null);
+  const [dataStatus, setDataStatus] = useState<{
+    has_data?: boolean;
+    total_rows?: number;
+    status_summary?: {
+      passed?: number;
+      failed?: number;
+    };
+  } | null>(null);
   const [backendConnected, setBackendConnected] = useState(false);
   const [refreshGallery, setRefreshGallery] = useState(0);
   const [isAddBuildOpen, setIsAddBuildOpen] = useState(false);
@@ -41,13 +46,13 @@ export default function Dashboard() {
   useEffect(() => {
     const checkConnection = async () => {
       try {
-        const health = await checkHealth();
+        await checkHealth();
         setBackendConnected(true);
         if (selectedIngestion) {
           const status = await getDataStatus(selectedIngestion);
           setDataStatus(status);
         }
-      } catch (error) {
+      } catch {
         setBackendConnected(false);
       }
     };
@@ -95,8 +100,9 @@ export default function Dashboard() {
         throw new Error(data.error || "Failed to save path");
       }
       setPathSaveStatus({ type: "success", message: "Path updated in config2.json" });
-    } catch (error: any) {
-      setPathSaveStatus({ type: "error", message: error.message || "Failed to save path." });
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : "Failed to save path.";
+      setPathSaveStatus({ type: "error", message });
     } finally {
       setIsSavingPath(false);
     }
@@ -130,8 +136,9 @@ export default function Dashboard() {
       setTimeout(() => {
         window.location.reload();
       }, 1200);
-    } catch (error: any) {
-      setPathSaveStatus({ type: "error", message: error.message || "Ingestion failed." });
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : "Ingestion failed.";
+      setPathSaveStatus({ type: "error", message });
     } finally {
       setIsIngesting(false);
     }

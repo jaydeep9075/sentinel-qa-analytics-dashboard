@@ -4,7 +4,11 @@ const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
 function getAuthHeaders(): Record<string, string> {
   const token = typeof window !== "undefined" ? localStorage.getItem("token") : null;
-  return token ? { Authorization: `Bearer ${token}` } : {};
+  const workspaceId = typeof window !== "undefined" ? localStorage.getItem("workspace_id") : null;
+  const headers: Record<string, string> = {};
+  if (token) headers.Authorization = `Bearer ${token}`;
+  if (workspaceId) headers["x-workspace-id"] = workspaceId;
+  return headers;
 }
 
 export async function checkHealth() {

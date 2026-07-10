@@ -9,7 +9,7 @@ import { generateChart } from "@/lib/api";
 import { getRoleSuggestions } from "@/lib/roleSuggestions";
 
 export default function FloatingChart() {
-  const { selectedRole } = useRB();
+  const { selectedRole, selectedProject } = useRB();
   const { selectedIngestion } = useIngestion();
   const [isOpen, setIsOpen] = useState(false);
   const [isGenerating, setIsGenerating] = useState(false);
@@ -30,7 +30,7 @@ export default function FloatingChart() {
     window.dispatchEvent(new CustomEvent("chart-generating-start", { detail: prompt }));
 
     try {
-      await generateChart(prompt, selectedIngestion);
+      await generateChart(prompt, selectedIngestion, selectedRole, selectedProject);
       setGeneratingPrompt("✅ Chart ready! See it at the top of the gallery.");
       window.dispatchEvent(new CustomEvent("chart-generated"));
       // Auto‑close after a short delay
@@ -38,8 +38,9 @@ export default function FloatingChart() {
         setIsOpen(false);
         setGeneratingPrompt(null);
       }, 1500);
-    } catch (error: any) {
-      setGeneratingPrompt(`❌ Failed: ${error.message}`);
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : "Unknown error";
+      setGeneratingPrompt(`❌ Failed: ${message}`);
       setTimeout(() => setGeneratingPrompt(null), 4000);
     } finally {
       setIsGenerating(false);

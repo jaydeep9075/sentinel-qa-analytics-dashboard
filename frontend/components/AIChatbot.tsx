@@ -1,12 +1,12 @@
 "use client";
 
 import { useState, useRef, useEffect, useCallback } from "react";
-import { sendChatMessage } from "@/lib/api";
+import { sendChatMessage, getChatHistory } from "@/lib/api";
 import { useIngestion } from "@/lib/IngestionContext";
 import { useRB } from "@/lib/RBContext";
 import { getRoleSuggestions } from "@/lib/roleSuggestions";
 import ReactMarkdown from "react-markdown";
-import { Trash2, RefreshCw } from "lucide-react";
+import { Trash2 } from "lucide-react";
 
 interface Message {
   role: "user" | "ai";
@@ -14,13 +14,23 @@ interface Message {
   timestamp: number;
 }
 
+interface ChatHistoryItem {
+  prompt?: string;
+  response?: string;
+  created_at?: string;
+}
+
 const STORAGE_KEY_PREFIX = "sentinel_chat_";
 
 export default function AIChatbot() {
   const { selectedIngestion } = useIngestion();
   const { selectedRole } = useRB();
+  const username =
+    typeof window !== "undefined"
+      ? (localStorage.getItem("username") || "guest").trim().toLowerCase() || "guest"
+      : "guest";
 
-  const storageKey = `${STORAGE_KEY_PREFIX}${selectedIngestion || "default"}`;
+  const storageKey = `${STORAGE_KEY_PREFIX}${username}_${selectedIngestion || "default"}`;
 
   const [messages, setMessages] = useState<Message[]>(() => {
     if (typeof window === "undefined") return [defaultWelcome()];
@@ -64,6 +74,41 @@ export default function AIChatbot() {
     } catch {}
     setMessages([defaultWelcome()]);
   }, [storageKey]);
+
+  // Hydrate from backend all-session history so users keep prior conversations across logins.
+  useEffect(() => {
+    if (!selectedIngestion) return;
+    let mounted = true;
+
+    (async () => {
+      try {
+        const resp = await getChatHistory("__all__", selectedIngestion);
+        const history = Array.isArray(resp?.history) ? resp.history : [];
+        if (!history.length || !mounted) return;
+
+        const mapped: Message[] = (history as ChatHistoryItem[])
+          .slice()
+          .reverse()
+          .flatMap((item) => {
+            const ts = item?.created_at ? new Date(item.created_at).getTime() : Date.now();
+            const out: Message[] = [];
+            if (item?.prompt) out.push({ role: "user", content: String(item.prompt), timestamp: ts });
+            if (item?.response) out.push({ role: "ai", content: String(item.response), timestamp: ts + 1 });
+            return out;
+          });
+
+        if (mapped.length) {
+          setMessages(mapped.slice(-100));
+        }
+      } catch {
+        // Keep local history fallback if API history is unavailable.
+      }
+    })();
+
+    return () => {
+      mounted = false;
+    };
+  }, [selectedIngestion]);
 
   // Auto-scroll
   useEffect(() => {
@@ -168,24 +213,24 @@ export default function AIChatbot() {
               {msg.role === "ai" ? (
                 <ReactMarkdown
                   components={{
-                    ol: ({ node, ...props }) => (
+                    ol: ({ ...props }) => (
                       <ol className="list-decimal pl-5 my-1.5 space-y-0.5" {...props} />
                     ),
-                    ul: ({ node, ...props }) => (
+                    ul: ({ ...props }) => (
                       <ul className="list-disc pl-5 my-1.5 space-y-0.5" {...props} />
                     ),
-                    li: ({ node, ...props }) => <li className="text-sm" {...props} />,
-                    strong: ({ node, ...props }) => (
+                    li: ({ ...props }) => <li className="text-sm" {...props} />,
+                    strong: ({ ...props }) => (
                       <strong className="font-semibold text-white" {...props} />
                     ),
-                    p: ({ node, ...props }) => <p className="my-1" {...props} />,
-                    code: ({ node, ...props }) => (
+                    p: ({ ...props }) => <p className="my-1" {...props} />,
+                    code: ({ ...props }) => (
                       <code
                         className="bg-white/10 rounded px-1 py-0.5 text-xs font-mono text-blue-300"
                         {...props}
                       />
                     ),
-                    h3: ({ node, ...props }) => (
+                    h3: ({ ...props }) => (
                       <h3 className="font-semibold text-white mt-2 mb-1" {...props} />
                     ),
                   }}

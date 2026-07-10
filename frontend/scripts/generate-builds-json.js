@@ -1,8 +1,13 @@
-const fs = require('fs');
-const path = require('path');
+import fs from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 
-// Absolute path to your data folder – adjust if needed
-const dataDir = 'C:\\Users\\ADITYA THODSARE\\Desktop\\verified-op-branch\\sentinel-qa-analytics-dashboard\\data';
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+const repoRoot = path.resolve(__dirname, "../..");
+
+// Prefer env override; otherwise use project-relative data directory.
+const dataDir = process.env.SENTINEL_DATA_DIR || path.join(repoRoot, "data");
 const publicDir = path.join(process.cwd(), 'public');
 const outputPath = path.join(publicDir, 'builds.json');
 

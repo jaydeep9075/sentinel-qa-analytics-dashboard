@@ -51,12 +51,13 @@ export default function FloatingChat() {
         selectedRole
       );
       setMessages((prev) => [...prev, { role: "ai", content: answer }]);
-    } catch (error: any) {
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : "Could not get answer from AI service.";
       setMessages((prev) => [
         ...prev,
         {
           role: "ai",
-          content: `❌ Error: ${error.message || "Could not get answer from AI service."}`,
+          content: `❌ Error: ${message}`,
         },
       ]);
     } finally {

@@ -1,6 +1,7 @@
 import logging
 import uuid
 import json
+import tempfile
 import pandas as pd
 from fastapi import FastAPI, HTTPException, Header, Depends
 from fastapi.middleware.cors import CORSMiddleware
@@ -26,6 +27,31 @@ class ChartRequest(BaseModel):
 
 class IngestRequest(BaseModel):
     source_path: str
+    source_type: Optional[str] = None
+    workspace_id: Optional[str] = None
+
+
+def _normalize_workspace(workspace_id: Optional[str], current_user: Optional[dict] = None) -> str:
+    if workspace_id:
+        return str(workspace_id).strip().lower()
+    if current_user and current_user.get("workspace_id"):
+        return str(current_user["workspace_id"]).strip().lower()
+    return str(getattr(config, "DEFAULT_WORKSPACE_ID", "default") or "default").strip().lower()
+
+
+def _is_admin_role(role: Optional[str]) -> bool:
+    return str(role or "").strip().lower() in {"admin", "cto"}
+
+
+def _infer_source_type(source_path: str, explicit: Optional[str]) -> str:
+    if explicit:
+        return str(explicit).strip().lower()
+    p = str(source_path or "").strip().lower()
+    if not p:
+        return "file"
+    if "allure" in p and ("result" in p or p.endswith("/") or p.endswith("\\")):
+        return "allure"
+    return "file"
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -52,51 +78,67 @@ async def health():
     return {"status": "ok", "data_path": str(config.DATA_BASE_PATH)}
 
 @app.post("/auth/login")
-async def login(username: str, password: str):
-    user = authenticate_user(username, password)
+async def login(username: str, password: str, workspace_id: Optional[str] = None):
+    user = authenticate_user(username, password, workspace_id=workspace_id)
     if not user:
         raise HTTPException(status_code=401, detail="Invalid credentials")
-    access_token = create_access_token(data={"sub": user["username"], "role": user["role"]})
-    return {"access_token": access_token, "token_type": "bearer", "role": user["role"]}
+    ws = _normalize_workspace(user.get("workspace_id"), user)
+    access_token = create_access_token(
+        data={"sub": user["username"], "role": user["role"], "workspace_id": ws}
+    )
+    return {
+        "access_token": access_token,
+        "token_type": "bearer",
+        "role": user["role"],
+        "workspace_id": ws,
+    }
 
 @app.post("/ingest/config2")
-async def ingest_from_config2(request: IngestRequest):
+async def ingest_from_config2(request: IngestRequest, current_user: dict = Depends(get_current_user)):
     source_path = str(request.source_path or "").strip()
     if not source_path:
         raise HTTPException(status_code=400, detail="source_path is required")
 
-    config2_path = config.BASE_DIR / "config2.json"
-    if not config2_path.exists():
-        raise HTTPException(status_code=404, detail="config2.json not found")
-
-    try:
-        with open(config2_path, "r", encoding="utf-8") as f:
-            cfg = json.load(f)
-    except Exception as e:
-        logger.exception(f"Failed to read config2.json: {e}")
-        raise HTTPException(status_code=500, detail="Failed to read config2.json")
-
-    if not isinstance(cfg.get("sources"), list) or len(cfg["sources"]) == 0:
-        raise HTTPException(status_code=400, detail="Invalid config2.json: sources missing")
-
-    # Update the first source's path
-    cfg["sources"][0]["path"] = source_path
-    with open(config2_path, "w", encoding="utf-8") as f:
-        json.dump(cfg, f, indent=4, ensure_ascii=False)
-
     build_id = f"ingestion_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}"
+    source_type = _infer_source_type(source_path, request.source_type)
+    workspace_id = _normalize_workspace(request.workspace_id, current_user)
+
+    dynamic_cfg = {
+        "ingestion_name": f"{workspace_id}_{source_type}",
+        "sources": [
+            {
+                "type": source_type,
+                "path": source_path,
+                "params": {"path": source_path},
+            }
+        ],
+        "output": {"base_path": str(config.DATA_BASE_PATH)},
+    }
 
     try:
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".json", encoding="utf-8", delete=False) as tf:
+            json.dump(dynamic_cfg, tf, indent=2, ensure_ascii=False)
+            temp_cfg_path = tf.name
+
         ingester = UniversalIngester(data_base_path=str(config.DATA_BASE_PATH))
-        ingester.run_ingestion_from_config(str(config2_path), build_id=build_id)
+        ingester.run_ingestion_from_config(str(temp_cfg_path), build_id=build_id)
     except Exception as e:
         logger.exception(f"Ingestion failed: {e}")
         raise HTTPException(status_code=500, detail=f"Ingestion failed: {str(e)}")
+    finally:
+        try:
+            if "temp_cfg_path" in locals():
+                import os
+                os.remove(temp_cfg_path)
+        except Exception:
+            pass
 
     return {
         "success": True,
         "build_id": build_id,
-        "source_path": source_path
+        "source_path": source_path,
+        "source_type": source_type,
+        "workspace_id": workspace_id,
     }
 
 # -------------------- PROTECTED ENDPOINTS (all require valid token) --------------------
@@ -107,13 +149,17 @@ async def chat(
     x_ingestion_id: str = Header(...),
     x_role: Optional[str] = Header(None),
     x_project: Optional[str] = Header(None),
+    x_workspace_id: Optional[str] = Header(None),
     current_user: dict = Depends(get_current_user)
 ):
     session_id = x_session_id or request.session_id or str(uuid.uuid4())
     try:
         response = await handlers.handle_chat(
             request.message, session_id, x_ingestion_id, 
-            role=x_role, project_id=x_project
+            role=x_role,
+            project_id=x_project,
+            user_id=current_user["username"],
+            workspace_id=_normalize_workspace(x_workspace_id, current_user),
         )
         return {"response": response, "session_id": session_id}
     except Exception as e:
@@ -127,12 +173,16 @@ async def chart(
     x_ingestion_id: str = Header(...),
     x_role: Optional[str] = Header(None),
     x_project: Optional[str] = Header(None),
+    x_workspace_id: Optional[str] = Header(None),
     current_user: dict = Depends(get_current_user)
 ):
     session_id = x_session_id or request.session_id or str(uuid.uuid4())
     chart_json, error = await handlers.handle_chart(
         request.message, session_id, x_ingestion_id,
-        role=x_role, project_id=x_project
+        role=x_role,
+        project_id=x_project,
+        user_id=current_user["username"],
+        workspace_id=_normalize_workspace(x_workspace_id, current_user),
     )
     if error:
         return {"error": error, "session_id": session_id}
@@ -142,24 +192,48 @@ async def chart(
 async def get_chat_history_endpoint(
     session_id: str,
     x_ingestion_id: str = Header(...),
+    x_workspace_id: Optional[str] = Header(None),
+    target_user: Optional[str] = None,
     current_user: dict = Depends(get_current_user)
 ):
     normalized_ingestion_id = str(x_ingestion_id or "").strip()
     if state.current_ingestion_id != normalized_ingestion_id or state.duck_conn is None or state.lance_db is None:
         data_loader.init_data(normalized_ingestion_id)
-    history = memory.get_chat_history(session_id, limit=100)
+    target = str(target_user or "").strip().lower()
+    if target and target != str(current_user["username"]).strip().lower() and not _is_admin_role(current_user.get("role")):
+        raise HTTPException(status_code=403, detail="Not allowed to access other users history")
+
+    history = memory.get_chat_history(
+        session_id,
+        limit=100,
+        user_id=target or current_user["username"],
+        ingestion_id=normalized_ingestion_id,
+        workspace_id=_normalize_workspace(x_workspace_id, current_user),
+    )
     return {"session_id": session_id, "history": history}
 
 @app.get("/chart/history/{session_id}")
 async def get_chart_history_endpoint(
     session_id: str,
     x_ingestion_id: str = Header(...),
+    x_workspace_id: Optional[str] = Header(None),
+    target_user: Optional[str] = None,
     current_user: dict = Depends(get_current_user)
 ):
     normalized_ingestion_id = str(x_ingestion_id or "").strip()
     if state.current_ingestion_id != normalized_ingestion_id or state.duck_conn is None or state.lance_db is None:
         data_loader.init_data(normalized_ingestion_id)
-    history = memory.get_chart_history(session_id, limit=100)
+    target = str(target_user or "").strip().lower()
+    if target and target != str(current_user["username"]).strip().lower() and not _is_admin_role(current_user.get("role")):
+        raise HTTPException(status_code=403, detail="Not allowed to access other users history")
+
+    history = memory.get_chart_history(
+        session_id,
+        limit=100,
+        user_id=target or current_user["username"],
+        ingestion_id=normalized_ingestion_id,
+        workspace_id=_normalize_workspace(x_workspace_id, current_user),
+    )
     return {"session_id": session_id, "history": history}
 
 @app.delete("/chart/{chart_id}")
@@ -167,6 +241,7 @@ async def delete_chart(
     chart_id: str,
     x_session_id: Optional[str] = Header(None),
     x_ingestion_id: str = Header(...),
+    x_workspace_id: Optional[str] = Header(None),
     current_user: dict = Depends(get_current_user)
 ):
     normalized_ingestion_id = str(x_ingestion_id or "").strip()
@@ -176,18 +251,33 @@ async def delete_chart(
         return {"error": "Chart history not available"}
     try:
         table = state.lance_db.open_table("chart_history")
-        df = table.to_pandas()
-        df = df[df["id"] != chart_id]
-        if len(df) == 0:
+        all_df = table.to_pandas()
+        if all_df.empty:
+            return {"error": "Chart not found"}
+
+        user_key = str(current_user["username"]).strip().lower()
+        ws_key = _normalize_workspace(x_workspace_id, current_user)
+        if "user_id" in all_df.columns:
+            owned = all_df[(all_df["user_id"] == user_key) & (all_df["id"] == chart_id)]
+            if "workspace_id" in all_df.columns:
+                owned = owned[owned["workspace_id"] == ws_key]
+        else:
+            owned = all_df[all_df["id"] == chart_id]
+
+        if owned.empty:
+            return {"error": "Chart not found or not owned by current user"}
+
+        updated_df = all_df[all_df["id"] != chart_id]
+        if len(updated_df) == 0:
             state.lance_db.drop_table("chart_history")
             empty_df = pd.DataFrame(columns=[
-                "id", "session_id", "type", "prompt", "response", "config",
+                "id", "workspace_id", "user_id", "ingestion_id", "session_id", "type", "prompt", "response", "config",
                 "created_at", "metadata"
             ])
             state.lance_db.create_table("chart_history", empty_df)
         else:
             state.lance_db.drop_table("chart_history")
-            state.lance_db.create_table("chart_history", df)
+            state.lance_db.create_table("chart_history", updated_df)
         return {"success": True}
     except Exception as e:
         logger.error(f"Error deleting chart: {e}")

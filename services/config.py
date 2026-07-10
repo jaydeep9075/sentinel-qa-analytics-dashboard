@@ -52,6 +52,7 @@ AUTH_SEED_FILE = os.getenv("AUTH_SEED_FILE", str(BASE_DIR / "auth_seed_users.jso
 
 # Misc
 MAX_HISTORY_TURNS = 10
+DEFAULT_WORKSPACE_ID = os.getenv("DEFAULT_WORKSPACE_ID", "default").strip().lower() or "default"
 
 # RBA: Projects and roles root directories
 PROJECTS_ROOT = os.getenv("PROJECTS_ROOT", str(BASE_DIR / "projects"))

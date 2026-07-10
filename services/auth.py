@@ -30,6 +30,13 @@ _memory_users = {}
 security = HTTPBearer(auto_error=False)
 
 
+def _normalize_workspace(workspace_id: Optional[str]) -> str:
+    ws = str(workspace_id or "").strip().lower()
+    if not ws:
+        ws = str(getattr(config, "DEFAULT_WORKSPACE_ID", "default") or "default").strip().lower()
+    return ws or "default"
+
+
 def _hash_password(password: str) -> str:
     rounds = int(config.BCRYPT_ROUNDS)
     return bcrypt.hashpw(password.encode("utf-8"), bcrypt.gensalt(rounds=rounds)).decode("utf-8")
@@ -102,7 +109,7 @@ def initialize_auth_store() -> None:
     _auth_store_initialized = True
 
 
-def authenticate_user(username: str, password: str):
+def authenticate_user(username: str, password: str, workspace_id: Optional[str] = None):
     initialize_auth_store()
     uname = str(username or "").strip().lower()
 
@@ -117,7 +124,11 @@ def authenticate_user(username: str, password: str):
 
     # Verify password against stored hash
     if bcrypt.checkpw(password.encode('utf-8'), user["password_hash"].encode('utf-8')):
-        return {"username": user["username"], "role": user["role"]}
+        return {
+            "username": user["username"],
+            "role": user["role"],
+            "workspace_id": _normalize_workspace((user or {}).get("workspace_id") or workspace_id),
+        }
     return None
 
 
@@ -144,8 +155,9 @@ async def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(s
         payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
         username: str = payload.get("sub")
         role: str = payload.get("role")
+        workspace_id: str = _normalize_workspace(payload.get("workspace_id"))
         if username is None or role is None:
             raise HTTPException(status_code=401, detail="Invalid token")
-        return {"username": username, "role": role}
+        return {"username": username, "role": role, "workspace_id": workspace_id}
     except JWTError:
         raise HTTPException(status_code=401, detail="Invalid token")

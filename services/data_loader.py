@@ -103,8 +103,32 @@ def init_data(ingestion_id: str) -> bool:
     logger.info(f"LanceDB tables for '{ingestion_id}': {available}")
 
     if "structured_test_results" not in available:
-        logger.warning("No structured_test_results table found")
-        return False
+        # Generalized fallback for arbitrary ingested data.
+        structured_candidates = [t for t in available if t.startswith("structured_")]
+        if not structured_candidates:
+            logger.warning("No structured tables found for ingestion")
+            return False
+        try:
+            primary_table = structured_candidates[0]
+            generic_df = state.lance_db.open_table(primary_table).to_pandas()
+            flat = _coerce_generic_to_flattened_tests(generic_df)
+            state.duck_conn.register("flattened_tests", flat)
+            logger.info(
+                f"Using generalized fallback from {primary_table}: registered flattened_tests with {len(flat)} rows"
+            )
+
+            df_mod = _compute_module_metrics(flat)
+            state.duck_conn.register("module_metrics", df_mod)
+            df_proj = _compute_project_metrics(df_mod)
+            state.duck_conn.register("project_metrics", df_proj)
+            tc = _build_test_cases(flat)
+            state.duck_conn.register("test_cases", tc)
+
+            _log_summary(state.duck_conn)
+            return True
+        except Exception as exc:
+            logger.error(f"Generalized fallback init failed: {exc}", exc_info=True)
+            return False
 
     try:
         df_raw = state.lance_db.open_table("structured_test_results").to_pandas()
@@ -395,6 +419,50 @@ def _log_summary(conn: duckdb.DuckDBPyConnection):
             logger.info(f"  {proj} → {mod} [{plat}]: {total} tests, {failed} failed")
     except Exception as e:
         logger.warning(f"Could not log hierarchy: {e}")
+
+
+def _coerce_generic_to_flattened_tests(df: pd.DataFrame) -> pd.DataFrame:
+    """Best-effort adapter for arbitrary structured datasets.
+    Produces the canonical columns expected by chat/chart logic.
+    """
+    if df is None or df.empty:
+        return pd.DataFrame(columns=[
+            "result_id", "test_name", "build_id", "executed_at", "status", "duration", "error",
+            "spec_file", "project_name", "module_name", "platform_type", "browser",
+        ])
+
+    out = pd.DataFrame()
+    cols = {c.lower(): c for c in df.columns}
+
+    def _pick(*names, default=""):
+        for n in names:
+            key = n.lower()
+            if key in cols:
+                return df[cols[key]]
+        return pd.Series([default] * len(df))
+
+    out["result_id"] = _pick("id", "result_id", default="")
+    out["test_name"] = _pick("test_name", "name", "title", "full_name", default="record")
+    out["build_id"] = _pick("build_id", default="")
+    out["executed_at"] = _pick("executed_at", "timestamp", "created_at", "updated_at", default="")
+
+    status_series = _pick("status", "state", "result", "outcome", default="unknown").astype(str)
+    out["status"] = status_series.apply(normalize_status)
+
+    duration_raw = _pick("duration_seconds", "duration", "latency", default=0)
+    out["duration"] = pd.to_numeric(duration_raw, errors="coerce").fillna(0).astype(float)
+
+    out["error"] = _pick("error", "error_message", "message", default="").astype(str)
+    out["spec_file"] = _pick("spec_file", "file", "path", default="").astype(str)
+    out["project_name"] = _pick("project_name", "project", "dataset", default="unknown").astype(str)
+    out["module_name"] = _pick("module_name", "module", "category", "type", default="unknown").astype(str)
+    out["platform_type"] = _pick("platform_type", default="desktop").astype(str)
+    out["browser"] = _pick("browser", "client", default="GoogleChrome").astype(str)
+
+    out["platform_type"] = out["platform_type"].replace({"": "desktop", None: "desktop"})
+    out["project_name"] = out["project_name"].replace({"": "unknown", None: "unknown"})
+    out["module_name"] = out["module_name"].replace({"": "unknown", None: "unknown"})
+    return out
 
 
 # ── public API ────────────────────────────────────────────────────────────────

@@ -106,8 +106,13 @@ def _fallback_sql(prompt: str, sql_map: dict) -> str:
     return ""
 
 
-def _build_history(session_id: str, limit: int = 20) -> str:
-    history = memory.get_chat_history(session_id, limit=limit)
+def _build_history(session_id: str, user_id: str, ingestion_id: str, limit: int = 20) -> str:
+    history = memory.get_chat_history(
+        session_id,
+        limit=limit,
+        user_id=user_id,
+        ingestion_id=ingestion_id,
+    )
     if not history:
         return "(no prior conversation)"
     lines = []
@@ -140,7 +145,8 @@ def _make_title(prompt: str) -> str:
 # ---------------------------------------------------------------------------
 
 async def handle_chat(user_message: str, session_id: str, ingestion_id: str,
-                      role: str = None, project_id: str = None):
+                      role: str = None, project_id: str = None,
+                      user_id: str = "anonymous", workspace_id: str = "default"):
     nid = str(ingestion_id or "").strip()
     if state.current_ingestion_id != nid or not state.duck_conn or not state.lance_db:
         if not data_loader.init_data(nid):
@@ -148,8 +154,26 @@ async def handle_chat(user_message: str, session_id: str, ingestion_id: str,
 
     llm = llm_client.LLMClient()
 
+    learning_context = memory.get_learning_context(user_id, nid, workspace_id, user_message, limit=6)
+    related_concepts = memory.get_related_concepts(user_id, nid, workspace_id, user_message, limit=8)
+
+    augmented_message = user_message
+    if learning_context:
+        snippets = []
+        for item in learning_context[:4]:
+            p = str(item.get("prompt", "")).strip()
+            r = str(item.get("response", "")).strip()
+            snippets.append(f"Q: {p}\nA: {r[:300]}")
+        augmented_message += "\n\n[LEARNED USER CONTEXT]\n" + "\n\n".join(snippets)
+    if related_concepts:
+        concepts = ", ".join([c["concept"] for c in related_concepts])
+        augmented_message += f"\n\n[RELATED CONCEPTS]\n{concepts}"
+
     raw = llm.generate(
-        CHAT_DECISION_PROMPT.format(history=_build_history(session_id), user_message=user_message),
+        CHAT_DECISION_PROMPT.format(
+            history=_build_history(session_id, user_id, nid),
+            user_message=augmented_message,
+        ),
         temperature=0.05,
     )
     if not raw:
@@ -205,7 +229,7 @@ async def handle_chat(user_message: str, session_id: str, ingestion_id: str,
                     df_safe[col] = df_safe[col].astype(str)
                 df_safe = df_safe.where(pd.notna(df_safe), other="")
                 answer_prompt = CHAT_ANSWER_PROMPT.format(
-                    user_message=user_message,
+                    user_message=augmented_message,
                     row_count=len(df),
                     data_json=df_safe.head(50).to_json(orient="records", force_ascii=False),
                 )
@@ -231,8 +255,17 @@ async def handle_chat(user_message: str, session_id: str, ingestion_id: str,
     else:
         response = str(data) if data else "I'm not sure how to answer that. Try rephrasing."
 
-    memory.store_chat_message(session_id, "user", user_message)
-    memory.store_chat_message(session_id, "assistant", response)
+    memory.store_chat_message(
+        session_id, "user", user_message,
+        user_id=user_id, ingestion_id=nid, workspace_id=workspace_id,
+    )
+    memory.store_chat_message(
+        session_id, "assistant", response,
+        user_id=user_id, ingestion_id=nid, workspace_id=workspace_id,
+    )
+    memory.learn_from_interaction(
+        user_id, nid, session_id, workspace_id, user_message, response, kind="chat"
+    )
     return response
 
 
@@ -241,7 +274,8 @@ async def handle_chat(user_message: str, session_id: str, ingestion_id: str,
 # ---------------------------------------------------------------------------
 
 async def handle_chart(user_prompt: str, session_id: str, ingestion_id: str,
-                       role: str = None, project_id: str = None):
+                       role: str = None, project_id: str = None,
+                       user_id: str = "anonymous", workspace_id: str = "default"):
     nid = str(ingestion_id or "").strip()
     if state.current_ingestion_id != nid or not state.duck_conn or not state.lance_db:
         if not data_loader.init_data(nid):
@@ -297,10 +331,10 @@ async def handle_chart(user_prompt: str, session_id: str, ingestion_id: str,
         for k in list(_sql_cache.keys())[:20]:
             del _sql_cache[k]
 
-    return _generate_chart(df, user_prompt, session_id, sql, chart_type, llm)
+    return _generate_chart(df, user_prompt, session_id, sql, chart_type, llm, user_id, nid, workspace_id)
 
 
-def _generate_chart(df, user_prompt, session_id, sql, chart_type, llm):
+def _generate_chart(df, user_prompt, session_id, sql, chart_type, llm, user_id, ingestion_id, workspace_id):
     if not _is_df_usable(df):
         return None, "No data available."
     df = df.dropna(how="all")
@@ -345,18 +379,31 @@ def _generate_chart(df, user_prompt, session_id, sql, chart_type, llm):
            not getattr(fig.layout.title, "text", None):
             fig.update_layout(title=dict(text=title))
         chart_json = fig.to_json()
-        memory.store_chart(session_id, user_prompt, chart_json, {"sql": sql, "chart_type": chart_type})
+        memory.store_chart(
+            session_id,
+            user_prompt,
+            chart_json,
+            {"sql": sql, "chart_type": chart_type},
+            user_id=user_id,
+            ingestion_id=ingestion_id,
+            workspace_id=workspace_id,
+        )
+        memory.learn_from_interaction(
+            user_id, ingestion_id, session_id, workspace_id, user_prompt, chart_json, kind="chart"
+        )
         return chart_json, None
     except Exception as exc:
         logger.error(f"Chart exec error ({chart_type}): {exc}")
         try:
-            return _safe_fallback_chart(df, title, chart_type, user_prompt, session_id, sql)
+            return _safe_fallback_chart(
+                df, title, chart_type, user_prompt, session_id, sql, user_id, ingestion_id, workspace_id
+            )
         except Exception as fb:
             logger.error(f"Fallback chart failed: {fb}")
         return None, f"Chart generation failed: {exc}"
 
 
-def _safe_fallback_chart(df, title, chart_type, user_prompt, session_id, sql):
+def _safe_fallback_chart(df, title, chart_type, user_prompt, session_id, sql, user_id, ingestion_id, workspace_id):
     """100% deterministic fallback — no LLM."""
     import plotly.express as px
     import plotly.graph_objects as go
@@ -419,5 +466,16 @@ def _safe_fallback_chart(df, title, chart_type, user_prompt, session_id, sql):
 
     fig = _apply_chart_layout(fig)
     chart_json = fig.to_json()
-    memory.store_chart(session_id, user_prompt, chart_json, {"sql": sql, "fallback": True})
+    memory.store_chart(
+        session_id,
+        user_prompt,
+        chart_json,
+        {"sql": sql, "fallback": True},
+        user_id=user_id,
+        ingestion_id=ingestion_id,
+        workspace_id=workspace_id,
+    )
+    memory.learn_from_interaction(
+        user_id, ingestion_id, session_id, workspace_id, user_prompt, chart_json, kind="chart"
+    )
     return chart_json, None

@@ -12,7 +12,7 @@ interface AIChatInputProps {
 
 export default function AIChatInput({ onChartGenerated }: AIChatInputProps) {
   const { selectedIngestion } = useIngestion();
-  const { selectedRole } = useRB();
+  const { selectedRole, selectedProject } = useRB();
   const [prompt, setPrompt] = useState("");
   const [loading, setLoading] = useState(false);
   const [status, setStatus] = useState<string | null>(null);
@@ -30,7 +30,12 @@ export default function AIChatInput({ onChartGenerated }: AIChatInputProps) {
     window.dispatchEvent(new CustomEvent("chart-generating-start", { detail: activePrompt }));
 
     try {
-      const result = await generateChart(activePrompt, selectedIngestion);
+      const result = await generateChart(
+        activePrompt,
+        selectedIngestion,
+        selectedRole,
+        selectedProject,
+      );
       if (result.success) {
         setPrompt("");
         setStatus("Chart generated successfully!");
@@ -39,9 +44,10 @@ export default function AIChatInput({ onChartGenerated }: AIChatInputProps) {
       } else {
         throw new Error(result.error || "Generation failed");
       }
-    } catch (err: any) {
+    } catch (err: unknown) {
       console.error("Chart generation error:", err);
-      setStatus(`Failed: ${err.message}`);
+      const message = err instanceof Error ? err.message : "Unknown error";
+      setStatus(`Failed: ${message}`);
       setTimeout(() => setStatus(null), 5000);
     } finally {
       setLoading(false);

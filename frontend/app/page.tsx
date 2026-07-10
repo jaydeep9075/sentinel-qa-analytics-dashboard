@@ -1,7 +1,7 @@
 "use client";
 import Link from "next/link";
-import { motion, useMotionValue, useTransform, animate, useSpring, useMotionTemplate } from "framer-motion";
-import { useEffect, useState, useRef } from "react";
+import { motion, useMotionValue, useSpring, useMotionTemplate } from "framer-motion";
+import { useEffect, useRef } from "react";
 import BrandLogo from "@/components/BrandLogo";
 import {
   MessageSquare,
@@ -19,31 +19,8 @@ import {
   Star,
 } from "lucide-react";
 
-/* ───────── animated counter ───────── */
-function Counter({ target, suffix = "" }: { target: number; suffix?: string }) {
-  const count = useMotionValue(0);
-  const rounded = useTransform(count, (v) => Math.round(v));
-  const [display, setDisplay] = useState(0);
-
-  useEffect(() => {
-    const controls = animate(count, target, { duration: 2.5, ease: "easeOut" });
-    const unsub = rounded.on("change", (v) => setDisplay(v));
-    return () => { controls.stop(); unsub(); };
-  }, [count, rounded, target]);
-
-  return <>{display.toLocaleString()}{suffix}</>;
-}
-
 /* ───────── floating particles ───────── */
 function Particles() {
-  const [mounted, setMounted] = useState(false);
-  
-  useEffect(() => {
-    setMounted(true);
-  }, []);
-
-  if (!mounted) return null;
-
   return (
     <div className="pointer-events-none absolute inset-0 overflow-hidden" aria-hidden>
       {/* Cool animated grid background */}
@@ -51,18 +28,18 @@ function Particles() {
       
       {/* Floating glowing orbs with slow-medium speed */}
       {Array.from({ length: 30 }).map((_, i) => {
-        const size = Math.random() * 5 + 2;
-        const left = Math.random() * 100;
-        const top = Math.random() * 100;
-        const delay = Math.random() * 5;
-        const duration = Math.random() * 10 + 12; // Slow-medium: 12 to 22 seconds
-        const opacity = Math.random() * 0.5 + 0.2;
+        const size = 2 + ((i * 37) % 50) / 10;
+        const left = (i * 17) % 100;
+        const top = (i * 29) % 100;
+        const delay = (i * 7) % 5;
+        const duration = 12 + ((i * 11) % 10); // Slow-medium: 12 to 21 seconds
+        const opacity = 0.2 + (((i * 13) % 50) / 100);
         const colors = ["#00f0ff", "#a855f7", "#3b82f6"];
         const color = colors[i % 3];
         
-        // Randomize direction to make it look more organic
-        const yDist = (Math.random() * 40 + 30) * (Math.random() > 0.5 ? -1 : 1);
-        const xDist = (Math.random() * 30 + 20) * (Math.random() > 0.5 ? -1 : 1);
+        // Deterministic directional drift for render-pure motion.
+        const yDist = (30 + ((i * 19) % 40)) * (i % 2 === 0 ? -1 : 1);
+        const xDist = (20 + ((i * 23) % 30)) * (i % 3 === 0 ? -1 : 1);
         
         return (
           <motion.span
@@ -112,10 +89,7 @@ export default function LandingPage() {
   const smoothY = useSpring(mouseY, { stiffness: 20, damping: 25, mass: 1 });
   const backgroundTemplate = useMotionTemplate`radial-gradient(600px circle at ${smoothX}px ${smoothY}px, rgba(0,240,255,0.06), transparent 60%)`;
 
-  const [mounted, setMounted] = useState(false);
-
   useEffect(() => {
-    setMounted(true);
     // Center it initially to avoid snapping from top-left
     mouseX.set(window.innerWidth / 2);
     mouseY.set(window.innerHeight / 2);
@@ -128,7 +102,10 @@ export default function LandingPage() {
     return () => window.removeEventListener("mousemove", handler);
   }, [mouseX, mouseY]);
 
-  const launchHref = mounted && localStorage.getItem("token") ? "/dashboard" : "/login";
+  const launchHref =
+    typeof window !== "undefined" && localStorage.getItem("token")
+      ? "/dashboard"
+      : "/login";
 
   return (
     <div className="min-h-screen bg-[var(--background)] text-[var(--foreground)] selection:bg-cyan-500/30 overflow-x-hidden">
@@ -166,14 +143,12 @@ export default function LandingPage() {
       {/* ══════════ HERO ══════════ */}
       <section ref={heroRef} className="relative pt-36 pb-28 lg:pt-52 lg:pb-40">
         {/* radial glow follows mouse */}
-        {mounted && (
-          <motion.div
-            className="pointer-events-none absolute inset-0 transition-opacity duration-300"
-            style={{
-              background: backgroundTemplate,
-            }}
-          />
-        )}
+        <motion.div
+          className="pointer-events-none absolute inset-0 transition-opacity duration-300"
+          style={{
+            background: backgroundTemplate,
+          }}
+        />
         {/* static glow orbs */}
         <div className="absolute top-20 left-1/4 w-[500px] h-[500px] bg-cyan-500/[0.09] blur-[140px] rounded-full pointer-events-none" />
         <div className="absolute bottom-0 right-1/4 w-[400px] h-[400px] bg-purple-600/[0.08] blur-[120px] rounded-full pointer-events-none" />
@@ -218,18 +193,14 @@ export default function LandingPage() {
             transition={{ duration: 0.7, delay: 0.3 }}
             className="flex flex-col sm:flex-row items-center justify-center gap-4"
           >
-            {mounted ? (
-              <Link
-                href={launchHref}
-                className="group relative inline-flex items-center gap-3 bg-gradient-to-r from-cyan-500 to-blue-600 text-white font-semibold px-8 py-4 rounded-full shadow-[0_0_40px_rgba(0,240,255,0.35)] hover:shadow-[0_0_60px_rgba(0,240,255,0.5)] hover:-translate-y-0.5 transition-all"
-              >
-                <span className="absolute inset-0 rounded-full bg-gradient-to-r from-cyan-400 to-blue-500 opacity-0 group-hover:opacity-100 blur-xl transition-opacity" />
-                <span className="relative">Launch Dashboard</span>
-                <ArrowRight className="relative w-5 h-5 group-hover:translate-x-1 transition-transform" />
-              </Link>
-            ) : (
-              <div className="px-8 py-4 bg-slate-200 dark:bg-white/5 rounded-full w-48 h-14 animate-pulse"></div>
-            )}
+            <Link
+              href={launchHref}
+              className="group relative inline-flex items-center gap-3 bg-gradient-to-r from-cyan-500 to-blue-600 text-white font-semibold px-8 py-4 rounded-full shadow-[0_0_40px_rgba(0,240,255,0.35)] hover:shadow-[0_0_60px_rgba(0,240,255,0.5)] hover:-translate-y-0.5 transition-all"
+            >
+              <span className="absolute inset-0 rounded-full bg-gradient-to-r from-cyan-400 to-blue-500 opacity-0 group-hover:opacity-100 blur-xl transition-opacity" />
+              <span className="relative">Launch Dashboard</span>
+              <ArrowRight className="relative w-5 h-5 group-hover:translate-x-1 transition-transform" />
+            </Link>
             <a
               href="#features"
               className="inline-flex items-center gap-2 px-6 py-4 rounded-full border border-slate-300 text-slate-600 hover:text-slate-900 hover:border-slate-400 hover:bg-slate-100 dark:border-white/10 dark:text-white/60 dark:hover:text-white dark:hover:border-white/20 dark:hover:bg-white/[0.03] transition-all text-sm font-medium"
@@ -376,18 +347,14 @@ export default function LandingPage() {
               Ready to <span className="bg-gradient-to-r from-cyan-400 to-blue-500 bg-clip-text text-transparent drop-shadow-[0_0_20px_rgba(0,240,255,0.3)]">Transform</span> Your QA?
             </h2>
             <p className="text-slate-600 dark:text-white/40 mb-10 max-w-lg mx-auto">Stop drowning in spreadsheets. Start making decisions backed by AI-powered insights.</p>
-            {mounted ? (
-              <Link
-                href={launchHref}
-                className="group relative inline-flex items-center gap-3 bg-gradient-to-r from-cyan-500 to-blue-600 text-white font-semibold px-10 py-4 rounded-full shadow-[0_0_50px_rgba(0,240,255,0.35)] hover:shadow-[0_0_70px_rgba(0,240,255,0.5)] hover:-translate-y-0.5 transition-all"
-              >
-                <span className="absolute inset-0 rounded-full bg-gradient-to-r from-cyan-400 to-blue-500 opacity-0 group-hover:opacity-100 blur-xl transition-opacity" />
-                <span className="relative">Get Started</span>
-                <ArrowRight className="relative w-5 h-5 group-hover:translate-x-1 transition-transform" />
-              </Link>
-            ) : (
-              <div className="px-10 py-4 bg-slate-200 dark:bg-white/5 rounded-full w-48 h-14 mx-auto animate-pulse"></div>
-            )}
+            <Link
+              href={launchHref}
+              className="group relative inline-flex items-center gap-3 bg-gradient-to-r from-cyan-500 to-blue-600 text-white font-semibold px-10 py-4 rounded-full shadow-[0_0_50px_rgba(0,240,255,0.35)] hover:shadow-[0_0_70px_rgba(0,240,255,0.5)] hover:-translate-y-0.5 transition-all"
+            >
+              <span className="absolute inset-0 rounded-full bg-gradient-to-r from-cyan-400 to-blue-500 opacity-0 group-hover:opacity-100 blur-xl transition-opacity" />
+              <span className="relative">Get Started</span>
+              <ArrowRight className="relative w-5 h-5 group-hover:translate-x-1 transition-transform" />
+            </Link>
           </motion.div>
         </div>
       </section>

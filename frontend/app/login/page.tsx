@@ -10,11 +10,11 @@ function LoginParticles() {
   return (
     <div className="pointer-events-none absolute inset-0 overflow-hidden" aria-hidden>
       {Array.from({ length: 20 }).map((_, i) => {
-        const size = Math.random() * 2 + 1;
-        const left = Math.random() * 100;
-        const delay = Math.random() * 6;
-        const duration = Math.random() * 14 + 12;
-        const opacity = Math.random() * 0.25 + 0.05;
+        const size = 1 + (((i * 7) % 20) / 10);
+        const left = (i * 19) % 100;
+        const delay = (i * 3) % 6;
+        const duration = 12 + ((i * 11) % 14);
+        const opacity = 0.05 + (((i * 9) % 25) / 100);
         return (
           <motion.span
             key={i}
@@ -64,10 +64,12 @@ export default function LoginPage() {
       const data = await res.json();
       localStorage.setItem("token", data.access_token);
       localStorage.setItem("role", data.role);
+      localStorage.setItem("workspace_id", data.workspace_id || "default");
       localStorage.setItem("username", u);
       router.push("/dashboard");
-    } catch (err: any) {
-      setError(err.message || "Login failed");
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : "Login failed";
+      setError(message);
     }
   };
 
