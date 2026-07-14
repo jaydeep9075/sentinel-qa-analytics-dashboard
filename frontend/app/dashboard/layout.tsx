@@ -1,15 +1,19 @@
 "use client";
 
+import dynamic from "next/dynamic";
 import { useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { IngestionProvider } from "@/lib/IngestionContext";
 import { RBProvider } from "@/lib/RBContext";
 
-export default function DashboardLayout({
+function DashboardLayoutInner({
   children,
+  params,
 }: {
   children: React.ReactNode;
+  params: Promise<Record<string, string | string[] | undefined>>;
 }) {
+  void params;
   const router = useRouter();
   const token = typeof window !== "undefined" ? localStorage.getItem("token") : null;
 
@@ -34,3 +38,9 @@ export default function DashboardLayout({
     </RBProvider>
   );
 }
+
+const DashboardLayout = dynamic(async () => DashboardLayoutInner, {
+  ssr: false,
+});
+
+export default DashboardLayout;

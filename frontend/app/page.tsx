@@ -1,7 +1,7 @@
 "use client";
 import Link from "next/link";
 import { motion, useMotionValue, useSpring, useMotionTemplate } from "framer-motion";
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import BrandLogo from "@/components/BrandLogo";
 import {
   MessageSquare,
@@ -81,6 +81,7 @@ function NeonDivider() {
 /* ───────── main page ───────── */
 export default function LandingPage() {
   const heroRef = useRef<HTMLDivElement>(null);
+  const [launchHref, setLaunchHref] = useState("/login");
   
   // Smooth, lazy mouse follower using Framer Motion physics
   const mouseX = useMotionValue(0);
@@ -102,10 +103,11 @@ export default function LandingPage() {
     return () => window.removeEventListener("mousemove", handler);
   }, [mouseX, mouseY]);
 
-  const launchHref =
-    typeof window !== "undefined" && localStorage.getItem("token")
-      ? "/dashboard"
-      : "/login";
+  useEffect(() => {
+    if (localStorage.getItem("token")) {
+      setLaunchHref("/dashboard");
+    }
+  }, []);
 
   return (
     <div className="min-h-screen bg-[var(--background)] text-[var(--foreground)] selection:bg-cyan-500/30 overflow-x-hidden">

@@ -103,10 +103,9 @@ def _ensure_chat_table():
                     old_df[col] = [str(uuid.uuid4()) for _ in range(len(old_df))]
 
         old_df = old_df[[
-            "id", "user_id", "ingestion_id", "session_id", "type",
+            "id", "workspace_id", "user_id", "ingestion_id", "session_id", "type",
             "prompt", "response", "config", "created_at", "metadata",
         ]]
-        old_df.insert(1, "workspace_id", old_df.pop("workspace_id"))
         state.lance_db.drop_table(table_name)
         state.lance_db.create_table(table_name, old_df)
         return
@@ -329,10 +328,9 @@ def _ensure_chart_table():
                     old_df[col] = [str(uuid.uuid4()) for _ in range(len(old_df))]
 
         old_df = old_df[[
-            "id", "user_id", "ingestion_id", "session_id", "type",
+            "id", "workspace_id", "user_id", "ingestion_id", "session_id", "type",
             "prompt", "response", "config", "created_at", "metadata",
         ]]
-        old_df.insert(1, "workspace_id", old_df.pop("workspace_id"))
         state.lance_db.drop_table(table_name)
         state.lance_db.create_table(table_name, old_df)
         return
@@ -563,6 +561,7 @@ def get_learning_context(
     query: str,
     limit: int = 5,
 ) -> List[Dict]:
+    _ensure_learning_signal_table()
     if not state.lance_db or "learning_signals" not in state.lance_db.table_names():
         return []
     try:
@@ -576,7 +575,12 @@ def get_learning_context(
         if df.empty:
             return []
 
-        df = df[(df["workspace_id"] == wid) & (df["user_id"] == uid) & (df["ingestion_id"] == iid)]
+        if "workspace_id" in df.columns:
+            df = df[df["workspace_id"] == wid]
+        if "user_id" in df.columns:
+            df = df[df["user_id"] == uid]
+        if "ingestion_id" in df.columns:
+            df = df[df["ingestion_id"] == iid]
         if df.empty:
             return []
 
@@ -605,6 +609,7 @@ def get_related_concepts(
     query: str,
     limit: int = 8,
 ) -> List[Dict]:
+    _ensure_knowledge_graph_table()
     if not state.lance_db or "knowledge_graph_edges" not in state.lance_db.table_names():
         return []
     try:
@@ -619,7 +624,12 @@ def get_related_concepts(
         df = table.to_pandas()
         if df.empty:
             return []
-        df = df[(df["workspace_id"] == wid) & (df["user_id"] == uid) & (df["ingestion_id"] == iid)]
+        if "workspace_id" in df.columns:
+            df = df[df["workspace_id"] == wid]
+        if "user_id" in df.columns:
+            df = df[df["user_id"] == uid]
+        if "ingestion_id" in df.columns:
+            df = df[df["ingestion_id"] == iid]
         if df.empty:
             return []
 

@@ -1,9 +1,7 @@
-import fs from "node:fs";
-import path from "node:path";
-import { fileURLToPath } from "node:url";
+/* eslint-disable @typescript-eslint/no-require-imports */
+const fs = require("node:fs");
+const path = require("node:path");
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
 const repoRoot = path.resolve(__dirname, "../..");
 
 // Prefer env override; otherwise use project-relative data directory.
@@ -18,27 +16,58 @@ if (!fs.existsSync(publicDir)) {
 
 const builds = [];
 
-if (fs.existsSync(dataDir)) {
-  const entries = fs.readdirSync(dataDir, { withFileTypes: true });
-  const ingestionFolders = entries.filter(
-    (entry) => entry.isDirectory() && entry.name.startsWith('ingestion_')
-  );
+function getSummaryFiles(rootDir) {
+  if (!fs.existsSync(rootDir)) return [];
 
-  for (const folder of ingestionFolders) {
-    const summaryPath = path.join(dataDir, folder.name, 'summary.json');
-    if (fs.existsSync(summaryPath)) {
-      try {
-        const content = fs.readFileSync(summaryPath, 'utf8');
-        const data = JSON.parse(content);
-        builds.push(data);
-      } catch (err) {
-        console.error(`Error parsing ${folder.name}`, err);
+  const entries = fs.readdirSync(rootDir, { withFileTypes: true });
+  return entries
+    .filter((entry) => entry.isDirectory() && entry.name.startsWith('ingestion_'))
+    .map((folder) => path.join(rootDir, folder.name, 'summary.json'))
+    .filter((summaryPath) => fs.existsSync(summaryPath));
+}
+
+function getCacheKey(summaryFiles) {
+  const stats = summaryFiles
+    .map((summaryPath) => {
+      const stat = fs.statSync(summaryPath);
+      return `${summaryPath}:${stat.mtimeMs}:${stat.size}`;
+    })
+    .sort();
+  return stats.join('|');
+}
+
+if (fs.existsSync(dataDir)) {
+  const summaryFiles = getSummaryFiles(dataDir);
+  const nextCacheKey = getCacheKey(summaryFiles);
+
+  if (fs.existsSync(outputPath)) {
+    try {
+      const existing = JSON.parse(fs.readFileSync(outputPath, 'utf8'));
+      if (existing.cache_key === nextCacheKey) {
+        console.log(`✅ Reused public/builds.json with ${existing.builds?.length ?? 0} builds (no changes)`);
+        process.exit(0);
       }
+    } catch {
+      // If cache file is invalid, regenerate it below.
+    }
+  }
+
+  for (const summaryPath of summaryFiles) {
+    try {
+      const content = fs.readFileSync(summaryPath, 'utf8');
+      const data = JSON.parse(content);
+      builds.push(data);
+    } catch (err) {
+      console.error(`Error parsing ${summaryPath}`, err);
     }
   }
 
   builds.sort((a, b) => new Date(b.ingested_at).getTime() - new Date(a.ingested_at).getTime());
+
+  fs.writeFileSync(outputPath, JSON.stringify({ builds, cache_key: nextCacheKey }, null, 2));
+  console.log(`✅ Generated public/builds.json with ${builds.length} builds`);
+  process.exit(0);
 }
 
-fs.writeFileSync(outputPath, JSON.stringify({ builds }, null, 2));
+fs.writeFileSync(outputPath, JSON.stringify({ builds, cache_key: '' }, null, 2));
 console.log(`✅ Generated public/builds.json with ${builds.length} builds`);
