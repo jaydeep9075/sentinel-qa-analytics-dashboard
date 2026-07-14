@@ -1,9 +1,11 @@
 # utils.py
-from sentence_transformers import SentenceTransformer
 from typing import List
 
 class EmbeddingGenerator:
     def __init__(self, model_name='all-MiniLM-L6-v2'):
+        # Lazy import so backend can start even if sentence-transformers is unavailable.
+        from sentence_transformers import SentenceTransformer
+
         self.model = SentenceTransformer(model_name)
         try:
             self.dim = self.model.get_embedding_dimension()

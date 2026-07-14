@@ -1,6 +1,6 @@
 import logging
 import litellm
-from . import config
+from . import config, state
 
 logger = logging.getLogger(__name__)
 
@@ -41,6 +41,30 @@ class LLMClient:
             elif (self.provider or "").strip().lower() == "ollama":
                 kwargs["api_base"] = config.OLLAMA_URL
             response = litellm.completion(**kwargs)
+
+            usage = getattr(response, "usage", None)
+            prompt_tokens = int(getattr(usage, "prompt_tokens", 0) or 0)
+            completion_tokens = int(getattr(usage, "completion_tokens", 0) or 0)
+            total_tokens = int(getattr(usage, "total_tokens", prompt_tokens + completion_tokens) or 0)
+
+            state.token_usage["prompt_tokens"] += prompt_tokens
+            state.token_usage["completion_tokens"] += completion_tokens
+            state.token_usage["total_tokens"] += total_tokens
+            state.token_usage["calls"] += 1
+
+            model_key = model_str or "unknown"
+            if model_key not in state.token_usage_by_model:
+                state.token_usage_by_model[model_key] = {
+                    "prompt_tokens": 0,
+                    "completion_tokens": 0,
+                    "total_tokens": 0,
+                    "calls": 0,
+                }
+            state.token_usage_by_model[model_key]["prompt_tokens"] += prompt_tokens
+            state.token_usage_by_model[model_key]["completion_tokens"] += completion_tokens
+            state.token_usage_by_model[model_key]["total_tokens"] += total_tokens
+            state.token_usage_by_model[model_key]["calls"] += 1
+
             return response.choices[0].message.content
         except Exception as e:
             logger.error(f"LLM generation error: {e}")

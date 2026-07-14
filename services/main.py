@@ -2,7 +2,6 @@ import logging
 import uuid
 import json
 import tempfile
-import pandas as pd
 from fastapi import FastAPI, HTTPException, Header, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
@@ -12,7 +11,6 @@ from typing import Optional
 from datetime import datetime, timezone
 from . import config, state, data_loader, handlers, memory, llm_client
 from .auth import authenticate_user, create_access_token, get_current_user, initialize_auth_store
-from universal_ingester.ingester import UniversalIngester
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -29,6 +27,17 @@ class IngestRequest(BaseModel):
     source_path: str
     source_type: Optional[str] = None
     workspace_id: Optional[str] = None
+
+
+class FeedbackRequest(BaseModel):
+    target_kind: str
+    feedback_type: str
+    prompt: Optional[str] = None
+    response: Optional[str] = None
+    chart_id: Optional[str] = None
+    notes: Optional[str] = None
+    tags: Optional[list[str]] = None
+    session_id: Optional[str] = None
 
 
 def _normalize_workspace(workspace_id: Optional[str], current_user: Optional[dict] = None) -> str:
@@ -119,6 +128,9 @@ async def ingest_from_config2(request: IngestRequest, current_user: dict = Depen
         with tempfile.NamedTemporaryFile(mode="w", suffix=".json", encoding="utf-8", delete=False) as tf:
             json.dump(dynamic_cfg, tf, indent=2, ensure_ascii=False)
             temp_cfg_path = tf.name
+
+        # Lazy import to keep API startup fast when ingestion isn't used.
+        from universal_ingester.ingester import UniversalIngester
 
         ingester = UniversalIngester(data_base_path=str(config.DATA_BASE_PATH))
         ingester.run_ingestion_from_config(str(temp_cfg_path), build_id=build_id)
@@ -250,6 +262,8 @@ async def delete_chart(
     if not state.lance_db or "chart_history" not in state.lance_db.table_names():
         return {"error": "Chart history not available"}
     try:
+        import pandas as pd
+
         table = state.lance_db.open_table("chart_history")
         all_df = table.to_pandas()
         if all_df.empty:
@@ -362,6 +376,53 @@ async def list_ingestions(current_user: dict = Depends(get_current_user)):
     
     return {"ingestions": sorted(sorted_ingestions, key=lambda x: x["created"], reverse=True)}
 
+
+@app.post("/feedback")
+async def submit_feedback(
+    request: FeedbackRequest,
+    x_ingestion_id: str = Header(...),
+    x_session_id: Optional[str] = Header(None),
+    x_workspace_id: Optional[str] = Header(None),
+    current_user: dict = Depends(get_current_user),
+):
+    normalized_ingestion_id = str(x_ingestion_id or "").strip()
+    if state.current_ingestion_id != normalized_ingestion_id or state.duck_conn is None or state.lance_db is None:
+        data_loader.init_data(normalized_ingestion_id)
+
+    if not state.lance_db:
+        raise HTTPException(status_code=500, detail="Data store not initialized")
+
+    target_kind = str(request.target_kind or "chat").strip().lower()
+    feedback_type = str(request.feedback_type or "improve").strip().lower()
+    if target_kind not in {"chat", "chart", "ui"}:
+        raise HTTPException(status_code=400, detail="target_kind must be chat, chart, or ui")
+    if feedback_type not in {"up", "down", "improve", "positive", "negative"}:
+        raise HTTPException(status_code=400, detail="feedback_type must be up, down, improve, positive, or negative")
+
+    ok = memory.store_feedback(
+        user_id=current_user["username"],
+        ingestion_id=normalized_ingestion_id,
+        workspace_id=_normalize_workspace(x_workspace_id, current_user),
+        session_id=x_session_id or request.session_id,
+        target_kind=target_kind,
+        feedback_type=feedback_type,
+        prompt=request.prompt,
+        response=request.response,
+        chart_id=request.chart_id,
+        notes=request.notes,
+        tags=request.tags,
+    )
+    if not ok:
+        raise HTTPException(status_code=500, detail="Could not store feedback")
+
+    prefs = memory.get_feedback_preferences(
+        current_user["username"],
+        normalized_ingestion_id,
+        _normalize_workspace(x_workspace_id, current_user),
+        target_kind,
+    )
+    return {"success": True, "preferences": prefs}
+
 @app.get("/projects")
 async def list_projects(current_user: dict = Depends(get_current_user)):
     if state.project_manager is None:
@@ -398,6 +459,14 @@ async def test_sql(
             return {"error": str(e)}
     else:
         return {"error": "duck_conn not initialized"}
+
+
+@app.get("/usage/tokens")
+async def token_usage(current_user: dict = Depends(get_current_user)):
+    return {
+        "totals": state.token_usage,
+        "by_model": state.token_usage_by_model,
+    }
 
 if __name__ == "__main__":
     uvicorn.run(app, host="0.0.0.0", port=8000)

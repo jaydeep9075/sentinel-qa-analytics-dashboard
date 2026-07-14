@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useMemo } from "react";
 import useSWR from "swr";
-import { getChartHistory, deleteChart } from "@/lib/api";
+import { getChartHistory, deleteChart, submitFeedback } from "@/lib/api";
 import { useIngestion } from "@/lib/IngestionContext";
 import AIGeneratedChart from "./AIGeneratedChart";
 import {
@@ -12,6 +12,9 @@ import {
   GripVertical,
   Sparkles,
   Loader2,
+  ThumbsUp,
+  ThumbsDown,
+  Palette,
 } from "lucide-react";
 import {
   DndContext,
@@ -51,32 +54,25 @@ interface ChartHistoryResponse {
 
 const fetchCharts = async (ingestionId: string) => {
   const sessionId = "__all__";
-  console.log("📊 fetchCharts using sessionId:", sessionId);
   const response = (await getChartHistory(sessionId, ingestionId)) as
     | ChartHistoryResponse
     | ChartHistoryItem[];
-  console.log("📊 fetchCharts - full response:", response);
 
   let historyArray = (response as ChartHistoryResponse).history;
   if (!historyArray && Array.isArray(response)) {
     historyArray = response;
   }
 
-  console.log("📊 fetchCharts - historyArray:", historyArray);
-
   if (!Array.isArray(historyArray)) {
-    console.error("❌ historyArray is not an array:", historyArray);
     return [];
   }
 
   const charts = historyArray.map((item: ChartHistoryItem) => {
-    console.log("📊 Processing chart item:", item);
     let parsedConfig;
     try {
       parsedConfig =
         typeof item.config === "string" ? JSON.parse(item.config) : item.config;
-    } catch (e) {
-      console.error("❌ Failed to parse chart config:", e);
+    } catch {
       parsedConfig = null;
     }
     return {
@@ -86,18 +82,20 @@ const fetchCharts = async (ingestionId: string) => {
       created_at: item.created_at,
     };
   });
-
-  console.log("📊 fetchCharts - returning charts:", charts);
   return charts;
 };
 
 function SortableItem({
   chart,
   onDelete,
+  ingestionId,
 }: {
   chart: Chart;
   onDelete: (id: string) => void;
+  ingestionId?: string;
 }) {
+  const [isSavingFeedback, setIsSavingFeedback] = useState(false);
+  const [feedbackSaved, setFeedbackSaved] = useState(false);
   const {
     attributes,
     listeners,
@@ -112,6 +110,32 @@ function SortableItem({
     transition,
     opacity: isDragging ? 0.5 : 1,
     zIndex: isDragging ? 999 : "auto",
+  };
+
+  const submitChartFeedback = async (
+    feedbackType: "up" | "down" | "improve",
+    askForNotes = false,
+  ) => {
+    if (!ingestionId || isSavingFeedback) return;
+    const notes = askForNotes
+      ? window.prompt("What should improve in this chart? Mention color, readability, labels, or layout.") || ""
+      : "";
+
+    try {
+      setIsSavingFeedback(true);
+      await submitFeedback(ingestionId, {
+        target_kind: "chart",
+        feedback_type: feedbackType,
+        chart_id: chart.id,
+        prompt: chart.prompt,
+        notes,
+        tags: feedbackType === "improve" ? ["color", "chart-style"] : ["chart-quality"],
+      });
+      setFeedbackSaved(true);
+      setTimeout(() => setFeedbackSaved(false), 1800);
+    } finally {
+      setIsSavingFeedback(false);
+    }
   };
 
   return (
@@ -139,15 +163,46 @@ function SortableItem({
             &ldquo;{chart.prompt}&rdquo;
           </p>
         </div>
-        <button
-          onClick={() => onDelete(chart.id)}
-          className="text-slate-400 dark:text-white/15 hover:text-red-400 p-2 hover:bg-red-500/[0.08] rounded-lg transition-all"
-        >
-          <Trash2 className="w-4 h-4" />
-        </button>
+        <div className="flex items-center gap-1">
+          <button
+            onClick={() => submitChartFeedback("up")}
+            disabled={isSavingFeedback}
+            className="text-emerald-500 hover:text-emerald-600 p-2 hover:bg-emerald-500/[0.08] rounded-lg transition-all disabled:opacity-50"
+            title="Good chart"
+          >
+            <ThumbsUp className="w-4 h-4" />
+          </button>
+          <button
+            onClick={() => submitChartFeedback("down", true)}
+            disabled={isSavingFeedback}
+            className="text-red-500 hover:text-red-600 p-2 hover:bg-red-500/[0.08] rounded-lg transition-all disabled:opacity-50"
+            title="Needs improvement"
+          >
+            <ThumbsDown className="w-4 h-4" />
+          </button>
+          <button
+            onClick={() => submitChartFeedback("improve", true)}
+            disabled={isSavingFeedback}
+            className="text-amber-500 hover:text-amber-600 p-2 hover:bg-amber-500/[0.08] rounded-lg transition-all disabled:opacity-50"
+            title="Tune colors or style"
+          >
+            <Palette className="w-4 h-4" />
+          </button>
+          <button
+            onClick={() => onDelete(chart.id)}
+            className="text-slate-400 dark:text-white/15 hover:text-red-400 p-2 hover:bg-red-500/[0.08] rounded-lg transition-all"
+          >
+            <Trash2 className="w-4 h-4" />
+          </button>
+        </div>
       </div>
       {/* chart body */}
       <div className="p-4">
+        {feedbackSaved && (
+          <p className="mb-2 text-[11px] font-semibold text-emerald-500">
+            Feedback saved and used for future chart styling.
+          </p>
+        )}
         {chart.config ? (
           <AIGeneratedChart config={chart.config} />
         ) : (
@@ -371,9 +426,9 @@ export default function ChartGallery() {
     selectedIngestion ? ["charts", selectedIngestion] : null,
     () => fetchCharts(selectedIngestion!),
     {
-      refreshInterval: 5000,
-      onSuccess: (data) => console.log("📊 SWR onSuccess - charts:", data),
-      onError: (err) => console.error("❌ SWR onError:", err),
+      refreshInterval: 15000,
+      refreshWhenHidden: false,
+      revalidateOnFocus: true,
     },
   );
 
@@ -384,19 +439,26 @@ export default function ChartGallery() {
       if (!detail) return;
       setGeneratingPrompts((prev) => [...prev, detail]);
     };
-    const handleEnd = (event: Event) => {
+    const handleGenerated = (event: Event) => {
       const e = event as CustomEvent<string>;
       const detail = String(e.detail || "");
       setGeneratingPrompts((prev) => prev.filter((p) => p !== detail));
       mutate();
     };
+    const handleFailed = (event: Event) => {
+      const e = event as CustomEvent<string>;
+      const detail = String(e.detail || "");
+      setGeneratingPrompts((prev) => prev.filter((p) => p !== detail));
+    };
 
     window.addEventListener("chart-generating-start", handleStart);
-    window.addEventListener("chart-generating-end", handleEnd);
+    window.addEventListener("chart-generated", handleGenerated);
+    window.addEventListener("chart-generation-failed", handleFailed);
 
     return () => {
       window.removeEventListener("chart-generating-start", handleStart);
-      window.removeEventListener("chart-generating-end", handleEnd);
+      window.removeEventListener("chart-generated", handleGenerated);
+      window.removeEventListener("chart-generation-failed", handleFailed);
     };
   }, [mutate]);
 
@@ -438,18 +500,12 @@ export default function ChartGallery() {
     );
 
   if (error) {
-    console.error("❌ Chart gallery error:", error);
     return (
       <div className="text-red-400/80 p-4 border border-red-500/20 rounded-xl bg-red-500/[0.04] text-sm">
         Error loading charts: {String(error)}
       </div>
     );
   }
-
-  console.log(
-    "📊 Rendering ChartGallery - chartList length:",
-    chartList.length,
-  );
 
   if (chartList.length === 0 && generatingPrompts.length === 0) {
     return (
@@ -536,6 +592,7 @@ export default function ChartGallery() {
                 key={chart.id}
                 chart={chart}
                 onDelete={handleDelete}
+                ingestionId={selectedIngestion}
               />
             ))}
           </div>

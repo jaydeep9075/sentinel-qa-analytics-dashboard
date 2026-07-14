@@ -10,7 +10,7 @@ import RoleSelector from "@/components/RoleSelector";
 import FloatingChat from "@/components/FloatingChat";
 import FloatingChart from "@/components/FloatingChart";  // new
 import BrandLogo from "@/components/BrandLogo";
-import { getDataStatus, checkHealth, ingestFromConfigPath } from "@/lib/api";
+import { getDataStatus, checkHealth, ingestFromConfigPath, getTokenUsage } from "@/lib/api";
 import { useIngestion } from "@/lib/IngestionContext";
 
 export default function Dashboard() {
@@ -33,6 +33,9 @@ export default function Dashboard() {
   } | null>(null);
   const [isSavingPath, setIsSavingPath] = useState(false);
   const [isIngesting, setIsIngesting] = useState(false);
+  const [tokenUsage, setTokenUsage] = useState<{
+    totals?: { total_tokens?: number; prompt_tokens?: number; completion_tokens?: number; calls?: number };
+  } | null>(null);
 
   // Listen for chart-generated events from FloatingChart
   useEffect(() => {
@@ -44,21 +47,38 @@ export default function Dashboard() {
   }, []);
 
   useEffect(() => {
+    let cancelled = false;
     const checkConnection = async () => {
+      if (typeof document !== "undefined" && document.visibilityState !== "visible") {
+        return;
+      }
       try {
         await checkHealth();
-        setBackendConnected(true);
+        if (!cancelled) setBackendConnected(true);
         if (selectedIngestion) {
           const status = await getDataStatus(selectedIngestion);
-          setDataStatus(status);
+          if (!cancelled) setDataStatus(status);
         }
+        const usage = await getTokenUsage();
+        if (!cancelled) setTokenUsage(usage);
       } catch {
-        setBackendConnected(false);
+        if (!cancelled) setBackendConnected(false);
       }
     };
+
     checkConnection();
-    const interval = setInterval(checkConnection, 10000);
-    return () => clearInterval(interval);
+
+    const interval = setInterval(checkConnection, 30000);
+    const onVisible = () => {
+      if (document.visibilityState === "visible") checkConnection();
+    };
+    document.addEventListener("visibilitychange", onVisible);
+
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
+      document.removeEventListener("visibilitychange", onVisible);
+    };
   }, [selectedIngestion]);
 
   useEffect(() => {
@@ -145,7 +165,13 @@ export default function Dashboard() {
   };
 
   return (
-    <div className="min-h-screen bg-[var(--background)] text-[var(--foreground)] selection:bg-cyan-500/30 font-sans">
+    <div className="relative min-h-screen overflow-hidden bg-[var(--background)] text-[var(--foreground)] selection:bg-cyan-500/30 font-sans">
+      <div className="pointer-events-none absolute inset-0 dashboard-mesh" />
+      <div className="pointer-events-none absolute inset-0 dashboard-grid-overlay" />
+      <div className="pointer-events-none absolute -top-24 left-[12%] h-72 w-72 rounded-full bg-cyan-500/10 blur-3xl" />
+      <div className="pointer-events-none absolute top-[30%] right-[6%] h-80 w-80 rounded-full bg-blue-500/10 blur-3xl motion-blob-slow" />
+      <div className="pointer-events-none absolute bottom-[-80px] left-[28%] h-72 w-72 rounded-full bg-emerald-500/10 blur-3xl motion-blob-fast" />
+
       {/* ══════════ HEADER ══════════ */}
       <header className="bg-white/90 border-slate-200 shadow-[0_4px_30px_rgba(15,23,42,0.08)] dark:bg-black/80 dark:border-white/[0.06] dark:shadow-[0_4px_30px_rgba(0,0,0,0.5)] backdrop-blur-xl border-b sticky top-0 z-50">
         <div className="max-w-[1600px] mx-auto px-6 py-3.5 flex flex-col md:flex-row justify-between items-center gap-4">
@@ -261,10 +287,10 @@ export default function Dashboard() {
       </header>
 
       {/* ══════════ MAIN CONTENT ══════════ */}
-      <div className="max-w-[1600px] mx-auto px-6 py-8">
+      <div className="relative z-10 max-w-[1600px] mx-auto px-6 py-8">
         {/* Data Summary Cards */}
         {dataStatus?.has_data && dataStatus.total_rows && (
-          <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-8">
+          <div className="grid grid-cols-1 md:grid-cols-5 gap-4 mb-4">
             {/* Total Tests */}
             <div className="group relative rounded-2xl p-5 border border-slate-200 bg-white hover:border-cyan-500/20 hover:bg-cyan-500/[0.03] transition-all overflow-hidden dark:border-white/[0.06] dark:bg-white/[0.02]">
               <div className="absolute -top-12 -right-12 w-24 h-24 bg-cyan-500/[0.06] blur-2xl rounded-full opacity-0 group-hover:opacity-100 transition-opacity" />
@@ -303,6 +329,18 @@ export default function Dashboard() {
                     100,
                 )}
                 %
+              </p>
+            </div>
+
+            {/* LLM Token Usage */}
+            <div className="group relative rounded-2xl p-5 border border-violet-500/15 bg-violet-500/[0.04] hover:border-violet-500/30 hover:bg-violet-500/[0.08] transition-all overflow-hidden">
+              <div className="absolute -top-12 -right-12 w-24 h-24 bg-violet-500/[0.1] blur-2xl rounded-full opacity-0 group-hover:opacity-100 transition-opacity" />
+              <p className="text-[10px] uppercase tracking-widest font-semibold mb-1 text-slate-500 dark:text-white/30">LLM Tokens</p>
+              <p className="text-3xl font-bold text-violet-500 dark:text-violet-300">
+                {(tokenUsage?.totals?.total_tokens || 0).toLocaleString()}
+              </p>
+              <p className="mt-1 text-[10px] text-slate-500 dark:text-white/30 uppercase tracking-wider">
+                Prompt: {(tokenUsage?.totals?.prompt_tokens || 0).toLocaleString()} | Completion: {(tokenUsage?.totals?.completion_tokens || 0).toLocaleString()} | Calls: {(tokenUsage?.totals?.calls || 0).toLocaleString()}
               </p>
             </div>
           </div>

@@ -2,6 +2,7 @@ import json
 import uuid
 import logging
 import re
+from collections import Counter
 from itertools import combinations
 import pandas as pd
 import pyarrow as pa
@@ -658,3 +659,221 @@ def get_related_concepts(
     except Exception as exc:
         logger.error(f"Error getting related concepts: {exc}")
         return []
+
+
+def _ensure_feedback_table():
+    if not state.lance_db:
+        return
+    table_name = "feedback_signals"
+    if table_name in state.lance_db.table_names():
+        tbl = state.lance_db.open_table(table_name)
+        existing_cols = set(tbl.schema.names)
+        required_cols = {
+            "id", "workspace_id", "user_id", "ingestion_id", "session_id", "target_kind",
+            "feedback_type", "prompt", "response", "chart_id", "notes", "tags", "created_at",
+        }
+        if required_cols.issubset(existing_cols):
+            return
+        old_df = tbl.to_pandas()
+        for col in required_cols:
+            if col not in old_df.columns:
+                if col == "workspace_id":
+                    old_df[col] = _norm_workspace(None)
+                elif col == "user_id":
+                    old_df[col] = "anonymous"
+                elif col in {"ingestion_id", "session_id", "target_kind", "feedback_type", "prompt", "response", "chart_id", "notes", "tags"}:
+                    old_df[col] = ""
+                elif col == "created_at":
+                    old_df[col] = datetime.now(timezone.utc).isoformat()
+                elif col == "id":
+                    old_df[col] = [str(uuid.uuid4()) for _ in range(len(old_df))]
+        old_df = old_df[[
+            "id", "workspace_id", "user_id", "ingestion_id", "session_id", "target_kind",
+            "feedback_type", "prompt", "response", "chart_id", "notes", "tags", "created_at",
+        ]]
+        state.lance_db.drop_table(table_name)
+        state.lance_db.create_table(table_name, old_df)
+        return
+
+    schema = pa.schema([
+        pa.field("id", pa.string()),
+        pa.field("workspace_id", pa.string()),
+        pa.field("user_id", pa.string()),
+        pa.field("ingestion_id", pa.string()),
+        pa.field("session_id", pa.string()),
+        pa.field("target_kind", pa.string()),
+        pa.field("feedback_type", pa.string()),
+        pa.field("prompt", pa.string()),
+        pa.field("response", pa.string()),
+        pa.field("chart_id", pa.string()),
+        pa.field("notes", pa.string()),
+        pa.field("tags", pa.string()),
+        pa.field("created_at", pa.string()),
+    ])
+    state.lance_db.create_table(table_name, schema=schema)
+
+
+def store_feedback(
+    user_id: Optional[str],
+    ingestion_id: Optional[str],
+    workspace_id: Optional[str],
+    session_id: Optional[str],
+    target_kind: str,
+    feedback_type: str,
+    prompt: Optional[str] = None,
+    response: Optional[str] = None,
+    chart_id: Optional[str] = None,
+    notes: Optional[str] = None,
+    tags: Optional[List[str]] = None,
+):
+    if not state.lance_db:
+        return False
+    try:
+        _ensure_feedback_table()
+        table = state.lance_db.open_table("feedback_signals")
+        table.add([
+            {
+                "id": str(uuid.uuid4()),
+                "workspace_id": _norm_workspace(workspace_id),
+                "user_id": _norm_user(user_id),
+                "ingestion_id": _norm_ingestion(ingestion_id),
+                "session_id": str(session_id or "").strip() or "default",
+                "target_kind": str(target_kind or "chat").strip().lower(),
+                "feedback_type": str(feedback_type or "improve").strip().lower(),
+                "prompt": str(prompt or "").strip(),
+                "response": str(response or "").strip(),
+                "chart_id": str(chart_id or "").strip(),
+                "notes": str(notes or "").strip(),
+                "tags": json.dumps([str(t).strip().lower() for t in (tags or []) if str(t).strip()]),
+                "created_at": datetime.now(timezone.utc).isoformat(),
+            }
+        ])
+        return True
+    except Exception as exc:
+        logger.error(f"Error storing feedback: {exc}")
+        return False
+
+
+def get_feedback_preferences(
+    user_id: Optional[str],
+    ingestion_id: Optional[str],
+    workspace_id: Optional[str],
+    target_kind: str,
+    limit: int = 120,
+) -> Dict:
+    _ensure_feedback_table()
+    if not state.lance_db or "feedback_signals" not in state.lance_db.table_names():
+        return {"prefer": [], "avoid": [], "tags": []}
+
+    try:
+        uid = _norm_user(user_id)
+        iid = _norm_ingestion(ingestion_id)
+        wid = _norm_workspace(workspace_id)
+        tkind = str(target_kind or "chat").strip().lower()
+
+        table = state.lance_db.open_table("feedback_signals")
+        df = table.to_pandas()
+        if df.empty:
+            return {"prefer": [], "avoid": [], "tags": []}
+
+        if "workspace_id" in df.columns:
+            df = df[df["workspace_id"] == wid]
+        if "user_id" in df.columns:
+            df = df[df["user_id"] == uid]
+        if "ingestion_id" in df.columns:
+            df = df[df["ingestion_id"] == iid]
+        if "target_kind" in df.columns:
+            df = df[df["target_kind"] == tkind]
+
+        if df.empty:
+            return {"prefer": [], "avoid": [], "tags": []}
+
+        df = df.sort_values("created_at", ascending=False).head(limit)
+        prefer_counter = Counter()
+        avoid_counter = Counter()
+        tags_counter = Counter()
+
+        for _, row in df.iterrows():
+            ftype = str(row.get("feedback_type", "")).strip().lower()
+            notes = str(row.get("notes", "")).strip().lower()
+            terms = _extract_keywords(notes, max_terms=10)
+            if ftype in {"up", "positive"}:
+                prefer_counter.update(terms)
+            elif ftype in {"down", "negative"}:
+                avoid_counter.update(terms)
+            else:
+                prefer_counter.update(terms)
+
+            for tag in _safe_json_loads(row.get("tags", "[]"), []):
+                if str(tag).strip():
+                    tags_counter.update([str(tag).strip().lower()])
+
+        prefer = [k for k, _ in prefer_counter.most_common(5)]
+        avoid = [k for k, _ in avoid_counter.most_common(5)]
+        tags = [k for k, _ in tags_counter.most_common(6)]
+        return {"prefer": prefer, "avoid": avoid, "tags": tags}
+    except Exception as exc:
+        logger.error(f"Error getting feedback preferences: {exc}")
+        return {"prefer": [], "avoid": [], "tags": []}
+
+
+def get_feedback_prompt_hints(
+    user_id: Optional[str],
+    ingestion_id: Optional[str],
+    workspace_id: Optional[str],
+    target_kind: str,
+    current_prompt: Optional[str] = None,
+) -> str:
+    prefs = get_feedback_preferences(user_id, ingestion_id, workspace_id, target_kind)
+    uid = _norm_user(user_id)
+    iid = _norm_ingestion(ingestion_id)
+    wid = _norm_workspace(workspace_id)
+    tkind = str(target_kind or "chat").strip().lower()
+
+    lines = []
+    if prefs.get("prefer"):
+        lines.append("Prefer: " + ", ".join(prefs["prefer"]))
+    if prefs.get("avoid"):
+        lines.append("Avoid: " + ", ".join(prefs["avoid"]))
+    if prefs.get("tags"):
+        lines.append("Style tags: " + ", ".join(prefs["tags"]))
+
+    if state.lance_db and "feedback_signals" in state.lance_db.table_names() and current_prompt:
+        try:
+            df = state.lance_db.open_table("feedback_signals").to_pandas()
+            if not df.empty:
+                if "workspace_id" in df.columns:
+                    df = df[df["workspace_id"] == wid]
+                if "user_id" in df.columns:
+                    df = df[df["user_id"] == uid]
+                if "ingestion_id" in df.columns:
+                    df = df[df["ingestion_id"] == iid]
+                if "target_kind" in df.columns:
+                    df = df[df["target_kind"] == tkind]
+
+                if not df.empty:
+                    prompt_terms = set(_extract_keywords(current_prompt, max_terms=14))
+                    similar_rows = []
+                    for _, row in df.sort_values("created_at", ascending=False).head(60).iterrows():
+                        src = " ".join([
+                            str(row.get("prompt", "")),
+                            str(row.get("notes", "")),
+                        ])
+                        overlap = _text_overlap_score(prompt_terms, set(_extract_keywords(src, max_terms=14)))
+                        if overlap > 0.15:
+                            similar_rows.append(row)
+
+                    if similar_rows:
+                        down = sum(1 for r in similar_rows if str(r.get("feedback_type", "")).lower() in {"down", "negative"})
+                        up = sum(1 for r in similar_rows if str(r.get("feedback_type", "")).lower() in {"up", "positive"})
+                        latest_notes = [str(r.get("notes", "")).strip() for r in similar_rows if str(r.get("notes", "")).strip()]
+                        if down > 0:
+                            lines.append("For similar requests, user marked prior outputs as weak. Change structure and provide a clearly improved version.")
+                        if up > down and up > 0:
+                            lines.append("For similar requests, user approved concise structure. Keep that style.")
+                        if latest_notes:
+                            lines.append("Specific feedback notes: " + "; ".join(latest_notes[:2]))
+        except Exception as exc:
+            logger.error(f"Error computing prompt-aware feedback hints: {exc}")
+
+    return "\n".join(lines).strip()

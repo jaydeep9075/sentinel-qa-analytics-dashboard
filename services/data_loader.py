@@ -96,7 +96,7 @@ def init_data(ingestion_id: str) -> bool:
 
     state.lance_db = lancedb.connect(str(ingestion_path))
     state.duck_conn = duckdb.connect()
-    state.embedder = EmbeddingGenerator()
+    state.embedder = None
     state.current_ingestion_id = ingestion_id
 
     available = state.lance_db.table_names()
@@ -492,5 +492,7 @@ def execute_sql(query: str):
 def vector_search(query: str, top_k: int = 5):
     if not state.lance_db or "documents" not in state.lance_db.table_names():
         return []
+    if state.embedder is None:
+        state.embedder = EmbeddingGenerator()
     q_emb = state.embedder.embed([query])[0]
     return state.lance_db.open_table("documents").search(q_emb).limit(top_k).to_list()

@@ -12,12 +12,13 @@ function getAuthHeaders(): Record<string, string> {
 }
 
 export async function checkHealth() {
-  const res = await fetch(`${API_BASE}/health`);
+  const res = await fetch(`${API_BASE}/health`, { cache: "no-store" });
   return res.json();
 }
 
 export async function getDataStatus(ingestionId: string) {
   const res = await fetch(`${API_BASE}/data/status`, {
+    cache: "no-store",
     headers: { "x-ingestion-id": ingestionId, ...getAuthHeaders() },
   });
   return res.json();
@@ -78,10 +79,10 @@ export async function generateChart(
     body: JSON.stringify({ message: prompt, session_id: sessionId }),
   });
   const data = await res.json();
-  if (data.error) {
-    return { success: false, error: data.error };
+  if (!res.ok || data.error) {
+    throw new Error(data?.error || data?.detail || "Failed to generate chart");
   }
-  return { success: true, chart: data.chart };
+  return { chart: data.chart };
 }
 
 export async function getChatHistory(sessionId: string, ingestionId: string) {
@@ -93,11 +94,10 @@ export async function getChatHistory(sessionId: string, ingestionId: string) {
 
 export async function getChartHistory(sessionId: string, ingestionId: string) {
   const res = await fetch(`${API_BASE}/chart/history/${sessionId}`, {
+    cache: "no-store",
     headers: { "x-ingestion-id": ingestionId, ...getAuthHeaders() },
   });
-  const data = await res.json();
-  console.log("📊 getChartHistory raw response:", data);
-  return data;
+  return res.json();
 }
 
 export async function deleteChart(chartId: string, ingestionId: string) {
@@ -117,6 +117,46 @@ export async function ingestFromConfigPath(sourcePath: string) {
   const data = await res.json();
   if (!res.ok) {
     throw new Error(data?.detail || data?.error || "Failed to ingest build");
+  }
+  return data;
+}
+
+export async function getTokenUsage() {
+  const res = await fetch(`${API_BASE}/usage/tokens`, {
+    cache: "no-store",
+    headers: getAuthHeaders(),
+  });
+  return res.json();
+}
+
+export async function submitFeedback(
+  ingestionId: string,
+  payload: {
+    target_kind: "chat" | "chart" | "ui";
+    feedback_type: "up" | "down" | "improve" | "positive" | "negative";
+    prompt?: string;
+    response?: string;
+    chart_id?: string;
+    notes?: string;
+    tags?: string[];
+    session_id?: string;
+  },
+) {
+  const sessionId = payload.session_id || getSessionId();
+  const res = await fetch(`${API_BASE}/feedback`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "x-ingestion-id": ingestionId,
+      "x-session-id": sessionId,
+      ...getAuthHeaders(),
+    },
+    body: JSON.stringify(payload),
+  });
+
+  const data = await res.json();
+  if (!res.ok) {
+    throw new Error(data?.detail || data?.error || "Failed to submit feedback");
   }
   return data;
 }

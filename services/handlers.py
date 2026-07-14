@@ -156,6 +156,13 @@ async def handle_chat(user_message: str, session_id: str, ingestion_id: str,
 
     learning_context = memory.get_learning_context(user_id, nid, workspace_id, user_message, limit=6)
     related_concepts = memory.get_related_concepts(user_id, nid, workspace_id, user_message, limit=8)
+    feedback_hints = memory.get_feedback_prompt_hints(
+        user_id,
+        nid,
+        workspace_id,
+        target_kind="chat",
+        current_prompt=user_message,
+    )
 
     augmented_message = user_message
     if learning_context:
@@ -168,6 +175,8 @@ async def handle_chat(user_message: str, session_id: str, ingestion_id: str,
     if related_concepts:
         concepts = ", ".join([c["concept"] for c in related_concepts])
         augmented_message += f"\n\n[RELATED CONCEPTS]\n{concepts}"
+    if feedback_hints:
+        augmented_message += f"\n\n[USER FEEDBACK PREFERENCES]\n{feedback_hints}"
 
     raw = llm.generate(
         CHAT_DECISION_PROMPT.format(
@@ -282,6 +291,16 @@ async def handle_chart(user_prompt: str, session_id: str, ingestion_id: str,
             return None, f"❌ Ingestion '{ingestion_id}' not found."
 
     llm = llm_client.LLMClient()
+    feedback_hints = memory.get_feedback_prompt_hints(
+        user_id,
+        nid,
+        workspace_id,
+        target_kind="chart",
+        current_prompt=user_prompt,
+    )
+    prompt_for_llm = user_prompt
+    if feedback_hints:
+        prompt_for_llm += f"\n\n[USER FEEDBACK PREFERENCES]\n{feedback_hints}"
 
     # STEP 1: Deterministic chart type (no LLM involved)
     chart_type = detect_chart_type(user_prompt)
@@ -292,7 +311,7 @@ async def handle_chart(user_prompt: str, session_id: str, ingestion_id: str,
     sql = _sql_cache.get(cache_key)
     if not sql:
         raw_sql = llm.generate(
-            CHART_SQL_PROMPT.format(user_prompt=user_prompt, chart_type=chart_type),
+            CHART_SQL_PROMPT.format(user_prompt=prompt_for_llm, chart_type=chart_type),
             temperature=0.05,
         )
         sql = _sanitize_sql(raw_sql or "")
@@ -331,10 +350,21 @@ async def handle_chart(user_prompt: str, session_id: str, ingestion_id: str,
         for k in list(_sql_cache.keys())[:20]:
             del _sql_cache[k]
 
-    return _generate_chart(df, user_prompt, session_id, sql, chart_type, llm, user_id, nid, workspace_id)
+    return _generate_chart(
+        df,
+        user_prompt,
+        prompt_for_llm,
+        session_id,
+        sql,
+        chart_type,
+        llm,
+        user_id,
+        nid,
+        workspace_id,
+    )
 
 
-def _generate_chart(df, user_prompt, session_id, sql, chart_type, llm, user_id, ingestion_id, workspace_id):
+def _generate_chart(df, user_prompt, prompt_for_llm, session_id, sql, chart_type, llm, user_id, ingestion_id, workspace_id):
     if not _is_df_usable(df):
         return None, "No data available."
     df = df.dropna(how="all")
@@ -352,7 +382,7 @@ def _generate_chart(df, user_prompt, session_id, sql, chart_type, llm, user_id, 
 
     code = llm.generate(
         CHART_CODE_PROMPT.format(
-            user_prompt=user_prompt,
+            user_prompt=prompt_for_llm,
             chart_type=chart_type,
             data_sample=json.dumps(data_sample, indent=2, ensure_ascii=False),
             columns=list(df.columns),

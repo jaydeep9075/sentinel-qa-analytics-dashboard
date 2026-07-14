@@ -8,3 +8,12 @@ current_ingestion_id = None
 # RBA: project and role managers (initialized lazily)
 project_manager = None
 role_manager = None
+
+# LLM usage counters (runtime totals since backend start)
+token_usage = {
+	"prompt_tokens": 0,
+	"completion_tokens": 0,
+	"total_tokens": 0,
+	"calls": 0,
+}
+token_usage_by_model = {}

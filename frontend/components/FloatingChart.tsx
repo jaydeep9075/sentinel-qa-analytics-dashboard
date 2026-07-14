@@ -5,7 +5,7 @@ import { useState, useEffect } from "react";
 import { BarChart3, X, Loader2, Sparkles } from "lucide-react";
 import { useRB } from "@/lib/RBContext";
 import { useIngestion } from "@/lib/IngestionContext";
-import { generateChart } from "@/lib/api";
+import { generateChart, submitFeedback } from "@/lib/api";
 import { getRoleSuggestions } from "@/lib/roleSuggestions";
 
 export default function FloatingChart() {
@@ -14,11 +14,18 @@ export default function FloatingChart() {
   const [isOpen, setIsOpen] = useState(false);
   const [isGenerating, setIsGenerating] = useState(false);
   const [generatingPrompt, setGeneratingPrompt] = useState<string | null>(null);
+  const [customPrompt, setCustomPrompt] = useState("");
+  const [recentPrompts, setRecentPrompts] = useState<string[]>([]);
+  const [styleFeedback, setStyleFeedback] = useState("");
 
   // Get role‑specific chart prompts
   const suggestions = getRoleSuggestions(selectedRole || "").chart;
 
   const handleGenerateChart = async (prompt: string) => {
+    const trimmedPrompt = String(prompt || "").trim();
+    const styleHint = String(styleFeedback || "").trim();
+    if (!trimmedPrompt) return;
+
     if (!selectedIngestion) {
       setGeneratingPrompt("⚠️ No ingestion selected. Please choose a test build.");
       setTimeout(() => setGeneratingPrompt(null), 3000);
@@ -26,13 +33,35 @@ export default function FloatingChart() {
     }
 
     setIsGenerating(true);
-    setGeneratingPrompt(`Generating: "${prompt}"...`);
-    window.dispatchEvent(new CustomEvent("chart-generating-start", { detail: prompt }));
+    setGeneratingPrompt(`Generating: "${trimmedPrompt}"...`);
+    window.dispatchEvent(new CustomEvent("chart-generating-start", { detail: trimmedPrompt }));
 
     try {
-      await generateChart(prompt, selectedIngestion, selectedRole, selectedProject);
+      if (styleHint) {
+        try {
+          await submitFeedback(selectedIngestion, {
+            target_kind: "chart",
+            feedback_type: "improve",
+            prompt: trimmedPrompt,
+            notes: styleHint,
+            tags: ["chart-style", "color", "readability"],
+          });
+        } catch {
+          // Feedback persistence should not block chart generation.
+        }
+      }
+
+      const promptWithStyle = styleHint
+        ? `${trimmedPrompt}\n\nStyle preference from user: ${styleHint}`
+        : trimmedPrompt;
+
+      await generateChart(promptWithStyle, selectedIngestion, selectedRole, selectedProject);
+      setRecentPrompts((prev) => {
+        const next = [trimmedPrompt, ...prev.filter((p) => p !== trimmedPrompt)];
+        return next.slice(0, 6);
+      });
       setGeneratingPrompt("✅ Chart ready! See it at the top of the gallery.");
-      window.dispatchEvent(new CustomEvent("chart-generated"));
+      window.dispatchEvent(new CustomEvent("chart-generated", { detail: trimmedPrompt }));
       // Auto‑close after a short delay
       setTimeout(() => {
         setIsOpen(false);
@@ -41,11 +70,20 @@ export default function FloatingChart() {
     } catch (error: unknown) {
       const message = error instanceof Error ? error.message : "Unknown error";
       setGeneratingPrompt(`❌ Failed: ${message}`);
+      window.dispatchEvent(new CustomEvent("chart-generation-failed", { detail: trimmedPrompt }));
       setTimeout(() => setGeneratingPrompt(null), 4000);
     } finally {
       setIsGenerating(false);
-      window.dispatchEvent(new CustomEvent("chart-generating-end", { detail: prompt }));
+      window.dispatchEvent(new CustomEvent("chart-generating-end", { detail: trimmedPrompt }));
     }
+  };
+
+  const handleCustomSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const prompt = customPrompt.trim();
+    if (!prompt || isGenerating) return;
+    await handleGenerateChart(prompt);
+    setCustomPrompt("");
   };
 
   // Close popover when clicking outside (optional)
@@ -73,7 +111,7 @@ export default function FloatingChart() {
 
       {/* Popover panel */}
       {isOpen && (
-        <div className="fixed bottom-36 right-6 z-50 bg-white border border-slate-200 dark:bg-black dark:border-white/[0.08] rounded-2xl w-72 shadow-[0_0_30px_rgba(15,23,42,0.12)] dark:shadow-[0_0_40px_rgba(0,0,0,0.8),0_0_20px_rgba(168,85,247,0.08)] overflow-hidden animate-in slide-in-from-bottom-2">
+        <div className="fixed bottom-36 right-6 z-50 bg-white border border-slate-200 dark:bg-black dark:border-white/[0.08] rounded-2xl w-80 shadow-[0_0_30px_rgba(15,23,42,0.12)] dark:shadow-[0_0_40px_rgba(0,0,0,0.8),0_0_20px_rgba(168,85,247,0.08)] overflow-hidden animate-in slide-in-from-bottom-2">
           {/* Header */}
           <div className="flex items-center justify-between px-4 py-3 border-b border-slate-200 bg-slate-50 dark:border-white/[0.06] dark:bg-white/[0.02]">
             <h3 className="text-sm font-semibold text-slate-900 dark:text-white flex items-center gap-2">
@@ -89,7 +127,7 @@ export default function FloatingChart() {
           </div>
 
           {/* Content */}
-          <div className="p-3 space-y-2 max-h-64 overflow-y-auto custom-scrollbar">
+          <div className="p-3 space-y-3 max-h-[22rem] overflow-y-auto custom-scrollbar">
             {generatingPrompt ? (
               <div className="text-xs text-center text-cyan-400 bg-cyan-500/[0.06] border border-cyan-500/15 p-2 rounded-lg flex items-center gap-2 justify-center">
                 {isGenerating && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
@@ -97,6 +135,51 @@ export default function FloatingChart() {
               </div>
             ) : (
               <>
+                <form onSubmit={handleCustomSubmit} className="flex gap-2">
+                  <input
+                    type="text"
+                    value={customPrompt}
+                    onChange={(e) => setCustomPrompt(e.target.value)}
+                    placeholder="Type chart prompt..."
+                    disabled={isGenerating || !selectedIngestion}
+                    className="flex-1 rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs text-slate-700 placeholder:text-slate-400 focus:outline-none focus:ring-1 focus:ring-purple-500/40 focus:border-purple-500/40 disabled:opacity-50 dark:border-white/[0.1] dark:bg-black/40 dark:text-white/80 dark:placeholder:text-white/30"
+                  />
+                  <button
+                    type="submit"
+                    disabled={!customPrompt.trim() || isGenerating || !selectedIngestion}
+                    className="rounded-lg px-3 py-2 text-xs font-semibold text-white bg-gradient-to-r from-purple-500 to-pink-600 hover:from-purple-400 hover:to-pink-500 disabled:opacity-40 disabled:cursor-not-allowed"
+                  >
+                    Go
+                  </button>
+                </form>
+                <textarea
+                  value={styleFeedback}
+                  onChange={(e) => setStyleFeedback(e.target.value)}
+                  placeholder="Optional chart feedback: e.g. use softer colors, bigger labels, clearer legend"
+                  disabled={isGenerating || !selectedIngestion}
+                  rows={2}
+                  className="w-full resize-none rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs text-slate-700 placeholder:text-slate-400 focus:outline-none focus:ring-1 focus:ring-purple-500/40 focus:border-purple-500/40 disabled:opacity-50 dark:border-white/[0.1] dark:bg-black/40 dark:text-white/80 dark:placeholder:text-white/30"
+                />
+                {recentPrompts.length > 0 && (
+                  <div className="space-y-1">
+                    <p className="text-[10px] uppercase tracking-widest text-slate-500 dark:text-white/30">
+                      Recent prompts
+                    </p>
+                    <div className="flex flex-wrap gap-1.5">
+                      {recentPrompts.map((prompt, idx) => (
+                        <button
+                          key={`${prompt}-${idx}`}
+                          type="button"
+                          onClick={() => setCustomPrompt(prompt)}
+                          className="max-w-full truncate rounded-full border border-purple-500/25 bg-purple-500/10 px-2.5 py-1 text-[10px] font-semibold text-purple-700 hover:bg-purple-500/20 dark:text-purple-300"
+                          title={prompt}
+                        >
+                          {prompt}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
                 <p className="text-[10px] text-slate-500 dark:text-white/25 uppercase tracking-wider text-center mb-1">
                   {selectedRole || "QA"} prompts
                 </p>

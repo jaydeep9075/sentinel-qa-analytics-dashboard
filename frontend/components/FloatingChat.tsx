@@ -2,10 +2,10 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { MessageCircle, X, Send, Loader2, Sparkles } from "lucide-react";
+import { MessageCircle, X, Send, Loader2, Sparkles, Copy, RotateCw, Check, ThumbsUp, ThumbsDown, SlidersHorizontal } from "lucide-react";
 import { useRB } from "@/lib/RBContext";
 import { useIngestion } from "@/lib/IngestionContext";
-import { sendChatMessage } from "@/lib/api";
+import { sendChatMessage, submitFeedback } from "@/lib/api";
 import ReactMarkdown from "react-markdown";
 import { getRoleSuggestions } from "@/lib/roleSuggestions";
 
@@ -18,6 +18,11 @@ export default function FloatingChat() {
   >([]);
   const [isLoading, setIsLoading] = useState(false);
   const [customQuestion, setCustomQuestion] = useState("");
+  const [expandedAnswers, setExpandedAnswers] = useState<Record<number, boolean>>({});
+  const [copiedMessageIndex, setCopiedMessageIndex] = useState<number | null>(null);
+  const [regeneratingIndex, setRegeneratingIndex] = useState<number | null>(null);
+  const [feedbackStatus, setFeedbackStatus] = useState<Record<number, string>>({});
+  const LONG_ANSWER_THRESHOLD = 420;
 
   // Get role‑specific chat questions
   const suggestions = getRoleSuggestions(selectedRole || "").chat;
@@ -26,8 +31,100 @@ export default function FloatingChat() {
     if (!isOpen) {
       setMessages([]);
       setCustomQuestion("");
+      setExpandedAnswers({});
     }
   }, [isOpen]);
+
+  const toggleExpandAnswer = (idx: number) => {
+    setExpandedAnswers((prev) => ({ ...prev, [idx]: !prev[idx] }));
+  };
+
+  const handleCopy = async (content: string, idx: number) => {
+    try {
+      await navigator.clipboard.writeText(content);
+      setCopiedMessageIndex(idx);
+      setTimeout(() => setCopiedMessageIndex(null), 1500);
+    } catch {
+      setCopiedMessageIndex(null);
+    }
+  };
+
+  const findRelatedUserQuestion = (aiIndex: number) => {
+    for (let i = aiIndex - 1; i >= 0; i -= 1) {
+      if (messages[i]?.role === "user") {
+        return messages[i]?.content || null;
+      }
+    }
+    return null;
+  };
+
+  const handleRegenerate = async (aiIndex: number) => {
+    if (!selectedIngestion || isLoading) return;
+    const question = findRelatedUserQuestion(aiIndex);
+    if (!question) return;
+
+    setRegeneratingIndex(aiIndex);
+    setIsLoading(true);
+    try {
+      const regenPrompt = `${question}\n\nRegenerate this answer with a noticeably improved structure and apply the user's latest feedback preferences.`;
+      const answer = await sendChatMessage(regenPrompt, selectedIngestion, selectedRole);
+      setMessages((prev) =>
+        prev.map((m, idx) => (idx === aiIndex ? { ...m, content: answer } : m)),
+      );
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : "Could not regenerate answer.";
+      setMessages((prev) =>
+        prev.map((m, idx) =>
+          idx === aiIndex ? { ...m, content: `❌ Error: ${message}` } : m,
+        ),
+      );
+    } finally {
+      setIsLoading(false);
+      setRegeneratingIndex(null);
+    }
+  };
+
+  const handleFeedback = async (
+    aiIndex: number,
+    feedbackType: "up" | "down" | "improve",
+    askForNotes = false,
+  ) => {
+    if (!selectedIngestion) return;
+    const msg = messages[aiIndex];
+    const question = findRelatedUserQuestion(aiIndex) || "";
+    if (!msg || msg.role !== "ai") return;
+
+    const notes = askForNotes
+      ? window.prompt("What should improve in this answer? You can mention tone, detail, or format.") || ""
+      : "";
+
+    try {
+      await submitFeedback(selectedIngestion, {
+        target_kind: "chat",
+        feedback_type: feedbackType,
+        prompt: question,
+        response: msg.content,
+        notes,
+        tags: feedbackType === "up" ? ["response-quality"] : ["response-improvement"],
+      });
+      const statusText =
+        feedbackType === "up"
+          ? "Marked as good. We will keep this style for future answers."
+          : feedbackType === "down"
+            ? "Marked as not good. Next responses will avoid this style."
+            : "Tune feedback saved. Next responses will adapt to your notes.";
+      setFeedbackStatus((prev) => ({ ...prev, [aiIndex]: statusText }));
+      setTimeout(() => {
+        setFeedbackStatus((prev) => {
+          const next = { ...prev };
+          delete next[aiIndex];
+          return next;
+        });
+      }, 2200);
+    } catch {
+      setFeedbackStatus((prev) => ({ ...prev, [aiIndex]: "Could not save feedback. Try again." }));
+    }
+  };
 
   const sendQuestion = async (question: string) => {
     if (!selectedIngestion) {
@@ -87,7 +184,9 @@ export default function FloatingChat() {
       {/* ── Modal ── */}
       {isOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm">
-          <div className="bg-white border border-slate-200 dark:bg-black dark:border-white/[0.08] rounded-2xl w-full max-w-2xl h-[600px] flex flex-col shadow-[0_0_40px_rgba(15,23,42,0.15)] dark:shadow-[0_0_60px_rgba(0,0,0,0.8),0_0_30px_rgba(0,240,255,0.05)] overflow-hidden">
+          <div className="relative bg-white border border-slate-200 dark:bg-black dark:border-white/[0.08] rounded-2xl w-full max-w-2xl h-[620px] flex flex-col shadow-[0_0_40px_rgba(15,23,42,0.15)] dark:shadow-[0_0_60px_rgba(0,0,0,0.8),0_0_30px_rgba(0,240,255,0.05)] overflow-hidden">
+            <div className="pointer-events-none absolute -top-20 right-12 h-40 w-40 rounded-full bg-cyan-500/10 blur-3xl" />
+            <div className="pointer-events-none absolute bottom-20 -left-16 h-40 w-40 rounded-full bg-blue-500/10 blur-3xl" />
             {/* header */}
             <div className="flex items-center justify-between px-5 py-4 border-b border-slate-200 bg-slate-50 dark:border-white/[0.06] dark:bg-white/[0.02]">
               <h2 className="text-base font-semibold text-slate-900 dark:text-white flex items-center gap-2">
@@ -108,7 +207,7 @@ export default function FloatingChat() {
             </div>
 
             {/* messages */}
-            <div className="flex-1 overflow-y-auto p-5 space-y-4 custom-scrollbar">
+            <div className="relative z-10 flex-1 overflow-y-auto p-5 space-y-4 custom-scrollbar">
               {messages.length === 0 ? (
                 <div className="text-center text-slate-500 dark:text-white/25 mt-12">
                   <Sparkles className="w-8 h-8 mx-auto mb-3 text-cyan-500/40" />
@@ -131,32 +230,106 @@ export default function FloatingChat() {
                       className={`max-w-[80%] rounded-2xl px-4 py-2.5 text-sm ${
                         msg.role === "user"
                           ? "bg-gradient-to-r from-cyan-500 to-blue-600 text-white rounded-tr-sm shadow-[0_0_15px_rgba(0,240,255,0.1)]"
-                          : "bg-slate-100 text-slate-700 border border-slate-200 dark:bg-white/[0.04] dark:text-white/70 dark:border-white/[0.06] rounded-tl-sm"
+                          : "bg-slate-100 text-slate-700 border border-slate-200 dark:bg-white/[0.04] dark:text-white/75 dark:border-cyan-500/20 rounded-tl-sm"
                       }`}
                     >
                       {msg.role === "ai" ? (
-                        <ReactMarkdown
-                          components={{
-                            p: ({ children }) => (
-                              <p className="my-1">{children}</p>
-                            ),
-                            ul: ({ children }) => (
-                              <ul className="list-disc pl-5 my-1">
-                                {children}
-                              </ul>
-                            ),
-                            ol: ({ children }) => (
-                              <ol className="list-decimal pl-5 my-1">
-                                {children}
-                              </ol>
-                            ),
-                            li: ({ children }) => (
-                              <li className="my-0.5">{children}</li>
-                            ),
-                          }}
-                        >
-                          {msg.content}
-                        </ReactMarkdown>
+                        <>
+                          <div
+                            className={`relative ${
+                              msg.content.length > LONG_ANSWER_THRESHOLD && !expandedAnswers[idx]
+                                ? "max-h-44 overflow-hidden"
+                                : ""
+                            }`}
+                          >
+                            <ReactMarkdown
+                              components={{
+                                p: ({ children }) => (
+                                  <p className="my-1">{children}</p>
+                                ),
+                                ul: ({ children }) => (
+                                  <ul className="list-disc pl-5 my-1">
+                                    {children}
+                                  </ul>
+                                ),
+                                ol: ({ children }) => (
+                                  <ol className="list-decimal pl-5 my-1">
+                                    {children}
+                                  </ol>
+                                ),
+                                li: ({ children }) => (
+                                  <li className="my-0.5">{children}</li>
+                                ),
+                              }}
+                            >
+                              {msg.content}
+                            </ReactMarkdown>
+                            {msg.content.length > LONG_ANSWER_THRESHOLD && !expandedAnswers[idx] && (
+                              <div className="pointer-events-none absolute inset-x-0 bottom-0 h-10 bg-gradient-to-t from-slate-100 to-transparent dark:from-[#121212]" />
+                            )}
+                          </div>
+                          {msg.content.length > LONG_ANSWER_THRESHOLD && (
+                            <button
+                              type="button"
+                              onClick={() => toggleExpandAnswer(idx)}
+                              className="mt-2 text-[11px] font-semibold text-cyan-600 hover:text-cyan-700 dark:text-cyan-300 dark:hover:text-cyan-200"
+                            >
+                              {expandedAnswers[idx] ? "Show less" : "Read more"}
+                            </button>
+                          )}
+                          <div className="mt-2 flex items-center gap-2">
+                            <button
+                              type="button"
+                              onClick={() => handleCopy(msg.content, idx)}
+                              className="inline-flex items-center gap-1 rounded-md border border-slate-300 px-2 py-1 text-[11px] font-semibold text-slate-600 hover:bg-slate-200 dark:border-white/10 dark:text-white/70 dark:hover:bg-white/10"
+                            >
+                              {copiedMessageIndex === idx ? (
+                                <Check className="h-3 w-3" />
+                              ) : (
+                                <Copy className="h-3 w-3" />
+                              )}
+                              {copiedMessageIndex === idx ? "Copied" : "Copy"}
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => handleRegenerate(idx)}
+                              disabled={isLoading || regeneratingIndex === idx || !selectedIngestion}
+                              className="inline-flex items-center gap-1 rounded-md border border-cyan-500/25 px-2 py-1 text-[11px] font-semibold text-cyan-600 hover:bg-cyan-500/10 disabled:opacity-50 dark:text-cyan-300"
+                            >
+                              <RotateCw className={`h-3 w-3 ${regeneratingIndex === idx ? "animate-spin" : ""}`} />
+                              Regenerate
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => handleFeedback(idx, "up")}
+                              className="inline-flex items-center gap-1 rounded-md border border-emerald-500/25 px-2 py-1 text-[11px] font-semibold text-emerald-600 hover:bg-emerald-500/10 dark:text-emerald-300"
+                            >
+                              <ThumbsUp className="h-3 w-3" />
+                              Good
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => handleFeedback(idx, "down", true)}
+                              className="inline-flex items-center gap-1 rounded-md border border-red-500/25 px-2 py-1 text-[11px] font-semibold text-red-600 hover:bg-red-500/10 dark:text-red-300"
+                            >
+                              <ThumbsDown className="h-3 w-3" />
+                              Not good
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => handleFeedback(idx, "improve", true)}
+                              className="inline-flex items-center gap-1 rounded-md border border-amber-500/30 px-2 py-1 text-[11px] font-semibold text-amber-600 hover:bg-amber-500/10 dark:text-amber-300"
+                            >
+                              <SlidersHorizontal className="h-3 w-3" />
+                              Tune
+                            </button>
+                          </div>
+                          {feedbackStatus[idx] && (
+                            <p className="mt-1 text-[10px] font-semibold text-emerald-500">
+                              {feedbackStatus[idx]}
+                            </p>
+                          )}
+                        </>
                       ) : (
                         msg.content
                       )}
