@@ -89,6 +89,44 @@ export default function BuildTrendCharts({ chartData }: Props) {
   };
   const avgDurationSeries = [{ name: "Avg Duration", data: chartData.map(d => d.avgDuration) }];
 
+  // 5. Failure Rate Trend
+  const failureRate = chartData.map(d => {
+    const executed = d.passed + d.failed;
+    return executed > 0 ? (d.failed / executed) * 100 : 0;
+  });
+  const failureRateOptions: ApexOptions = {
+    chart: { type: "area", height: 350, toolbar: { show: false }, background: "transparent" },
+    stroke: { curve: "smooth", width: 2 },
+    colors: ["#ef4444"],
+    xaxis: { categories, labels: { style: { colors: labelColor } } },
+    yaxis: {
+      title: { text: "Failure Rate (%)", style: { color: labelColor } },
+      min: 0,
+      max: 100,
+      labels: { style: { colors: labelColor } },
+    },
+    title: { text: "Failure Rate Trend", align: "left", style: titleStyle },
+    tooltip: { theme: isDark ? "dark" : "light", y: { formatter: (val: number) => `${val.toFixed(1)}%` } },
+    grid: { borderColor: gridColor },
+  };
+  const failureRateSeries = [{ name: "Failure Rate", data: failureRate }];
+
+  // 6. Pass vs Fail Delta (positive is healthier)
+  const qualityDelta = chartData.map(d => d.passed - d.failed);
+  const deltaOptions: ApexOptions = {
+    chart: { type: "bar", height: 350, toolbar: { show: false }, background: "transparent" },
+    colors: ["#06b6d4"],
+    xaxis: { categories, labels: { style: { colors: labelColor } } },
+    yaxis: {
+      title: { text: "Pass - Fail", style: { color: labelColor } },
+      labels: { style: { colors: labelColor } },
+    },
+    title: { text: "Quality Delta per Build", align: "left", style: titleStyle },
+    tooltip: { theme: isDark ? "dark" : "light" },
+    grid: { borderColor: gridColor },
+  };
+  const deltaSeries = [{ name: "Quality Delta", data: qualityDelta }];
+
   return (
     <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
       <div className="bg-white border border-slate-200 dark:bg-white/[0.02] dark:border-white/[0.06] backdrop-blur-sm p-5 rounded-2xl hover:border-cyan-500/15 transition-all">
@@ -102,6 +140,12 @@ export default function BuildTrendCharts({ chartData }: Props) {
       </div>
       <div className="bg-white border border-slate-200 dark:bg-white/[0.02] dark:border-white/[0.06] backdrop-blur-sm p-5 rounded-2xl hover:border-amber-500/15 transition-all">
         <Chart options={avgDurationOptions} series={avgDurationSeries} type="bar" height={350} />
+      </div>
+      <div className="bg-white border border-slate-200 dark:bg-white/[0.02] dark:border-white/[0.06] backdrop-blur-sm p-5 rounded-2xl hover:border-red-500/15 transition-all">
+        <Chart options={failureRateOptions} series={failureRateSeries} type="area" height={350} />
+      </div>
+      <div className="bg-white border border-slate-200 dark:bg-white/[0.02] dark:border-white/[0.06] backdrop-blur-sm p-5 rounded-2xl hover:border-cyan-500/15 transition-all">
+        <Chart options={deltaOptions} series={deltaSeries} type="bar" height={350} />
       </div>
     </div>
   );

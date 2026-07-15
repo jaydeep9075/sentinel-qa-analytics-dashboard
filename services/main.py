@@ -10,6 +10,7 @@ import uvicorn
 from typing import Optional
 from datetime import datetime, timezone
 from . import config, state, data_loader, handlers, memory, llm_client
+from . import token_usage_store
 from .auth import authenticate_user, create_access_token, get_current_user, initialize_auth_store
 
 logging.basicConfig(level=logging.INFO)
@@ -341,6 +342,54 @@ async def data_status(
         logger.error(f"Error in /data/status: {e}")
         return {"has_data": False, "total_rows": 0}
 
+
+@app.get("/data/profile")
+async def data_profile(
+    x_ingestion_id: str = Header(...),
+    current_user: dict = Depends(get_current_user)
+):
+    normalized_ingestion_id = str(x_ingestion_id or "").strip()
+    if state.current_ingestion_id != normalized_ingestion_id or state.duck_conn is None or state.lance_db is None:
+        data_loader.init_data(normalized_ingestion_id)
+
+    if not state.duck_conn:
+        return {"tables": {}}
+
+    try:
+        return data_loader.get_data_profile(sample_rows=5)
+    except Exception as e:
+        logger.error(f"Error in /data/profile: {e}")
+        return {"tables": {}, "error": str(e)}
+
+
+@app.get("/data/quality")
+async def data_quality(
+    x_ingestion_id: str = Header(...),
+    current_user: dict = Depends(get_current_user)
+):
+    normalized_ingestion_id = str(x_ingestion_id or "").strip()
+    if state.current_ingestion_id != normalized_ingestion_id or state.duck_conn is None or state.lance_db is None:
+        data_loader.init_data(normalized_ingestion_id)
+
+    if not state.duck_conn:
+        return {
+            "score": 0,
+            "quality": "unknown",
+            "checks": [],
+            "guidance": ["No active ingestion loaded"],
+        }
+
+    try:
+        return data_loader.get_ingestion_quality_report()
+    except Exception as e:
+        logger.error(f"Error in /data/quality: {e}")
+        return {
+            "score": 0,
+            "quality": "poor",
+            "checks": [],
+            "guidance": [f"Quality evaluation failed: {e}"],
+        }
+
 @app.get("/ingestions")
 async def list_ingestions(current_user: dict = Depends(get_current_user)):
     """Return list of available ingestion IDs with metadata (prefer JSON summary)."""
@@ -440,7 +489,11 @@ async def list_roles(current_user: dict = Depends(get_current_user)):
 @app.get("/test/llm")
 async def test_llm(current_user: dict = Depends(get_current_user)):
     llm = llm_client.LLMClient()
-    resp = llm.generate("Say hello in one word")
+    resp = llm.generate(
+        "Say hello in one word",
+        user_id=current_user.get("username"),
+        workspace_id=_normalize_workspace(None, current_user),
+    )
     return {"llm_response": resp}
 
 @app.get("/test/sql")
@@ -463,9 +516,17 @@ async def test_sql(
 
 @app.get("/usage/tokens")
 async def token_usage(current_user: dict = Depends(get_current_user)):
+    persistent = token_usage_store.get_usage(
+        user_id=current_user.get("username"),
+        workspace_id=_normalize_workspace(None, current_user),
+    )
     return {
-        "totals": state.token_usage,
-        "by_model": state.token_usage_by_model,
+        "totals": persistent.get("totals", {}),
+        "by_model": persistent.get("by_model", {}),
+        "scope": persistent.get("scope", {}),
+        "updated_at": persistent.get("updated_at", ""),
+        "runtime_totals": state.token_usage,
+        "runtime_by_model": state.token_usage_by_model,
     }
 
 if __name__ == "__main__":

@@ -32,6 +32,9 @@ sqlalchemy==2.0.36
 
 # Utilities
 typing-extensions==4.12.2
+openpyxl==3.1.5
+PyPDF2==3.0.1
+Pillow==10.4.0
 
 # Add these at the end for better compatibility
 torch==2.1.0  # Required by sentence-transformers (if not auto-installed)

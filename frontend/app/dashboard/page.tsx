@@ -10,7 +10,7 @@ import RoleSelector from "@/components/RoleSelector";
 import FloatingChat from "@/components/FloatingChat";
 import FloatingChart from "@/components/FloatingChart";  // new
 import BrandLogo from "@/components/BrandLogo";
-import { getDataStatus, checkHealth, ingestFromConfigPath, getTokenUsage } from "@/lib/api";
+import { getDataStatus, getDataQuality, checkHealth, ingestFromConfigPath, getTokenUsage } from "@/lib/api";
 import { useIngestion } from "@/lib/IngestionContext";
 
 export default function Dashboard() {
@@ -36,6 +36,12 @@ export default function Dashboard() {
   const [tokenUsage, setTokenUsage] = useState<{
     totals?: { total_tokens?: number; prompt_tokens?: number; completion_tokens?: number; calls?: number };
   } | null>(null);
+  const [dataQuality, setDataQuality] = useState<{
+    score?: number;
+    quality?: string;
+    guidance?: string[];
+    checks?: { name?: string; passed?: boolean; detail?: string }[];
+  } | null>(null);
 
   // Listen for chart-generated events from FloatingChart
   useEffect(() => {
@@ -58,6 +64,8 @@ export default function Dashboard() {
         if (selectedIngestion) {
           const status = await getDataStatus(selectedIngestion);
           if (!cancelled) setDataStatus(status);
+          const quality = await getDataQuality(selectedIngestion);
+          if (!cancelled) setDataQuality(quality);
         }
         const usage = await getTokenUsage();
         if (!cancelled) setTokenUsage(usage);
@@ -343,6 +351,40 @@ export default function Dashboard() {
                 Prompt: {(tokenUsage?.totals?.prompt_tokens || 0).toLocaleString()} | Completion: {(tokenUsage?.totals?.completion_tokens || 0).toLocaleString()} | Calls: {(tokenUsage?.totals?.calls || 0).toLocaleString()}
               </p>
             </div>
+          </div>
+        )}
+
+        {dataQuality && (
+          <div className="mb-6 rounded-2xl border border-slate-200 bg-white p-5 dark:border-white/[0.06] dark:bg-white/[0.02]">
+            <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
+              <div>
+                <p className="text-[10px] uppercase tracking-widest font-semibold text-slate-500 dark:text-white/30">Ingestion Quality</p>
+                <h3 className="text-lg font-semibold text-slate-900 dark:text-white">
+                  Score: {Math.max(0, Math.min(100, Number(dataQuality.score || 0)))} / 100
+                  <span className="ml-2 text-sm font-normal text-slate-500 dark:text-white/45">({String(dataQuality.quality || "unknown").toUpperCase()})</span>
+                </h3>
+              </div>
+              <div className="flex items-center gap-2">
+                {(dataQuality.checks || []).slice(0, 3).map((c, idx) => (
+                  <span
+                    key={`${c.name}-${idx}`}
+                    className={`text-[10px] px-2 py-1 rounded-full border ${
+                      c.passed
+                        ? "text-emerald-600 border-emerald-500/30 bg-emerald-500/[0.08] dark:text-emerald-300"
+                        : "text-amber-700 border-amber-500/30 bg-amber-500/[0.08] dark:text-amber-300"
+                    }`}
+                    title={c.detail || c.name || ""}
+                  >
+                    {c.passed ? "PASS" : "CHECK"} {c.name || "rule"}
+                  </span>
+                ))}
+              </div>
+            </div>
+            {(dataQuality.guidance || []).length > 0 && (
+              <p className="mt-3 text-xs text-slate-600 dark:text-white/55">
+                {(dataQuality.guidance || []).slice(0, 2).join("  |  ")}
+              </p>
+            )}
           </div>
         )}
 

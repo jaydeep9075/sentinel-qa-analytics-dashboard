@@ -34,11 +34,25 @@ class FileConnector(BaseConnector):
     def _read_structured(self):
         suffix = self.file_path.suffix.lower()
         if suffix == '.csv':
-            df = pd.read_csv(self.file_path)
+            df = self._read_delimited_csv(default_sep=',')
         elif suffix == '.tsv':
-            df = pd.read_csv(self.file_path, sep='\t')
+            df = self._read_delimited_csv(default_sep='\t')
         elif suffix in ['.xlsx', '.xls']:
-            df = pd.read_excel(self.file_path)
+            sheet_map = pd.read_excel(self.file_path, sheet_name=None)
+            datasets = []
+            for sheet, sdf in sheet_map.items():
+                sdf = sdf if isinstance(sdf, pd.DataFrame) else pd.DataFrame(sdf)
+                datasets.append({
+                    'name': f"{self.file_path.stem}_{sheet}",
+                    'data': sdf,
+                    'type': 'structured',
+                    'metadata': {
+                        'file_path': str(self.file_path),
+                        'sheet_name': str(sheet),
+                        'rows': len(sdf),
+                    }
+                })
+            return datasets
         elif suffix == '.json':
             with open(self.file_path, 'r', encoding='utf-8') as f:
                 payload = json.load(f)
@@ -78,7 +92,7 @@ class FileConnector(BaseConnector):
                 sep = dialect.delimiter
             except Exception:
                 sep = ','
-            df = pd.read_csv(self.file_path, sep=sep, on_bad_lines='skip')
+            df = self._read_delimited_csv(default_sep=sep)
 
         return [{
             'name': self.file_path.stem,
@@ -101,24 +115,55 @@ class FileConnector(BaseConnector):
     def _extract_text(self):
         ext = self.file_path.suffix.lower()
         if ext == '.txt':
-            with open(self.file_path, 'r', encoding='utf-8') as f:
-                return f.read()
+            return self._read_text_with_fallbacks()
         elif ext in ['.log', '.md', '.yaml', '.yml']:
-            with open(self.file_path, 'r', encoding='utf-8', errors='ignore') as f:
-                return f.read()
+            return self._read_text_with_fallbacks()
         elif ext == '.pdf':
-            # Use PyPDF2 for simple text extraction
-            import PyPDF2
-            with open(self.file_path, 'rb') as f:
-                reader = PyPDF2.PdfReader(f)
-                text = '\n'.join([page.extract_text() for page in reader.pages])
-            return text
+            # Best-effort PDF extraction with graceful fallback.
+            try:
+                import PyPDF2
+                with open(self.file_path, 'rb') as f:
+                    reader = PyPDF2.PdfReader(f)
+                    text = '\n'.join([(page.extract_text() or '') for page in reader.pages])
+                text = text.strip()
+                if text:
+                    return text
+            except Exception as exc:
+                logger.warning(f"PyPDF2 extraction failed for {self.file_path}: {exc}")
+            return f"[PDF extraction unavailable for {self.file_path.name}]"
         elif ext in ['.png', '.jpg', '.jpeg']:
             # Use pytesseract for OCR
-            from PIL import Image
-            import pytesseract
-            img = Image.open(self.file_path)
-            text = pytesseract.image_to_string(img)
-            return text
+            try:
+                from PIL import Image
+                import pytesseract
+                img = Image.open(self.file_path)
+                text = pytesseract.image_to_string(img)
+                return text.strip() or f"[OCR produced empty text for {self.file_path.name}]"
+            except Exception as exc:
+                logger.warning(f"OCR failed for {self.file_path}: {exc}")
+                return f"[Image OCR unavailable for {self.file_path.name}]"
         else:
             raise ValueError("Unsupported unstructured file")
+
+    def _read_delimited_csv(self, default_sep=','):
+        encodings = ['utf-8', 'utf-8-sig', 'latin-1', 'cp1252']
+        last_exc = None
+        for enc in encodings:
+            try:
+                return pd.read_csv(self.file_path, sep=default_sep, encoding=enc, on_bad_lines='skip')
+            except Exception as exc:
+                last_exc = exc
+        if last_exc:
+            raise last_exc
+        return pd.read_csv(self.file_path, sep=default_sep, on_bad_lines='skip')
+
+    def _read_text_with_fallbacks(self):
+        encodings = ['utf-8', 'utf-8-sig', 'latin-1', 'cp1252']
+        for enc in encodings:
+            try:
+                with open(self.file_path, 'r', encoding=enc, errors='ignore') as f:
+                    return f.read()
+            except Exception:
+                continue
+        with open(self.file_path, 'r', errors='ignore') as f:
+            return f.read()

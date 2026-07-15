@@ -1,6 +1,7 @@
 import logging
 import litellm
 from . import config, state
+from . import token_usage_store
 
 logger = logging.getLogger(__name__)
 
@@ -25,7 +26,14 @@ class LLMClient:
 
         return f"{provider}/{model}"
 
-    def generate(self, prompt: str, temperature: float = 0.2, max_tokens: int = 2000) -> str:
+    def generate(
+        self,
+        prompt: str,
+        temperature: float = 0.2,
+        max_tokens: int = 2000,
+        user_id: str = "anonymous",
+        workspace_id: str = "default",
+    ) -> str:
         try:
             model_str = self._resolve_model_name()
             kwargs = dict(
@@ -64,6 +72,15 @@ class LLMClient:
             state.token_usage_by_model[model_key]["completion_tokens"] += completion_tokens
             state.token_usage_by_model[model_key]["total_tokens"] += total_tokens
             state.token_usage_by_model[model_key]["calls"] += 1
+
+            token_usage_store.record_usage(
+                user_id=user_id,
+                workspace_id=workspace_id,
+                model=model_key,
+                prompt_tokens=prompt_tokens,
+                completion_tokens=completion_tokens,
+                total_tokens=total_tokens,
+            )
 
             return response.choices[0].message.content
         except Exception as e:

@@ -295,6 +295,8 @@ class UniversalIngester:
                 self.lance_db.create_table(table_name, df)
                 logger.info(f"Created new table {table_name} with {len(df)} rows")
 
+            self._add_schema_profile(name, table_name, df, source_type, build_id)
+
             docs = self._df_to_documents(df, name, source_id, source_metadata, build_id)
             if docs:
                 texts = [doc['text'] for doc in docs]
@@ -352,6 +354,7 @@ class UniversalIngester:
                 else:
                     self.lance_db.create_table(ai_table_name, heuristic_df)
                 logger.info(f"AI/heuristic parsed {len(heuristic_df)} structured rows for {name}")
+                self._add_schema_profile(name, ai_table_name, heuristic_df, source_type, build_id)
 
             source_metadata.update({
                 "ingested_data_type": "unstructured",
@@ -434,6 +437,56 @@ class UniversalIngester:
             self.lance_db.create_table(table_name, [source_record])
         logger.info(f"Recorded source {source_id} (build {build_id})")
 
+    def _build_dataframe_profile(self, df: pd.DataFrame) -> Dict[str, Any]:
+        if df is None:
+            return {"row_count": 0, "columns": []}
+
+        profile_cols = []
+        sample_df = df.head(3).copy()
+        for c in sample_df.columns:
+            sample_df[c] = sample_df[c].astype(str)
+        samples = sample_df.to_dict(orient="records") if not sample_df.empty else []
+
+        row_count = int(len(df))
+        for col in df.columns:
+            series = df[col]
+            nulls = int(series.isna().sum()) if hasattr(series, "isna") else 0
+            non_null = max(row_count - nulls, 0)
+            non_null_ratio = round((non_null / row_count), 3) if row_count else 0.0
+            profile_cols.append({
+                "name": str(col),
+                "dtype": str(series.dtype),
+                "null_count": nulls,
+                "non_null_ratio": non_null_ratio,
+                "distinct_count": int(series.nunique(dropna=True)) if row_count else 0,
+            })
+
+        return {
+            "row_count": row_count,
+            "column_count": int(len(df.columns)),
+            "columns": profile_cols,
+            "sample_rows": samples,
+        }
+
+    def _add_schema_profile(self, dataset_name: str, table_name: str, df: pd.DataFrame, source_type: str, build_id: str):
+        profile = self._build_dataframe_profile(df)
+        record = {
+            "id": f"schema_{dataset_name}_{uuid.uuid4().hex[:10]}",
+            "build_id": build_id,
+            "dataset_name": dataset_name,
+            "table_name": table_name,
+            "source_type": source_type,
+            "created_at": datetime.now(timezone.utc),
+            "row_count": int(profile.get("row_count", 0)),
+            "column_count": int(profile.get("column_count", 0)),
+            "profile_json": json.dumps(profile, ensure_ascii=False),
+        }
+        table = "ingestion_schema_profiles"
+        if table in self.lance_db.table_names():
+            self.lance_db.open_table(table).add([record])
+        else:
+            self.lance_db.create_table(table, [record])
+
     def link_to_duckdb(self):
         tables = self.lance_db.table_names()
         for t in tables:
@@ -447,6 +500,9 @@ class UniversalIngester:
         if 'sources' in self.lance_db.table_names():
             df_sources = self.lance_db.open_table('sources').to_pandas()
             self.duck_db.register('sources', df_sources)
+        if 'ingestion_schema_profiles' in self.lance_db.table_names():
+            df_profiles = self.lance_db.open_table('ingestion_schema_profiles').to_pandas()
+            self.duck_db.register('ingestion_schema_profiles', df_profiles)
         return self.duck_db
 
     def _collect_parser_insights(self) -> Dict[str, Any]:

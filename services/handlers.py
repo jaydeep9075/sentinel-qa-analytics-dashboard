@@ -18,6 +18,7 @@ from . import config, data_loader, memory, llm_client, state
 from .prompts import (
     CHAT_DECISION_PROMPT,
     CHAT_ANSWER_PROMPT,
+    CHAT_VALIDATION_PROMPT,
     CHAT_RELEASE_VERDICT,
     CHART_SQL_PROMPT,
     CHART_CODE_PROMPT,
@@ -106,6 +107,217 @@ def _fallback_sql(prompt: str, sql_map: dict) -> str:
     return ""
 
 
+def _detect_structured_intent(prompt: str):
+    p = (prompt or "").lower()
+    if not p.strip():
+        return None
+
+    highest = any(k in p for k in ("highest", "best", "top", "max", "maximum"))
+    lowest = any(k in p for k in ("lowest", "least", "worst", "bottom", "min", "minimum"))
+    if not highest and not lowest:
+        return None
+
+    metric = None
+    if any(k in p for k in ("pass rate", "passing rate", "success rate")):
+        metric = "pass_rate"
+    elif any(k in p for k in ("failed", "failure", "failures", "failed count")):
+        metric = "failed"
+    elif any(k in p for k in ("duration", "slow", "slowest", "fast", "fastest", "time")):
+        metric = "duration"
+    elif any(k in p for k in ("passed", "pass count")):
+        metric = "passed"
+
+    if not metric:
+        return None
+
+    if "project" in p:
+        entity = "project"
+    elif any(k in p for k in ("platform", "mobile", "desktop")):
+        entity = "platform"
+    else:
+        entity = "module"
+
+    direction = "both" if highest and lowest else ("highest" if highest else "lowest")
+    return {"metric": metric, "entity": entity, "direction": direction}
+
+
+def _build_structured_sql(intent: dict) -> str:
+    metric = intent.get("metric")
+    entity = intent.get("entity")
+    direction = intent.get("direction")
+
+    if entity == "project":
+        base = (
+            "SELECT project_name, platform_type, total_tests, passed, failed,"
+            " ROUND(pass_rate, 2) AS pass_rate, ROUND(total_duration_seconds, 2) AS total_duration_seconds,"
+            " ROUND(avg_duration_seconds, 2) AS avg_duration_seconds"
+            " FROM project_metrics"
+        )
+    elif entity == "platform":
+        base = (
+            "SELECT platform_type,"
+            " COUNT(*) AS total_tests,"
+            " SUM(CASE WHEN status='passed' THEN 1 ELSE 0 END) AS passed,"
+            " SUM(CASE WHEN status='failed' THEN 1 ELSE 0 END) AS failed,"
+            " ROUND(SUM(CASE WHEN status='passed' THEN 1.0 ELSE 0 END) * 100.0 / NULLIF(COUNT(*), 0), 2) AS pass_rate,"
+            " ROUND(SUM(COALESCE(duration, 0)), 2) AS total_duration_seconds,"
+            " ROUND(AVG(NULLIF(duration, 0)), 2) AS avg_duration_seconds"
+            " FROM flattened_tests"
+            " GROUP BY platform_type"
+        )
+    else:
+        base = (
+            "SELECT project_name, module_name, platform_type, total_tests, passed, failed,"
+            " ROUND(pass_rate, 2) AS pass_rate, ROUND(total_duration_seconds, 2) AS total_duration_seconds,"
+            " ROUND(avg_duration_seconds, 2) AS avg_duration_seconds"
+            " FROM module_metrics"
+        )
+
+    metric_col = {
+        "pass_rate": "pass_rate",
+        "failed": "failed",
+        "passed": "passed",
+        "duration": "avg_duration_seconds",
+    }.get(metric, "pass_rate")
+
+    if direction == "both":
+        return (
+            "WITH base AS ("
+            f"{base}"
+            ") "
+            "SELECT * FROM ("
+            "SELECT 'highest' AS rank_type, * FROM base ORDER BY " + metric_col + " DESC NULLS LAST LIMIT 1"
+            ") h "
+            "UNION ALL "
+            "SELECT * FROM ("
+            "SELECT 'lowest' AS rank_type, * FROM base ORDER BY " + metric_col + " ASC NULLS LAST LIMIT 1"
+            ") l"
+        )
+
+    order = "DESC" if direction == "highest" else "ASC"
+    return (
+        "WITH base AS ("
+        f"{base}"
+        ") "
+        "SELECT * FROM base ORDER BY " + metric_col + f" {order} NULLS LAST LIMIT 1"
+    )
+
+
+def _looks_like_data_question(prompt: str) -> bool:
+    p = (prompt or "").lower()
+    if not p.strip():
+        return False
+    keywords = (
+        "pass rate", "failed", "passed", "tests", "test count", "count", "how many",
+        "module", "project", "platform", "mobile", "desktop", "release", "ship", "deploy",
+        "duration", "slow", "trend", "status", "breakdown", "distribution", "build",
+        "highest", "lowest", "top", "bottom", "least", "best", "worst",
+    )
+    return any(k in p for k in keywords)
+
+
+def _prepare_df_for_prompt(df: pd.DataFrame) -> pd.DataFrame:
+    df_safe = df.copy()
+    for col in df_safe.select_dtypes(include=["datetime64", "datetimetz"]).columns:
+        df_safe[col] = df_safe[col].astype(str)
+    return df_safe.where(pd.notna(df_safe), other="")
+
+
+def _fallback_tabular_response(df: pd.DataFrame) -> str:
+    if len(df) == 1 and len(df.columns) == 1:
+        return f"📊 **Result:** {df.iloc[0, 0]}"
+    if len(df.columns) <= 3:
+        rows_fmt = "\n".join(
+            f"{i+1}. " + " | ".join(str(v) for v in r)
+            for i, r in enumerate(df.head(25).itertuples(index=False))
+        )
+        return f"**Results ({len(df)} rows):**\n{rows_fmt}"
+    return f"Found **{len(df)} rows**. Use the chart feature to visualize."
+
+
+def _validate_grounded_response(
+    llm,
+    user_message: str,
+    draft_answer: str,
+    df_safe: pd.DataFrame,
+    user_id: str = "anonymous",
+    workspace_id: str = "default",
+) -> str:
+    raw = llm.generate(
+        CHAT_VALIDATION_PROMPT.format(
+            user_message=user_message,
+            draft_answer=draft_answer or "",
+            row_count=len(df_safe),
+            data_json=df_safe.head(50).to_json(orient="records", force_ascii=False),
+        ),
+        temperature=0.0,
+        user_id=user_id,
+        workspace_id=workspace_id,
+    )
+    if not raw:
+        return draft_answer
+
+    cleaned = re.sub(r"```json\s*|```", "", raw, flags=re.IGNORECASE).strip()
+    m = re.search(r"\{[\s\S]*\}", cleaned)
+    candidate = m.group(0) if m else cleaned
+
+    try:
+        payload = json.loads(candidate)
+    except Exception:
+        return draft_answer
+
+    if payload.get("is_valid") is True:
+        return draft_answer
+    corrected = str(payload.get("corrected_answer", "")).strip()
+    return corrected or draft_answer
+
+
+def _format_structured_response(intent: dict, df: pd.DataFrame) -> str:
+    metric = intent.get("metric")
+    entity = intent.get("entity")
+
+    metric_label = {
+        "pass_rate": "pass rate",
+        "failed": "failed tests",
+        "passed": "passed tests",
+        "duration": "average duration (sec)",
+    }.get(metric, "metric")
+    value_col = {
+        "pass_rate": "pass_rate",
+        "failed": "failed",
+        "passed": "passed",
+        "duration": "avg_duration_seconds",
+    }.get(metric, "pass_rate")
+
+    def _entity_name(row: pd.Series) -> str:
+        if entity == "project":
+            return f"project '{row.get('project_name', 'unknown')}' ({row.get('platform_type', 'all')})"
+        if entity == "platform":
+            return f"platform '{row.get('platform_type', 'unknown')}'"
+        return (
+            f"module '{row.get('module_name', 'unknown')}' in project "
+            f"'{row.get('project_name', 'unknown')}' ({row.get('platform_type', 'all')})"
+        )
+
+    if "rank_type" in df.columns and len(df) >= 2:
+        lines = ["📊 **Validated comparison result**"]
+        for _, row in df.iterrows():
+            direction = str(row.get("rank_type", "")).strip().lower() or "result"
+            value = row.get(value_col, "N/A")
+            lines.append(f"- **{direction.title()} {metric_label}:** {value} on {_entity_name(row)}")
+        lines.append(f"Validation source: computed directly from {'project_metrics' if entity == 'project' else 'flattened_tests' if entity == 'platform' else 'module_metrics'}.")
+        return "\n".join(lines)
+
+    row = df.iloc[0]
+    value = row.get(value_col, "N/A")
+    return (
+        "📊 **Validated result**\n"
+        f"- **{metric_label.title()}:** {value}\n"
+        f"- **Entity:** {_entity_name(row)}\n"
+        f"- Validation source: computed directly from {'project_metrics' if entity == 'project' else 'flattened_tests' if entity == 'platform' else 'module_metrics'}."
+    )
+
+
 def _build_history(session_id: str, user_id: str, ingestion_id: str, limit: int = 20) -> str:
     history = memory.get_chat_history(
         session_id,
@@ -140,6 +352,42 @@ def _make_title(prompt: str) -> str:
     return (t[:52] + "…") if len(t) > 55 else t
 
 
+def _build_schema_context(max_tables: int = 8, max_columns: int = 25) -> str:
+    profile = data_loader.get_data_profile(sample_rows=2)
+    tables = profile.get("tables", {}) if isinstance(profile, dict) else {}
+    if not tables:
+        return ""
+
+    lines = ["[RUNTIME TABLE PROFILE]"]
+    for i, (tbl, info) in enumerate(tables.items()):
+        if i >= max_tables:
+            break
+        if not isinstance(info, dict):
+            continue
+        row_count = info.get("row_count", "?")
+        cols = info.get("columns", [])
+        col_names = ", ".join(c.get("name", "") for c in cols[:max_columns] if isinstance(c, dict))
+        lines.append(f"- {tbl} ({row_count} rows): {col_names}")
+    return "\n".join(lines)
+
+
+def _is_chart_df_valid_for_type(df: pd.DataFrame, chart_type: str) -> bool:
+    if not _is_df_usable(df):
+        return False
+    num_cols = df.select_dtypes(include="number").columns.tolist()
+    cat_cols = df.select_dtypes(include=["object", "category", "string"]).columns.tolist()
+
+    if chart_type in ("pie", "donut"):
+        return len(num_cols) >= 1 and len(cat_cols) >= 1
+    if chart_type in ("bar", "horizontal_bar", "line", "scatter"):
+        return len(num_cols) >= 1
+    if chart_type == "heatmap":
+        return len(num_cols) >= 1 and len(cat_cols) >= 2
+    if chart_type == "platform_comparison":
+        return "platform_type" in df.columns and len(num_cols) >= 1
+    return len(num_cols) >= 1
+
+
 # ---------------------------------------------------------------------------
 # Chat handler
 # ---------------------------------------------------------------------------
@@ -151,6 +399,26 @@ async def handle_chat(user_message: str, session_id: str, ingestion_id: str,
     if state.current_ingestion_id != nid or not state.duck_conn or not state.lance_db:
         if not data_loader.init_data(nid):
             return f"❌ Ingestion '{ingestion_id}' not found or data unavailable."
+
+    # Layer 1: deterministic intent handler for critical analytical prompts.
+    structured_intent = _detect_structured_intent(user_message)
+    if structured_intent:
+        sql = _build_structured_sql(structured_intent)
+        df, err = data_loader.execute_sql(sql)
+        if not err and _is_df_usable(df):
+            response = _format_structured_response(structured_intent, df)
+            memory.store_chat_message(
+                session_id, "user", user_message,
+                user_id=user_id, ingestion_id=nid, workspace_id=workspace_id,
+            )
+            memory.store_chat_message(
+                session_id, "assistant", response,
+                user_id=user_id, ingestion_id=nid, workspace_id=workspace_id,
+            )
+            memory.learn_from_interaction(
+                user_id, nid, session_id, workspace_id, user_message, response, kind="chat"
+            )
+            return response
 
     llm = llm_client.LLMClient()
 
@@ -177,6 +445,9 @@ async def handle_chat(user_message: str, session_id: str, ingestion_id: str,
         augmented_message += f"\n\n[RELATED CONCEPTS]\n{concepts}"
     if feedback_hints:
         augmented_message += f"\n\n[USER FEEDBACK PREFERENCES]\n{feedback_hints}"
+    schema_context = _build_schema_context()
+    if schema_context:
+        augmented_message += f"\n\n{schema_context}"
 
     raw = llm.generate(
         CHAT_DECISION_PROMPT.format(
@@ -184,6 +455,8 @@ async def handle_chat(user_message: str, session_id: str, ingestion_id: str,
             user_message=augmented_message,
         ),
         temperature=0.05,
+        user_id=user_id,
+        workspace_id=workspace_id,
     )
     if not raw:
         return "⚠️ AI service unavailable. Please try again."
@@ -203,6 +476,9 @@ async def handle_chat(user_message: str, session_id: str, ingestion_id: str,
     data   = decision.get("data", "")
     if isinstance(data, str) and "SELECT" in data.upper():
         action = "sql"
+    elif action != "sql" and _looks_like_data_question(user_message):
+        action = "sql"
+        data = _fallback_sql(user_message, FALLBACK_SQL_MAP)
 
     if action == "sql":
         sql = _sanitize_sql(data) if data else ""
@@ -233,33 +509,35 @@ async def handle_chat(user_message: str, session_id: str, ingestion_id: str,
                     failed_count=failed, verdict=verdict, recommendation=rec,
                 )
             else:
-                df_safe = df.copy()
-                for col in df_safe.select_dtypes(include=["datetime64"]).columns:
-                    df_safe[col] = df_safe[col].astype(str)
-                df_safe = df_safe.where(pd.notna(df_safe), other="")
+                df_safe = _prepare_df_for_prompt(df)
                 answer_prompt = CHAT_ANSWER_PROMPT.format(
                     user_message=augmented_message,
                     row_count=len(df),
                     data_json=df_safe.head(50).to_json(orient="records", force_ascii=False),
                 )
                 response = llm.generate(answer_prompt, temperature=0.15)
-                if not response:
-                    if len(df) == 1 and len(df.columns) == 1:
-                        response = f"📊 **Result:** {df.iloc[0, 0]}"
-                    elif len(df.columns) <= 3:
-                        rows_fmt = "\n".join(
-                            f"{i+1}. " + " | ".join(str(v) for v in r)
-                            for i, r in enumerate(df.head(25).itertuples(index=False))
-                        )
-                        response = f"**Results ({len(df)} rows):**\n{rows_fmt}"
-                    else:
-                        response = f"Found **{len(df)} rows**. Use the chart feature to visualize."
+                response = response or _fallback_tabular_response(df)
+                response = _validate_grounded_response(
+                    llm,
+                    user_message,
+                    response,
+                    df_safe,
+                    user_id=user_id,
+                    workspace_id=workspace_id,
+                )
 
     elif action == "vector":
         docs = data_loader.vector_search(data, top_k=5)
         ctx = "\n\n".join(d["text"][:400] for d in docs) if docs else ""
-        response = (llm.generate(f"Context:\n{ctx}\n\nQuestion: {user_message}\n\nAnswer concisely:",
-                                 temperature=0.2) or "No relevant info found.") if ctx else "No relevant information found."
+        response = (
+            llm.generate(
+                f"Context:\n{ctx}\n\nQuestion: {user_message}\n\nAnswer concisely:",
+                temperature=0.2,
+                user_id=user_id,
+                workspace_id=workspace_id,
+            )
+            or "No relevant info found."
+        ) if ctx else "No relevant information found."
 
     else:
         response = str(data) if data else "I'm not sure how to answer that. Try rephrasing."
@@ -301,18 +579,26 @@ async def handle_chart(user_prompt: str, session_id: str, ingestion_id: str,
     prompt_for_llm = user_prompt
     if feedback_hints:
         prompt_for_llm += f"\n\n[USER FEEDBACK PREFERENCES]\n{feedback_hints}"
+    schema_context = _build_schema_context()
+    if schema_context:
+        prompt_for_llm += f"\n\n{schema_context}"
 
     # STEP 1: Deterministic chart type (no LLM involved)
     chart_type = detect_chart_type(user_prompt)
     logger.info(f"Chart type='{chart_type}' for: '{user_prompt[:60]}'")
 
     # STEP 2: SQL
+    structured_intent = _detect_structured_intent(user_prompt)
     cache_key = user_prompt.lower().strip()
     sql = _sql_cache.get(cache_key)
+    if structured_intent:
+        sql = _build_structured_sql(structured_intent)
     if not sql:
         raw_sql = llm.generate(
             CHART_SQL_PROMPT.format(user_prompt=prompt_for_llm, chart_type=chart_type),
             temperature=0.05,
+            user_id=user_id,
+            workspace_id=workspace_id,
         )
         sql = _sanitize_sql(raw_sql or "")
 
@@ -336,14 +622,27 @@ async def handle_chart(user_prompt: str, session_id: str, ingestion_id: str,
                     f"Fix this DuckDB SQL. Error: {err or 'empty'}\nSQL: {sql}\n"
                     f"Request: {user_prompt}\nReturn ONLY corrected SQL:",
                     temperature=0.1,
+                    user_id=user_id,
+                    workspace_id=workspace_id,
                 )
                 if fixed_sql:
                     sql = _sanitize_sql(fixed_sql)
                     df, err = data_loader.execute_sql(sql)
                 break
 
-    if err:    return None, f"SQL error: {err}"
-    if not _is_df_usable(df): return None, "No data returned for this chart."
+    if err:
+        return None, f"SQL error: {err}"
+    if not _is_df_usable(df):
+        return None, "No data returned for this chart."
+
+    # Validate chart fitness; retry once with deterministic fallback SQL if shape is incompatible.
+    if not _is_chart_df_valid_for_type(df, chart_type):
+        fb = _fallback_sql(user_prompt, CHART_FALLBACK_SQL_MAP)
+        if fb and fb != sql:
+            df_fb, err_fb = data_loader.execute_sql(fb)
+            if not err_fb and _is_chart_df_valid_for_type(df_fb, chart_type):
+                df = df_fb
+                sql = fb
 
     _sql_cache[cache_key] = sql
     if len(_sql_cache) > 100:
@@ -389,6 +688,8 @@ def _generate_chart(df, user_prompt, prompt_for_llm, session_id, sql, chart_type
             chart_template=template,
         ),
         temperature=0.1,
+        user_id=user_id,
+        workspace_id=workspace_id,
     )
 
     if not code:

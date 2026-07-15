@@ -24,6 +24,14 @@ export async function getDataStatus(ingestionId: string) {
   return res.json();
 }
 
+export async function getDataQuality(ingestionId: string) {
+  const res = await fetch(`${API_BASE}/data/quality`, {
+    cache: "no-store",
+    headers: { "x-ingestion-id": ingestionId, ...getAuthHeaders() },
+  });
+  return res.json();
+}
+
 export async function listIngestions() {
   const res = await fetch(`${API_BASE}/ingestions`, {
     headers: getAuthHeaders(),

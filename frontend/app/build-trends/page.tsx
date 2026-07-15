@@ -78,6 +78,27 @@ export default function BuildTrends() {
     };
   });
 
+  const avgPassRate = chartData.length
+    ? chartData.reduce((sum, b) => sum + b.passRate, 0) / chartData.length
+    : 0;
+  const bestBuild = chartData.length
+    ? chartData.reduce((best, cur) => (cur.passRate > best.passRate ? cur : best), chartData[0])
+    : null;
+  const worstBuild = chartData.length
+    ? chartData.reduce((worst, cur) => (cur.passRate < worst.passRate ? cur : worst), chartData[0])
+    : null;
+  const volatility = chartData.length
+    ? Math.sqrt(
+        chartData.reduce((acc, b) => acc + Math.pow(b.passRate - avgPassRate, 2), 0) / chartData.length,
+      )
+    : 0;
+  const durationTrendDelta = chartData.length >= 2
+    ? chartData[chartData.length - 1].avgDuration - chartData[0].avgDuration
+    : 0;
+  const failLoad = chartData.length
+    ? chartData.reduce((sum, b) => sum + b.failed, 0) / chartData.length
+    : 0;
+
   const handleLogout = () => {
     localStorage.clear();
     window.location.href = "/";
@@ -170,6 +191,32 @@ export default function BuildTrends() {
               <option value={builds.length}>All builds</option>
             </select>
             <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400 dark:text-white/25 pointer-events-none" />
+          </div>
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-5 gap-4 mb-6">
+          <div className="rounded-2xl border border-cyan-500/20 bg-cyan-500/[0.05] p-4">
+            <p className="text-[10px] uppercase tracking-widest text-slate-500 dark:text-white/35">Average Pass Rate</p>
+            <p className="text-2xl font-bold text-cyan-500 dark:text-cyan-300">{avgPassRate.toFixed(1)}%</p>
+          </div>
+          <div className="rounded-2xl border border-emerald-500/20 bg-emerald-500/[0.05] p-4">
+            <p className="text-[10px] uppercase tracking-widest text-slate-500 dark:text-white/35">Best Build</p>
+            <p className="text-lg font-semibold text-emerald-600 dark:text-emerald-300">{bestBuild?.label || "-"}</p>
+            <p className="text-sm text-slate-600 dark:text-white/55">{bestBuild ? `${bestBuild.passRate.toFixed(1)}%` : "-"}</p>
+          </div>
+          <div className="rounded-2xl border border-red-500/20 bg-red-500/[0.05] p-4">
+            <p className="text-[10px] uppercase tracking-widest text-slate-500 dark:text-white/35">Worst Build</p>
+            <p className="text-lg font-semibold text-red-600 dark:text-red-300">{worstBuild?.label || "-"}</p>
+            <p className="text-sm text-slate-600 dark:text-white/55">{worstBuild ? `${worstBuild.passRate.toFixed(1)}%` : "-"}</p>
+          </div>
+          <div className="rounded-2xl border border-violet-500/20 bg-violet-500/[0.05] p-4">
+            <p className="text-[10px] uppercase tracking-widest text-slate-500 dark:text-white/35">Pass-Rate Volatility</p>
+            <p className="text-2xl font-bold text-violet-600 dark:text-violet-300">{volatility.toFixed(2)}</p>
+          </div>
+          <div className="rounded-2xl border border-amber-500/20 bg-amber-500/[0.05] p-4">
+            <p className="text-[10px] uppercase tracking-widest text-slate-500 dark:text-white/35">Avg Fail Load / Duration Delta</p>
+            <p className="text-sm text-slate-700 dark:text-white/70">Failed: {failLoad.toFixed(1)} tests/build</p>
+            <p className="text-sm text-slate-700 dark:text-white/70">Avg duration Δ: {durationTrendDelta >= 0 ? "+" : ""}{durationTrendDelta.toFixed(2)}s</p>
           </div>
         </div>
 

@@ -434,30 +434,68 @@ def _coerce_generic_to_flattened_tests(df: pd.DataFrame) -> pd.DataFrame:
     out = pd.DataFrame()
     cols = {c.lower(): c for c in df.columns}
 
+    def _empty(default=""):
+        return pd.Series([default] * len(df))
+
     def _pick(*names, default=""):
         for n in names:
             key = n.lower()
             if key in cols:
                 return df[cols[key]]
-        return pd.Series([default] * len(df))
+        return _empty(default)
+
+    def _pick_by_aliases(aliases: list[str], default=""):
+        for alias in aliases:
+            for c_lower, c_orig in cols.items():
+                if alias in c_lower:
+                    return df[c_orig]
+        return _empty(default)
 
     out["result_id"] = _pick("id", "result_id", default="")
     out["test_name"] = _pick("test_name", "name", "title", "full_name", default="record")
+    if out["test_name"].astype(str).str.strip().eq("record").all():
+        out["test_name"] = _pick_by_aliases(["test", "case", "scenario", "title", "name"], default="record")
     out["build_id"] = _pick("build_id", default="")
     out["executed_at"] = _pick("executed_at", "timestamp", "created_at", "updated_at", default="")
 
     status_series = _pick("status", "state", "result", "outcome", default="unknown").astype(str)
+    if status_series.str.strip().eq("unknown").all():
+        status_series = _pick_by_aliases(["status", "state", "result", "outcome"], default="unknown").astype(str)
     out["status"] = status_series.apply(normalize_status)
 
     duration_raw = _pick("duration_seconds", "duration", "latency", default=0)
+    if pd.to_numeric(duration_raw, errors="coerce").fillna(0).eq(0).all():
+        duration_raw = _pick_by_aliases(["duration", "latency", "elapsed", "time", "runtime"], default=0)
     out["duration"] = pd.to_numeric(duration_raw, errors="coerce").fillna(0).astype(float)
 
     out["error"] = _pick("error", "error_message", "message", default="").astype(str)
+    if out["error"].str.strip().eq("").all():
+        out["error"] = _pick_by_aliases(["error", "exception", "failure", "message", "stack"], default="").astype(str)
+
     out["spec_file"] = _pick("spec_file", "file", "path", default="").astype(str)
     out["project_name"] = _pick("project_name", "project", "dataset", default="unknown").astype(str)
+    if out["project_name"].str.strip().eq("unknown").all():
+        out["project_name"] = _pick_by_aliases(["project", "product", "application", "app", "suite"], default="unknown").astype(str)
+
     out["module_name"] = _pick("module_name", "module", "category", "type", default="unknown").astype(str)
+    if out["module_name"].str.strip().eq("unknown").all():
+        out["module_name"] = _pick_by_aliases(["module", "component", "feature", "category", "area"], default="unknown").astype(str)
+
     out["platform_type"] = _pick("platform_type", default="desktop").astype(str)
     out["browser"] = _pick("browser", "client", default="GoogleChrome").astype(str)
+    if out["browser"].str.strip().eq("GoogleChrome").all():
+        out["browser"] = _pick_by_aliases(["browser", "device", "client", "user_agent"], default="GoogleChrome").astype(str)
+
+    # If status values are not canonical, infer from free text heuristically.
+    bad_status = ~out["status"].isin(["passed", "failed", "skipped", "pending", "unknown"])
+    if bad_status.any():
+        raw_text = status_series.astype(str).str.lower().fillna("")
+        raw_text = raw_text.where(raw_text.str.len() > 0, out["error"].astype(str).str.lower())
+        out.loc[raw_text.str.contains("pass|success|ok", regex=True), "status"] = "passed"
+        out.loc[raw_text.str.contains("fail|error|exception|broken", regex=True), "status"] = "failed"
+        out.loc[raw_text.str.contains("skip|ignored", regex=True), "status"] = "skipped"
+        out.loc[raw_text.str.contains("pending|todo", regex=True), "status"] = "pending"
+        out["status"] = out["status"].apply(normalize_status)
 
     out["platform_type"] = out["platform_type"].replace({"": "desktop", None: "desktop"})
     out["project_name"] = out["project_name"].replace({"": "unknown", None: "unknown"})
@@ -474,6 +512,172 @@ def get_schema_info():
             info = state.duck_conn.execute(f"DESCRIBE {tbl}").fetchall()
             schemas[tbl] = [(r[0], r[1]) for r in info]
     return schemas
+
+
+def get_data_profile(sample_rows: int = 5):
+    profile = {"tables": {}}
+    if not state.duck_conn:
+        return profile
+
+    try:
+        tables = [r[0] for r in state.duck_conn.execute("SHOW TABLES").fetchall()]
+    except Exception:
+        return profile
+
+    for tbl in tables:
+        try:
+            info = state.duck_conn.execute(f"DESCRIBE {tbl}").fetchall()
+            count = int(state.duck_conn.execute(f"SELECT COUNT(*) FROM {tbl}").fetchone()[0])
+            sample_df = state.duck_conn.execute(
+                f"SELECT * FROM {tbl} LIMIT {int(max(1, sample_rows))}"
+            ).df()
+            profile["tables"][tbl] = {
+                "row_count": count,
+                "columns": [{"name": r[0], "type": r[1]} for r in info],
+                "sample": sample_df.to_dict(orient="records"),
+            }
+        except Exception as exc:
+            profile["tables"][tbl] = {"error": str(exc)}
+    return profile
+
+
+def get_ingestion_quality_report():
+    report = {
+        "score": 0,
+        "quality": "unknown",
+        "checks": [],
+        "guidance": [],
+        "table_counts": {},
+        "parser_insights": {},
+    }
+
+    if not state.duck_conn:
+        report["guidance"].append("Data connection not initialized. Run ingestion first.")
+        return report
+
+    try:
+        tables = [r[0] for r in state.duck_conn.execute("SHOW TABLES").fetchall()]
+    except Exception as exc:
+        report["guidance"].append(f"Could not inspect tables: {exc}")
+        return report
+
+    required_tables = ["flattened_tests", "module_metrics", "project_metrics"]
+    for tbl in required_tables:
+        if tbl in tables:
+            count = int(state.duck_conn.execute(f"SELECT COUNT(*) FROM {tbl}").fetchone()[0])
+            report["table_counts"][tbl] = count
+        else:
+            report["table_counts"][tbl] = 0
+
+    checks = []
+    score_parts = []
+
+    def _add_check(name: str, passed: bool, weight: int, detail: str):
+        checks.append({"name": name, "passed": bool(passed), "weight": int(weight), "detail": detail})
+        score_parts.append(weight if passed else 0)
+
+    has_flat = report["table_counts"].get("flattened_tests", 0) > 0
+    _add_check(
+        "flattened_tests availability",
+        has_flat,
+        30,
+        "flattened_tests table exists and has rows" if has_flat else "flattened_tests missing or empty",
+    )
+
+    has_module = report["table_counts"].get("module_metrics", 0) > 0
+    _add_check(
+        "module_metrics availability",
+        has_module,
+        20,
+        "module_metrics table exists and has rows" if has_module else "module_metrics missing or empty",
+    )
+
+    has_project = report["table_counts"].get("project_metrics", 0) > 0
+    _add_check(
+        "project_metrics availability",
+        has_project,
+        15,
+        "project_metrics table exists and has rows" if has_project else "project_metrics missing or empty",
+    )
+
+    if has_flat:
+        mandatory_cols = [
+            "test_name", "status", "duration", "project_name", "module_name", "platform_type"
+        ]
+        present = [c[0] for c in state.duck_conn.execute("DESCRIBE flattened_tests").fetchall()]
+        missing = [c for c in mandatory_cols if c not in present]
+        _add_check(
+            "flattened_tests required columns",
+            len(missing) == 0,
+            20,
+            "all required columns present" if not missing else f"missing columns: {missing}",
+        )
+
+        try:
+            status_df = state.duck_conn.execute(
+                "SELECT status, COUNT(*) AS cnt FROM flattened_tests GROUP BY status"
+            ).df()
+            known = {"passed", "failed", "skipped", "pending", "unknown"}
+            known_count = int(status_df[status_df["status"].astype(str).str.lower().isin(known)]["cnt"].sum())
+            total = int(status_df["cnt"].sum()) if not status_df.empty else 0
+            ratio = (known_count / total) if total else 0.0
+            _add_check(
+                "status normalization",
+                ratio >= 0.9,
+                15,
+                f"known status ratio: {round(ratio * 100, 2)}%",
+            )
+        except Exception as exc:
+            _add_check("status normalization", False, 15, f"status check failed: {exc}")
+    else:
+        _add_check("flattened_tests required columns", False, 20, "cannot evaluate without flattened_tests")
+        _add_check("status normalization", False, 15, "cannot evaluate without flattened_tests")
+
+    report["checks"] = checks
+    score = int(sum(score_parts))
+    report["score"] = score
+    if score >= 85:
+        quality = "excellent"
+    elif score >= 70:
+        quality = "good"
+    elif score >= 50:
+        quality = "fair"
+    else:
+        quality = "poor"
+    report["quality"] = quality
+
+    guidance = []
+    if not has_flat:
+        guidance.append("No canonical flattened_tests table found. Ensure source parser emits structured rows or AI parse fallback is enabled.")
+    if not has_module:
+        guidance.append("module_metrics missing. Verify module_name/project_name are extracted from source data.")
+    if not has_project:
+        guidance.append("project_metrics missing. Verify project_name/platform_type can be inferred from parsed records.")
+
+    failed_checks = [c for c in checks if not c["passed"]]
+    if any(c["name"] == "status normalization" and not c["passed"] for c in failed_checks):
+        guidance.append("Status values are noisy. Map source fields to pass/fail/skip/pending before ingestion.")
+    if any(c["name"] == "flattened_tests required columns" and not c["passed"] for c in failed_checks):
+        guidance.append("Schema mapping incomplete. Provide aliases for missing canonical fields or update connector normalization.")
+
+    # Collect parser strategy insights from schema/source metadata when available.
+    if "ingestion_schema_profiles" in tables:
+        try:
+            prof_count = int(state.duck_conn.execute("SELECT COUNT(*) FROM ingestion_schema_profiles").fetchone()[0])
+            report["parser_insights"]["schema_profiles"] = prof_count
+        except Exception:
+            pass
+    if "sources" in tables:
+        try:
+            src_count = int(state.duck_conn.execute("SELECT COUNT(*) FROM sources").fetchone()[0])
+            report["parser_insights"]["sources"] = src_count
+        except Exception:
+            pass
+
+    if not guidance and quality in {"excellent", "good"}:
+        guidance.append("Ingestion quality is healthy. No immediate action required.")
+    report["guidance"] = guidance
+    return report
 
 
 def execute_sql(query: str):

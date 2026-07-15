@@ -201,6 +201,28 @@ RULES:
 Answer:"""
 
 
+CHAT_VALIDATION_PROMPT = """You are a strict QA answer validator.
+
+Validate whether DRAFT_ANSWER is fully supported by the DATA rows.
+
+USER_QUESTION: {user_message}
+DRAFT_ANSWER: {draft_answer}
+
+DATA ({row_count} rows):
+{data_json}
+
+RULES:
+1. Mark is_valid=true only if every claim in DRAFT_ANSWER is supported by DATA.
+2. If any claim is unsupported, set is_valid=false and provide corrected_answer grounded only in DATA.
+3. Never invent values or entities not present in DATA.
+4. Keep corrected_answer concise and direct.
+
+Return ONLY valid JSON:
+{{"is_valid": true, "corrected_answer": ""}}
+or
+{{"is_valid": false, "corrected_answer": "..."}}"""
+
+
 # ---------------------------------------------------------------------------
 # CHAT – RELEASE VERDICT TEMPLATE
 # ---------------------------------------------------------------------------
@@ -592,6 +614,16 @@ def detect_chart_type(prompt: str) -> str:
 # ---------------------------------------------------------------------------
 
 FALLBACK_SQL_MAP = {
+    r"(highest|best|max|top).*(pass rate)|(pass rate).*(highest|best|max|top)": (
+        "SELECT project_name, module_name, platform_type, total_tests, passed, failed,"
+        " ROUND(pass_rate, 2) AS pass_rate"
+        " FROM module_metrics ORDER BY pass_rate DESC LIMIT 1"
+    ),
+    r"(lowest|least|min|worst|bottom).*(pass rate)|(pass rate).*(lowest|least|min|worst|bottom)": (
+        "SELECT project_name, module_name, platform_type, total_tests, passed, failed,"
+        " ROUND(pass_rate, 2) AS pass_rate"
+        " FROM module_metrics ORDER BY pass_rate ASC LIMIT 1"
+    ),
     r"how many.*fail|count.*fail": (
         "SELECT COUNT(*) AS failed_count FROM flattened_tests WHERE status = 'failed'"
     ),
