@@ -4,17 +4,17 @@
       "workspace_id": "default",
       "user_id": "admin",
       "totals": {
-        "prompt_tokens": 6622,
-        "completion_tokens": 4648,
-        "total_tokens": 11270,
-        "calls": 4
+        "prompt_tokens": 94351,
+        "completion_tokens": 44746,
+        "total_tokens": 139097,
+        "calls": 45
       },
       "by_model": {
         "gemini/gemini-2.5-flash": {
-          "prompt_tokens": 6622,
-          "completion_tokens": 4648,
-          "total_tokens": 11270,
-          "calls": 4
+          "prompt_tokens": 94351,
+          "completion_tokens": 44746,
+          "total_tokens": 139097,
+          "calls": 45
         }
       }
     },
@@ -22,20 +22,38 @@
       "workspace_id": "default",
       "user_id": "anonymous",
       "totals": {
-        "prompt_tokens": 2240,
-        "completion_tokens": 1280,
-        "total_tokens": 3520,
-        "calls": 2
+        "prompt_tokens": 3693,
+        "completion_tokens": 2186,
+        "total_tokens": 5879,
+        "calls": 4
       },
       "by_model": {
         "gemini/gemini-2.5-flash": {
-          "prompt_tokens": 2240,
-          "completion_tokens": 1280,
-          "total_tokens": 3520,
-          "calls": 2
+          "prompt_tokens": 3693,
+          "completion_tokens": 2186,
+          "total_tokens": 5879,
+          "calls": 4
+        }
+      }
+    },
+    "default:sanity": {
+      "workspace_id": "default",
+      "user_id": "sanity",
+      "totals": {
+        "prompt_tokens": 23793,
+        "completion_tokens": 9759,
+        "total_tokens": 33552,
+        "calls": 10
+      },
+      "by_model": {
+        "gemini/gemini-2.5-flash": {
+          "prompt_tokens": 23793,
+          "completion_tokens": 9759,
+          "total_tokens": 33552,
+          "calls": 10
         }
       }
     }
   },
-  "updated_at": "2026-07-14T11:52:39.612500+00:00"
+  "updated_at": "2026-07-15T08:01:09.285923+00:00"
 }

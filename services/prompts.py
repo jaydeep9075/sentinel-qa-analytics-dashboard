@@ -223,6 +223,34 @@ or
 {{"is_valid": false, "corrected_answer": "..."}}"""
 
 
+SUGGESTION_PROMPT = """You are a QA analytics copilot generating prompt suggestions.
+
+ROLE ID: {role_id}
+PROJECT: {project_id}
+
+ROLE INSTRUCTION:
+{role_instruction}
+
+RUNTIME DATA PROFILE:
+{schema_profile}
+
+INGESTION QUALITY SUMMARY:
+{quality_summary}
+
+TASK:
+Generate practical and high-value suggestions for this role so users can click and run them directly.
+
+OUTPUT RULES:
+1. Return ONLY valid JSON.
+2. Provide exactly 8 chat suggestions and 8 chart suggestions.
+3. Suggestions must be specific to test analytics and role priorities.
+4. Avoid duplicates and vague phrases.
+5. Each suggestion should be one concise sentence.
+
+Return JSON:
+{{"chat": ["..."], "chart": ["..."]}}"""
+
+
 # ---------------------------------------------------------------------------
 # CHAT – RELEASE VERDICT TEMPLATE
 # ---------------------------------------------------------------------------

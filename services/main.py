@@ -1,6 +1,7 @@
 import logging
 import uuid
 import json
+import re
 import tempfile
 from fastapi import FastAPI, HTTPException, Header, Depends
 from fastapi.middleware.cors import CORSMiddleware
@@ -11,6 +12,7 @@ from typing import Optional
 from datetime import datetime, timezone
 from . import config, state, data_loader, handlers, memory, llm_client
 from . import token_usage_store
+from .prompts import SUGGESTION_PROMPT
 from .auth import authenticate_user, create_access_token, get_current_user, initialize_auth_store
 
 logging.basicConfig(level=logging.INFO)
@@ -62,6 +64,280 @@ def _infer_source_type(source_path: str, explicit: Optional[str]) -> str:
     if "allure" in p and ("result" in p or p.endswith("/") or p.endswith("\\")):
         return "allure"
     return "file"
+
+
+def _fallback_suggestions(role_id: Optional[str]) -> dict:
+    role_key = str(role_id or "").strip().lower().replace("_", "-")
+    if role_key in {"cto", "chief-technology-officer"}:
+        return {
+            "chat": [
+                "What is the overall pass rate and release readiness for this build?",
+                "Which project has the highest failure impact right now?",
+                "Show top 5 modules by failure count with risk notes.",
+                "Compare mobile vs desktop pass rate by project.",
+                "Which modules have the lowest pass rate and should be blocked?",
+                "How does this build quality compare to previous ingestions?",
+                "List high-risk areas with recommended executive action.",
+                "Summarize build health in an executive-ready format.",
+            ],
+            "chart": [
+                "Bar chart of pass rate by project and platform.",
+                "Heatmap of failure density by project and module.",
+                "Trend line of pass rate across recent builds.",
+                "Bar chart of top failing modules by impact.",
+                "Donut chart of release readiness status distribution.",
+                "Stacked bar of passed/failed/skipped by project.",
+                "Line chart comparing failure rate trend by platform.",
+                "Executive risk matrix chart for project vs failure load.",
+            ],
+        }
+    return {
+        "chat": [
+            "List failed tests with error messages and module names.",
+            "Show the slowest tests and likely bottlenecks.",
+            "Which modules have increasing failure trends?",
+            "Compare mobile and desktop failures by module.",
+            "Show flaky-risk candidates based on repeated failures.",
+            "What is the pass rate and failed count by module?",
+            "Which tests should QA prioritize for debugging first?",
+            "Summarize top actionable defects for this build.",
+        ],
+        "chart": [
+            "Bar chart of failed tests by module.",
+            "Horizontal bar chart of slowest tests.",
+            "Heatmap of failures by module and platform.",
+            "Pie chart of passed vs failed vs skipped.",
+            "Line chart of pass rate trend by module.",
+            "Grouped bar chart of mobile vs desktop failures.",
+            "Bar chart of top failing projects and modules.",
+            "Scatter chart of test duration vs failure status.",
+        ],
+    }
+
+
+def _normalize_suggestions(payload: dict, role_id: Optional[str]) -> dict:
+    fallback = _fallback_suggestions(role_id)
+    if not isinstance(payload, dict):
+        return fallback
+
+    chat = payload.get("chat", [])
+    chart = payload.get("chart", [])
+    if not isinstance(chat, list) or not isinstance(chart, list):
+        return fallback
+
+    chat_clean = [str(x).strip() for x in chat if str(x).strip()][:8]
+    chart_clean = [str(x).strip() for x in chart if str(x).strip()][:8]
+    if len(chat_clean) < 4 or len(chart_clean) < 4:
+        return fallback
+
+    while len(chat_clean) < 8:
+        chat_clean.append(fallback["chat"][len(chat_clean)])
+    while len(chart_clean) < 8:
+        chart_clean.append(fallback["chart"][len(chart_clean)])
+    chat_clean = _repair_truncated_first_item(chat_clean, fallback["chat"])
+    chart_clean = _repair_truncated_first_item(chart_clean, fallback["chart"])
+    return {"chat": chat_clean[:8], "chart": chart_clean[:8]}
+
+
+def _sanitize_suggestion_item(text: str) -> str:
+    cleaned = re.sub(r"\s+", " ", str(text or "")).strip()
+    cleaned = cleaned.strip("`\"' ")
+    if cleaned and cleaned[-1] in {",", ":", "-", "/", "("}:
+        cleaned = cleaned[:-1].strip()
+    return cleaned
+
+
+def _looks_truncated_item(text: str) -> bool:
+    if not text:
+        return True
+    tail = text.lower().strip()
+    dangling_endings = (
+        " for",
+        " for the",
+        " and",
+        " with",
+        " to",
+        " in",
+        " in the",
+        " of",
+        " on",
+        " by",
+        " from",
+        " where",
+        " which",
+    )
+    if tail.endswith(dangling_endings):
+        return True
+    if tail.count("`") % 2 == 1:
+        return True
+    if len(tail) >= 65 and tail[-1] not in {".", "?", "!"}:
+        return True
+    return False
+
+
+def _split_truncated_item(text: str) -> str:
+    cleaned = _sanitize_suggestion_item(text)
+    # Prefer the meaningful prefix before a likely cut-off conjunction/preposition.
+    parts = re.split(
+        r"\s+(?:for|with|to|in|of|on|by|from|and)\s+(?:the\s+)?$",
+        cleaned,
+        maxsplit=1,
+        flags=re.IGNORECASE,
+    )
+    if parts and len(parts[0].strip()) >= 18:
+        return parts[0].strip()
+    # Fallback to last major punctuation boundary if present.
+    for sep in [";", ":", ","]:
+        if sep in cleaned:
+            head = cleaned.split(sep)[0].strip()
+            if len(head) >= 18:
+                return head
+    return cleaned
+
+
+def _repair_truncated_first_item(items: list[str], fallback_items: list[str]) -> list[str]:
+    if not items:
+        return list(fallback_items[:8])
+
+    repaired = [_sanitize_suggestion_item(x) for x in items if _sanitize_suggestion_item(x)]
+    if not repaired:
+        return list(fallback_items[:8])
+
+    if _looks_truncated_item(repaired[0]):
+        split_head = _split_truncated_item(repaired[0])
+        if _looks_truncated_item(split_head) or len(split_head) < 18:
+            repaired[0] = fallback_items[0]
+        else:
+            repaired[0] = split_head
+
+    while len(repaired) < 8:
+        repaired.append(fallback_items[len(repaired)])
+    return repaired[:8]
+
+
+def _strip_code_fences(text: str) -> str:
+    return re.sub(r"```json\s*|```", "", str(text or ""), flags=re.IGNORECASE).strip()
+
+
+def _extract_json_candidates(text: str) -> list[str]:
+    candidates: list[str] = []
+    start = -1
+    depth = 0
+    in_string = False
+    escaped = False
+
+    for idx, ch in enumerate(text):
+        if in_string:
+            if escaped:
+                escaped = False
+            elif ch == "\\":
+                escaped = True
+            elif ch == '"':
+                in_string = False
+            continue
+
+        if ch == '"':
+            in_string = True
+            continue
+
+        if ch == "{":
+            if depth == 0:
+                start = idx
+            depth += 1
+        elif ch == "}":
+            if depth > 0:
+                depth -= 1
+                if depth == 0 and start >= 0:
+                    candidates.append(text[start:idx + 1])
+                    start = -1
+    return candidates
+
+
+def _extract_partial_items(raw_section: str) -> list[str]:
+    items: list[str] = []
+    for match in re.findall(r'"([^"\\\r\n]{4,220})"', raw_section or ""):
+        candidate = _sanitize_suggestion_item(match)
+        if not candidate:
+            continue
+        lowered = candidate.lower()
+        if lowered in {"chat", "chart", "role", "project", "source"}:
+            continue
+        items.append(candidate)
+        if len(items) >= 8:
+            break
+    return items
+
+
+def _salvage_suggestions_payload(raw_text: str, role_id: Optional[str]) -> Optional[dict]:
+    text = _strip_code_fences(raw_text)
+    if not text:
+        return None
+
+    chat_section = ""
+    chart_section = ""
+
+    chat_match = re.search(r'"chat"\s*:\s*\[(.*?)(?:\]\s*,\s*"chart"|\]\s*\}|$)', text, flags=re.IGNORECASE | re.DOTALL)
+    if chat_match:
+        chat_section = chat_match.group(1)
+    chart_match = re.search(r'"chart"\s*:\s*\[(.*?)(?:\]\s*\}|$)', text, flags=re.IGNORECASE | re.DOTALL)
+    if chart_match:
+        chart_section = chart_match.group(1)
+
+    chat = _extract_partial_items(chat_section)
+    chart = _extract_partial_items(chart_section)
+    if not chat and not chart:
+        return None
+
+    fallback = _fallback_suggestions(role_id)
+    chat = _repair_truncated_first_item(chat, fallback["chat"])
+    chart = _repair_truncated_first_item(chart, fallback["chart"])
+    while len(chat) < 8:
+        chat.append(fallback["chat"][len(chat)])
+    while len(chart) < 8:
+        chart.append(fallback["chart"][len(chart)])
+    return {"chat": chat[:8], "chart": chart[:8]}
+
+
+def _parse_suggestions_payload(raw_text: str, role_id: Optional[str]) -> Optional[dict]:
+    cleaned = _strip_code_fences(raw_text)
+    if not cleaned:
+        return None
+
+    for candidate in [cleaned, *_extract_json_candidates(cleaned)]:
+        try:
+            payload = json.loads(candidate)
+        except Exception:
+            continue
+        if isinstance(payload, dict):
+            return _normalize_suggestions(payload, role_id)
+
+    return _salvage_suggestions_payload(cleaned, role_id)
+
+
+def _build_retry_suggestion_prompt(
+    role_id: str,
+    project_id: str,
+    role_instruction: str,
+    schema_profile: dict,
+    quality: dict,
+) -> str:
+    role_instruction_small = str(role_instruction or "").strip()[:350]
+    schema_small = json.dumps(schema_profile or {}, ensure_ascii=False)[:700]
+    quality_small = json.dumps(quality or {}, ensure_ascii=False)[:550]
+
+    return (
+        "Return ONLY valid minified JSON.\n"
+        "Strict schema: {\"chat\":[8 strings],\"chart\":[8 strings]}.\n"
+        "Do not output markdown, code fences, or extra keys.\n"
+        "Each suggestion must be <= 16 words and actionable.\n"
+        "No test IDs, no file paths, no stack traces.\n"
+        f"ROLE_ID: {role_id}\n"
+        f"PROJECT: {project_id}\n"
+        f"ROLE_HINT: {role_instruction_small or 'Use role id semantics for audience and tone.'}\n"
+        f"SCHEMA_SNAPSHOT: {schema_small}\n"
+        f"QUALITY_SNAPSHOT: {quality_small}\n"
+        "Output exactly: {\"chat\":[\"...\",\"...\",\"...\",\"...\",\"...\",\"...\",\"...\",\"...\"],\"chart\":[\"...\",\"...\",\"...\",\"...\",\"...\",\"...\",\"...\",\"...\"]}"
+    )
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -424,6 +700,83 @@ async def list_ingestions(current_user: dict = Depends(get_current_user)):
         item["build_label"] = f"Build {i + 1}"
     
     return {"ingestions": sorted(sorted_ingestions, key=lambda x: x["created"], reverse=True)}
+
+
+@app.get("/suggestions")
+async def role_suggestions(
+    x_ingestion_id: str = Header(...),
+    x_role: Optional[str] = Header(None),
+    x_project: Optional[str] = Header(None),
+    x_workspace_id: Optional[str] = Header(None),
+    current_user: dict = Depends(get_current_user),
+):
+    normalized_ingestion_id = str(x_ingestion_id or "").strip()
+    if state.current_ingestion_id != normalized_ingestion_id or state.duck_conn is None or state.lance_db is None:
+        data_loader.init_data(normalized_ingestion_id)
+
+    role_id = str(x_role or current_user.get("role") or "qa-engineer").strip()
+    project_id = str(x_project or "all").strip()
+
+    role_instruction = ""
+    try:
+        if state.role_manager is None:
+            from .role_manager import RoleManager
+            state.role_manager = RoleManager()
+        role_instruction = state.role_manager.get_role_instruction(role_id) or ""
+    except Exception:
+        role_instruction = ""
+
+    schema_profile = data_loader.get_data_profile(sample_rows=2)
+    quality = data_loader.get_ingestion_quality_report()
+    llm = llm_client.LLMClient()
+
+    prompt = SUGGESTION_PROMPT.format(
+        role_id=role_id,
+        project_id=project_id,
+        role_instruction=role_instruction or "No explicit role file found. Use role id semantics.",
+        schema_profile=json.dumps(schema_profile, ensure_ascii=False)[:8000],
+        quality_summary=json.dumps(quality, ensure_ascii=False)[:3000],
+    )
+
+    workspace_id = _normalize_workspace(x_workspace_id, current_user)
+    raw_primary = llm.generate(
+        prompt,
+        temperature=0.2,
+        max_tokens=1000,
+        user_id=current_user.get("username"),
+        workspace_id=workspace_id,
+    )
+    parsed_primary = _parse_suggestions_payload(raw_primary, role_id)
+    if parsed_primary:
+        return {"role": role_id, "project": project_id, "source": "ai", **parsed_primary}
+
+    retry_prompt = _build_retry_suggestion_prompt(
+        role_id=role_id,
+        project_id=project_id,
+        role_instruction=role_instruction,
+        schema_profile=schema_profile,
+        quality=quality,
+    )
+    raw_retry = llm.generate(
+        retry_prompt,
+        temperature=0.1,
+        max_tokens=900,
+        user_id=current_user.get("username"),
+        workspace_id=workspace_id,
+    )
+    parsed_retry = _parse_suggestions_payload(raw_retry, role_id)
+    if parsed_retry:
+        return {"role": role_id, "project": project_id, "source": "ai-retry", **parsed_retry}
+
+    parsed_partial = _salvage_suggestions_payload(
+        f"{raw_primary or ''}\n{raw_retry or ''}",
+        role_id,
+    )
+    if parsed_partial:
+        return {"role": role_id, "project": project_id, "source": "ai-partial", **parsed_partial}
+
+    data = _normalize_suggestions({}, role_id)
+    return {"role": role_id, "project": project_id, "source": "fallback", **data}
 
 
 @app.post("/feedback")
