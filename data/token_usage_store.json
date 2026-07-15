@@ -4,17 +4,17 @@
       "workspace_id": "default",
       "user_id": "admin",
       "totals": {
-        "prompt_tokens": 94351,
-        "completion_tokens": 44746,
-        "total_tokens": 139097,
-        "calls": 45
+        "prompt_tokens": 122825,
+        "completion_tokens": 55602,
+        "total_tokens": 178427,
+        "calls": 56
       },
       "by_model": {
         "gemini/gemini-2.5-flash": {
-          "prompt_tokens": 94351,
-          "completion_tokens": 44746,
-          "total_tokens": 139097,
-          "calls": 45
+          "prompt_tokens": 122825,
+          "completion_tokens": 55602,
+          "total_tokens": 178427,
+          "calls": 56
         }
       }
     },
@@ -55,5 +55,5 @@
       }
     }
   },
-  "updated_at": "2026-07-15T08:01:09.285923+00:00"
+  "updated_at": "2026-07-15T08:42:02.192236+00:00"
 }

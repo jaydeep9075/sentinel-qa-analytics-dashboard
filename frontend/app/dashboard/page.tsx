@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import Link from "next/link";
 import { TrendingUp, LogOut, Wifi, WifiOff, Plus, X } from "lucide-react";
 import ChartGallery from "@/components/ChartGallery";
@@ -10,11 +10,11 @@ import RoleSelector from "@/components/RoleSelector";
 import FloatingChat from "@/components/FloatingChat";
 import FloatingChart from "@/components/FloatingChart";  // new
 import BrandLogo from "@/components/BrandLogo";
-import { getDataStatus, getDataQuality, checkHealth, ingestFromConfigPath, getTokenUsage } from "@/lib/api";
+import { getDashboardOverview, ingestFromConfigPath, prefetchDashboardQuality, readCachedDashboardOverview } from "@/lib/api";
 import { useIngestion } from "@/lib/IngestionContext";
 
 export default function Dashboard() {
-  const { selectedIngestion } = useIngestion();
+  const { selectedIngestion, refreshIngestions, setSelectedIngestion } = useIngestion();
   const [dataStatus, setDataStatus] = useState<{
     has_data?: boolean;
     total_rows?: number;
@@ -42,6 +42,8 @@ export default function Dashboard() {
     guidance?: string[];
     checks?: { name?: string; passed?: boolean; detail?: string }[];
   } | null>(null);
+  const [isHeaderLoading, setIsHeaderLoading] = useState(true);
+  const headerLoadStartRef = useRef<number>(0);
 
   // Listen for chart-generated events from FloatingChart
   useEffect(() => {
@@ -54,31 +56,87 @@ export default function Dashboard() {
 
   useEffect(() => {
     let cancelled = false;
-    const checkConnection = async () => {
-      if (typeof document !== "undefined" && document.visibilityState !== "visible") {
+    headerLoadStartRef.current =
+      typeof performance !== "undefined" && typeof performance.now === "function"
+        ? performance.now()
+        : Date.now();
+    setIsHeaderLoading(true);
+
+    const applyOverview = (overview: {
+      connected?: boolean;
+      status?: {
+        has_data?: boolean;
+        total_rows?: number;
+        status_summary?: { passed?: number; failed?: number };
+      };
+      quality?: {
+        score?: number;
+        quality?: string;
+        guidance?: string[];
+        checks?: { name?: string; passed?: boolean; detail?: string }[];
+      };
+      token_usage?: {
+        totals?: { total_tokens?: number; prompt_tokens?: number; completion_tokens?: number; calls?: number };
+      };
+    }) => {
+      if (cancelled) return;
+      setBackendConnected(Boolean(overview.connected));
+      if (overview.status) setDataStatus(overview.status);
+      if (overview.quality) setDataQuality(overview.quality);
+      if (overview.token_usage) setTokenUsage(overview.token_usage);
+      setIsHeaderLoading(false);
+    };
+
+    const cached = selectedIngestion ? readCachedDashboardOverview(selectedIngestion) : null;
+    if (cached) {
+      applyOverview(cached);
+    }
+
+    const refreshOverview = async () => {
+      if (!selectedIngestion) {
+        if (!cancelled) {
+          setDataStatus(null);
+          setDataQuality(null);
+          setTokenUsage(null);
+          setBackendConnected(true);
+          setIsHeaderLoading(false);
+        }
         return;
       }
+
+      if (typeof document !== "undefined" && document.visibilityState !== "visible") return;
+
       try {
-        await checkHealth();
-        if (!cancelled) setBackendConnected(true);
-        if (selectedIngestion) {
-          const status = await getDataStatus(selectedIngestion);
-          if (!cancelled) setDataStatus(status);
-          const quality = await getDataQuality(selectedIngestion);
-          if (!cancelled) setDataQuality(quality);
-        }
-        const usage = await getTokenUsage();
-        if (!cancelled) setTokenUsage(usage);
+        const overview = await getDashboardOverview(selectedIngestion, {
+          forceRefresh: true,
+          includeQuality: false,
+        });
+        applyOverview(overview);
+
+        prefetchDashboardQuality(selectedIngestion).then(async () => {
+          if (cancelled) return;
+          try {
+            const enriched = await getDashboardOverview(selectedIngestion, {
+              forceRefresh: true,
+              includeQuality: true,
+            });
+            if (!cancelled && enriched.quality) {
+              setDataQuality(enriched.quality);
+            }
+          } catch {
+            // Ignore delayed quality refresh failures.
+          }
+        });
       } catch {
         if (!cancelled) setBackendConnected(false);
       }
     };
 
-    checkConnection();
+    refreshOverview();
 
-    const interval = setInterval(checkConnection, 30000);
+    const interval = setInterval(refreshOverview, 20000);
     const onVisible = () => {
-      if (document.visibilityState === "visible") checkConnection();
+      if (document.visibilityState === "visible") refreshOverview();
     };
     document.addEventListener("visibilitychange", onVisible);
 
@@ -88,6 +146,21 @@ export default function Dashboard() {
       document.removeEventListener("visibilitychange", onVisible);
     };
   }, [selectedIngestion]);
+
+  useEffect(() => {
+    if (isHeaderLoading) return;
+    if (typeof window === "undefined") return;
+    const enabled = process.env.NODE_ENV !== "production" || localStorage.getItem("qa_perf_debug") === "1";
+    if (!enabled) return;
+    const now =
+      typeof performance !== "undefined" && typeof performance.now === "function"
+        ? performance.now()
+        : Date.now();
+    console.debug("[perf] dashboard:header-ready", {
+      ingestion: selectedIngestion,
+      ready_ms: Number((now - headerLoadStartRef.current).toFixed(1)),
+    });
+  }, [isHeaderLoading, selectedIngestion]);
 
   useEffect(() => {
     const loadCurrentPath = async () => {
@@ -161,9 +234,12 @@ export default function Dashboard() {
         type: "success",
         message: `Ingestion started for ${ingestData.build_id}. Refreshing builds...`,
       });
-      setTimeout(() => {
-        window.location.reload();
-      }, 1200);
+      await refreshIngestions();
+      if (ingestData.build_id) {
+        setSelectedIngestion(ingestData.build_id);
+      }
+      setRefreshGallery((prev) => prev + 1);
+      setIsAddBuildOpen(false);
     } catch (error: unknown) {
       const message = error instanceof Error ? error.message : "Ingestion failed.";
       setPathSaveStatus({ type: "error", message });
@@ -297,14 +373,14 @@ export default function Dashboard() {
       {/* ══════════ MAIN CONTENT ══════════ */}
       <div className="relative z-10 max-w-[1600px] mx-auto px-6 py-8">
         {/* Data Summary Cards */}
-        {dataStatus?.has_data && dataStatus.total_rows && (
+        {(dataStatus?.has_data && dataStatus.total_rows) || isHeaderLoading ? (
           <div className="grid grid-cols-1 md:grid-cols-5 gap-4 mb-4">
             {/* Total Tests */}
             <div className="group relative rounded-2xl p-5 border border-slate-200 bg-white hover:border-cyan-500/20 hover:bg-cyan-500/[0.03] transition-all overflow-hidden dark:border-white/[0.06] dark:bg-white/[0.02]">
               <div className="absolute -top-12 -right-12 w-24 h-24 bg-cyan-500/[0.06] blur-2xl rounded-full opacity-0 group-hover:opacity-100 transition-opacity" />
               <p className="text-[10px] uppercase tracking-widest font-semibold mb-1 text-slate-500 dark:text-white/30">Total Tests</p>
               <p className="text-3xl font-bold transition-colors text-slate-900 group-hover:text-cyan-600 dark:text-white dark:group-hover:text-cyan-400">
-                {dataStatus.total_rows.toLocaleString()}
+                {isHeaderLoading ? "..." : (dataStatus?.total_rows || 0).toLocaleString()}
               </p>
             </div>
 
@@ -313,7 +389,7 @@ export default function Dashboard() {
               <div className="absolute -top-12 -right-12 w-24 h-24 bg-emerald-500/[0.08] blur-2xl rounded-full opacity-0 group-hover:opacity-100 transition-opacity" />
               <p className="text-[10px] uppercase tracking-widest font-semibold mb-1 text-slate-500 dark:text-white/30">Passed</p>
               <p className="text-3xl font-bold text-emerald-400">
-                {dataStatus.status_summary?.passed?.toLocaleString() || 0}
+                {isHeaderLoading ? "..." : (dataStatus?.status_summary?.passed?.toLocaleString() || 0)}
               </p>
             </div>
 
@@ -322,7 +398,7 @@ export default function Dashboard() {
               <div className="absolute -top-12 -right-12 w-24 h-24 bg-red-500/[0.08] blur-2xl rounded-full opacity-0 group-hover:opacity-100 transition-opacity" />
               <p className="text-[10px] uppercase tracking-widest font-semibold mb-1 text-slate-500 dark:text-white/30">Failed</p>
               <p className="text-3xl font-bold text-red-400">
-                {dataStatus.status_summary?.failed?.toLocaleString() || 0}
+                {isHeaderLoading ? "..." : (dataStatus?.status_summary?.failed?.toLocaleString() || 0)}
               </p>
             </div>
 
@@ -331,12 +407,11 @@ export default function Dashboard() {
               <div className="absolute -top-12 -right-12 w-24 h-24 bg-cyan-500/[0.08] blur-2xl rounded-full opacity-0 group-hover:opacity-100 transition-opacity" />
               <p className="text-[10px] uppercase tracking-widest font-semibold mb-1 text-slate-500 dark:text-white/30">Pass Rate</p>
               <p className="text-3xl font-bold bg-gradient-to-r from-cyan-400 to-blue-500 bg-clip-text text-transparent">
-                {Math.round(
-                  ((dataStatus.status_summary?.passed || 0) /
-                    dataStatus.total_rows) *
-                    100,
-                )}
-                %
+                {isHeaderLoading
+                  ? "..."
+                  : `${Math.round(
+                      (((dataStatus?.status_summary?.passed || 0) / Math.max(1, dataStatus?.total_rows || 0)) * 100),
+                    )}%`}
               </p>
             </div>
 
@@ -345,14 +420,14 @@ export default function Dashboard() {
               <div className="absolute -top-12 -right-12 w-24 h-24 bg-violet-500/[0.1] blur-2xl rounded-full opacity-0 group-hover:opacity-100 transition-opacity" />
               <p className="text-[10px] uppercase tracking-widest font-semibold mb-1 text-slate-500 dark:text-white/30">LLM Tokens</p>
               <p className="text-3xl font-bold text-violet-500 dark:text-violet-300">
-                {(tokenUsage?.totals?.total_tokens || 0).toLocaleString()}
+                {isHeaderLoading ? "..." : (tokenUsage?.totals?.total_tokens || 0).toLocaleString()}
               </p>
               <p className="mt-1 text-[10px] text-slate-500 dark:text-white/30 uppercase tracking-wider">
                 Prompt: {(tokenUsage?.totals?.prompt_tokens || 0).toLocaleString()} | Completion: {(tokenUsage?.totals?.completion_tokens || 0).toLocaleString()} | Calls: {(tokenUsage?.totals?.calls || 0).toLocaleString()}
               </p>
             </div>
           </div>
-        )}
+        ) : null}
 
         {dataQuality && (
           <div className="mb-6 rounded-2xl border border-slate-200 bg-white p-5 dark:border-white/[0.06] dark:bg-white/[0.02]">

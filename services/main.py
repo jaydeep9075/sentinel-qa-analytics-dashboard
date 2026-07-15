@@ -3,7 +3,8 @@ import uuid
 import json
 import re
 import tempfile
-from fastapi import FastAPI, HTTPException, Header, Depends
+import time
+from fastapi import FastAPI, HTTPException, Header, Depends, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
 from pydantic import BaseModel
@@ -17,6 +18,19 @@ from .auth import authenticate_user, create_access_token, get_current_user, init
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+_STATUS_CACHE_TTL_SECONDS = 10.0
+_QUALITY_CACHE_TTL_SECONDS = 20.0
+_status_cache: dict[str, tuple[float, dict]] = {}
+_quality_cache: dict[str, tuple[float, dict]] = {}
+_PERF_PATH_PREFIXES = (
+    "/dashboard/overview",
+    "/data/status",
+    "/data/quality",
+    "/ingestions",
+    "/chart/history/",
+    "/usage/tokens",
+)
 
 class ChatRequest(BaseModel):
     message: str
@@ -339,6 +353,97 @@ def _build_retry_suggestion_prompt(
         "Output exactly: {\"chat\":[\"...\",\"...\",\"...\",\"...\",\"...\",\"...\",\"...\",\"...\"],\"chart\":[\"...\",\"...\",\"...\",\"...\",\"...\",\"...\",\"...\",\"...\"]}"
     )
 
+
+def _cache_get(cache: dict[str, tuple[float, dict]], key: str, ttl_seconds: float) -> Optional[dict]:
+    now = time.time()
+    entry = cache.get(key)
+    if not entry:
+        return None
+    ts, payload = entry
+    if now - ts > ttl_seconds:
+        cache.pop(key, None)
+        return None
+    return payload
+
+
+def _cache_set(cache: dict[str, tuple[float, dict]], key: str, payload: dict) -> dict:
+    cache[key] = (time.time(), payload)
+    return payload
+
+
+def _get_status_payload(normalized_ingestion_id: str) -> dict:
+    cached = _cache_get(_status_cache, normalized_ingestion_id, _STATUS_CACHE_TTL_SECONDS)
+    if cached is not None:
+        return cached
+
+    if not state.duck_conn:
+        payload = {"has_data": False, "total_rows": 0, "status_summary": {"passed": 0, "failed": 0}}
+        return _cache_set(_status_cache, normalized_ingestion_id, payload)
+
+    row = state.duck_conn.execute(
+        """
+        SELECT
+          COUNT(*) AS total_rows,
+          SUM(CASE WHEN status='passed' THEN 1 ELSE 0 END) AS passed,
+          SUM(CASE WHEN status='failed' THEN 1 ELSE 0 END) AS failed
+        FROM flattened_tests
+        """
+    ).fetchone()
+    total_rows = int(row[0] or 0)
+    passed = int(row[1] or 0)
+    failed = int(row[2] or 0)
+
+    payload = {
+        "has_data": total_rows > 0,
+        "total_rows": total_rows,
+        "status_summary": {
+            "passed": passed,
+            "failed": failed,
+        },
+    }
+    return _cache_set(_status_cache, normalized_ingestion_id, payload)
+
+
+def _get_quality_payload(normalized_ingestion_id: str) -> dict:
+    cached = _cache_get(_quality_cache, normalized_ingestion_id, _QUALITY_CACHE_TTL_SECONDS)
+    if cached is not None:
+        return cached
+
+    if not state.duck_conn:
+        payload = {
+            "score": 0,
+            "quality": "unknown",
+            "checks": [],
+            "guidance": ["No active ingestion loaded"],
+        }
+        return _cache_set(_quality_cache, normalized_ingestion_id, payload)
+
+    payload = data_loader.get_ingestion_quality_report()
+    if isinstance(payload, dict):
+        return _cache_set(_quality_cache, normalized_ingestion_id, payload)
+    return _cache_set(
+        _quality_cache,
+        normalized_ingestion_id,
+        {
+            "score": 0,
+            "quality": "poor",
+            "checks": [],
+            "guidance": ["Quality report returned invalid payload"],
+        },
+    )
+
+
+def _get_cached_quality_payload(normalized_ingestion_id: str) -> dict:
+    cached = _cache_get(_quality_cache, normalized_ingestion_id, _QUALITY_CACHE_TTL_SECONDS)
+    if cached is not None:
+        return cached
+    return {
+        "score": 0,
+        "quality": "warming",
+        "checks": [],
+        "guidance": ["Quality panel is warming up. Live metrics will appear shortly."],
+    }
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     logger.info("Starting up...")
@@ -357,6 +462,25 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+@app.middleware("http")
+async def request_timing_middleware(request: Request, call_next):
+    start = time.perf_counter()
+    response = await call_next(request)
+    duration_ms = (time.perf_counter() - start) * 1000.0
+
+    path = request.url.path
+    if any(path.startswith(prefix) for prefix in _PERF_PATH_PREFIXES):
+        response.headers["x-server-timing-ms"] = f"{duration_ms:.2f}"
+        logger.info(
+            "perf method=%s path=%s status=%s duration_ms=%.2f",
+            request.method,
+            path,
+            response.status_code,
+            duration_ms,
+        )
+    return response
 
 # -------------------- PUBLIC ENDPOINTS --------------------
 @app.get("/health")
@@ -600,23 +724,12 @@ async def data_status(
     normalized_ingestion_id = str(x_ingestion_id or "").strip()
     if state.current_ingestion_id != normalized_ingestion_id or state.duck_conn is None or state.lance_db is None:
         data_loader.init_data(normalized_ingestion_id)
-    if not state.duck_conn:
-        return {"has_data": False, "total_rows": 0}
+
     try:
-        count = state.duck_conn.execute("SELECT COUNT(*) FROM flattened_tests").fetchone()[0]
-        passed = state.duck_conn.execute("SELECT COUNT(*) FROM flattened_tests WHERE status='passed'").fetchone()[0]
-        failed = state.duck_conn.execute("SELECT COUNT(*) FROM flattened_tests WHERE status='failed'").fetchone()[0]
-        return {
-            "has_data": count > 0,
-            "total_rows": count,
-            "status_summary": {
-                "passed": passed,
-                "failed": failed,
-            }
-        }
+        return _get_status_payload(normalized_ingestion_id)
     except Exception as e:
         logger.error(f"Error in /data/status: {e}")
-        return {"has_data": False, "total_rows": 0}
+        return {"has_data": False, "total_rows": 0, "status_summary": {"passed": 0, "failed": 0}}
 
 
 @app.get("/data/profile")
@@ -647,16 +760,8 @@ async def data_quality(
     if state.current_ingestion_id != normalized_ingestion_id or state.duck_conn is None or state.lance_db is None:
         data_loader.init_data(normalized_ingestion_id)
 
-    if not state.duck_conn:
-        return {
-            "score": 0,
-            "quality": "unknown",
-            "checks": [],
-            "guidance": ["No active ingestion loaded"],
-        }
-
     try:
-        return data_loader.get_ingestion_quality_report()
+        return _get_quality_payload(normalized_ingestion_id)
     except Exception as e:
         logger.error(f"Error in /data/quality: {e}")
         return {
@@ -665,6 +770,63 @@ async def data_quality(
             "checks": [],
             "guidance": [f"Quality evaluation failed: {e}"],
         }
+
+
+@app.get("/dashboard/overview")
+async def dashboard_overview(
+    x_ingestion_id: Optional[str] = Header(None),
+    x_workspace_id: Optional[str] = Header(None),
+    include_quality: bool = Query(False),
+    current_user: dict = Depends(get_current_user),
+):
+    normalized_ingestion_id = str(x_ingestion_id or "").strip()
+
+    status_payload = {"has_data": False, "total_rows": 0, "status_summary": {"passed": 0, "failed": 0}}
+    quality_payload = {
+        "score": 0,
+        "quality": "unknown",
+        "checks": [],
+        "guidance": ["No ingestion selected"],
+    }
+
+    if normalized_ingestion_id:
+        if state.current_ingestion_id != normalized_ingestion_id or state.duck_conn is None or state.lance_db is None:
+            data_loader.init_data(normalized_ingestion_id)
+        try:
+            status_payload = _get_status_payload(normalized_ingestion_id)
+        except Exception as e:
+            logger.error(f"Error computing overview status: {e}")
+        try:
+            quality_payload = (
+                _get_quality_payload(normalized_ingestion_id)
+                if include_quality
+                else _get_cached_quality_payload(normalized_ingestion_id)
+            )
+        except Exception as e:
+            logger.error(f"Error computing overview quality: {e}")
+
+    persistent = token_usage_store.get_usage(
+        user_id=current_user.get("username"),
+        workspace_id=_normalize_workspace(x_workspace_id, current_user),
+    )
+
+    return {
+        "connected": True,
+        "ingestion_id": normalized_ingestion_id,
+        "status": status_payload,
+        "quality": quality_payload,
+        "token_usage": {
+            "totals": persistent.get("totals", {}),
+            "by_model": persistent.get("by_model", {}),
+            "scope": persistent.get("scope", {}),
+            "updated_at": persistent.get("updated_at", ""),
+        },
+        "runtime_token_usage": {
+            "totals": state.token_usage,
+            "by_model": state.token_usage_by_model,
+        },
+        "server_time": datetime.now(timezone.utc).isoformat(),
+    }
 
 @app.get("/ingestions")
 async def list_ingestions(current_user: dict = Depends(get_current_user)):

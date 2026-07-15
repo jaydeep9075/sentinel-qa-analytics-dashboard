@@ -18,6 +18,14 @@ interface AIGeneratedChartProps {
 export default function AIGeneratedChart({ config }: AIGeneratedChartProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const [isFullscreen, setIsFullscreen] = useState(false);
+  const renderStartRef = useRef<number>(0);
+
+  useEffect(() => {
+    renderStartRef.current =
+      typeof performance !== "undefined" && typeof performance.now === "function"
+        ? performance.now()
+        : Date.now();
+  }, [config]);
 
   useEffect(() => {
     const onFsChange = () => {
@@ -102,6 +110,18 @@ export default function AIGeneratedChart({ config }: AIGeneratedChartProps) {
         config={{ responsive: true, displayModeBar: true, displaylogo: false, scrollZoom: true }}
         style={{ width: "100%", height: "100%" }}
         useResizeHandler={true}
+        onInitialized={() => {
+          if (typeof window === "undefined") return;
+          const enabled = process.env.NODE_ENV !== "production" || localStorage.getItem("qa_perf_debug") === "1";
+          if (!enabled) return;
+          const now =
+            typeof performance !== "undefined" && typeof performance.now === "function"
+              ? performance.now()
+              : Date.now();
+          console.debug("[perf] chart:render", {
+            render_ms: Number((now - renderStartRef.current).toFixed(1)),
+          });
+        }}
       />
     </div>
   );

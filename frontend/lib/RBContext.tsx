@@ -14,6 +14,35 @@ interface RBContextType {
 }
 
 const RBContext = createContext<RBContextType | undefined>(undefined);
+const RB_CACHE_KEY = "qa_cache:rb_context:v1";
+
+type RBCacheShape = {
+  roles: string[];
+  projects: string[];
+  selectedProject: string | null;
+};
+
+function readRBCache(): RBCacheShape | null {
+  if (typeof window === "undefined") return null;
+  try {
+    const raw = sessionStorage.getItem(RB_CACHE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as RBCacheShape;
+    if (!Array.isArray(parsed.roles) || !Array.isArray(parsed.projects)) return null;
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
+function writeRBCache(payload: RBCacheShape): void {
+  if (typeof window === "undefined") return;
+  try {
+    sessionStorage.setItem(RB_CACHE_KEY, JSON.stringify(payload));
+  } catch {
+    // Ignore storage errors.
+  }
+}
 
 function getAuthHeaders(): Record<string, string> {
   const token = typeof window !== "undefined" ? localStorage.getItem("token") : null;
@@ -37,6 +66,16 @@ export function RBProvider({ children }: { children: React.ReactNode }) {
       setSelectedRole(storedRole);
     }
 
+    const cached = readRBCache();
+    if (cached) {
+      setRoles(cached.roles || []);
+      setProjects(cached.projects || []);
+      if (cached.selectedProject) {
+        setSelectedProject(cached.selectedProject);
+      }
+      setLoading(false);
+    }
+
     const fetchData = async () => {
       const apiBase = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
       const headers = getAuthHeaders();
@@ -58,11 +97,20 @@ export function RBProvider({ children }: { children: React.ReactNode }) {
         setProjects(projectsData.projects || []);
 
         const savedProject = localStorage.getItem("selectedProject");
+        let resolvedProject: string | null = null;
         if (savedProject && projectsData.projects?.includes(savedProject)) {
+          resolvedProject = savedProject;
           setSelectedProject(savedProject);
         } else if (projectsData.projects?.length > 0) {
-          setSelectedProject(projectsData.projects[0]);
+          resolvedProject = projectsData.projects[0];
+          setSelectedProject(resolvedProject);
         }
+
+        writeRBCache({
+          roles: rolesData.roles || [],
+          projects: projectsData.projects || [],
+          selectedProject: resolvedProject,
+        });
       } catch (err) {
         console.error("Error fetching roles/projects:", err);
         setRoles([]);

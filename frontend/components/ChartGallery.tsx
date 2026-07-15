@@ -52,7 +52,24 @@ interface ChartHistoryResponse {
   history?: ChartHistoryItem[];
 }
 
+const chartsCacheByIngestion = new Map<string, Chart[]>();
+const parsedConfigCache = new Map<string, unknown>();
+
+function perfNow(): number {
+  if (typeof performance !== "undefined" && typeof performance.now === "function") {
+    return performance.now();
+  }
+  return Date.now();
+}
+
+function shouldLogPerf(): boolean {
+  if (typeof window === "undefined") return false;
+  if (process.env.NODE_ENV !== "production") return true;
+  return localStorage.getItem("qa_perf_debug") === "1";
+}
+
 const fetchCharts = async (ingestionId: string) => {
+  const started = perfNow();
   const sessionId = "__all__";
   const response = (await getChartHistory(sessionId, ingestionId)) as
     | ChartHistoryResponse
@@ -67,13 +84,20 @@ const fetchCharts = async (ingestionId: string) => {
     return [];
   }
 
+  const parseStarted = perfNow();
   const charts = historyArray.map((item: ChartHistoryItem) => {
+    const cacheKey = `${item.id}:${item.created_at || ""}`;
     let parsedConfig;
-    try {
-      parsedConfig =
-        typeof item.config === "string" ? JSON.parse(item.config) : item.config;
-    } catch {
-      parsedConfig = null;
+    if (parsedConfigCache.has(cacheKey)) {
+      parsedConfig = parsedConfigCache.get(cacheKey);
+    } else {
+      try {
+        parsedConfig =
+          typeof item.config === "string" ? JSON.parse(item.config) : item.config;
+      } catch {
+        parsedConfig = null;
+      }
+      parsedConfigCache.set(cacheKey, parsedConfig);
     }
     return {
       id: item.id,
@@ -82,6 +106,17 @@ const fetchCharts = async (ingestionId: string) => {
       created_at: item.created_at,
     };
   });
+
+  if (shouldLogPerf()) {
+    const totalMs = perfNow() - started;
+    const parseMs = perfNow() - parseStarted;
+    console.debug("[perf] charts:history", {
+      ingestionId,
+      count: charts.length,
+      total_ms: Number(totalMs.toFixed(1)),
+      parse_ms: Number(parseMs.toFixed(1)),
+    });
+  }
   return charts;
 };
 
@@ -416,6 +451,9 @@ export default function ChartGallery() {
   const [layout, setLayout] = useState<"grid" | "list">("grid");
   const [orderedIds, setOrderedIds] = useState<string[]>([]);
   const [generatingPrompts, setGeneratingPrompts] = useState<string[]>([]);
+  const fallbackCharts = selectedIngestion
+    ? chartsCacheByIngestion.get(selectedIngestion)
+    : undefined;
 
   const {
     data: charts,
@@ -426,11 +464,19 @@ export default function ChartGallery() {
     selectedIngestion ? ["charts", selectedIngestion] : null,
     () => fetchCharts(selectedIngestion!),
     {
-      refreshInterval: 15000,
+      fallbackData: fallbackCharts,
+      keepPreviousData: true,
+      dedupingInterval: 8000,
+      refreshInterval: 20000,
       refreshWhenHidden: false,
       revalidateOnFocus: true,
     },
   );
+
+  useEffect(() => {
+    if (!selectedIngestion || !charts) return;
+    chartsCacheByIngestion.set(selectedIngestion, charts as Chart[]);
+  }, [selectedIngestion, charts]);
 
   useEffect(() => {
     const handleStart = (event: Event) => {

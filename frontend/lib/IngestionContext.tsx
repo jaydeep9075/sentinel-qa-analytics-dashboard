@@ -1,6 +1,6 @@
 "use client";
-import React, { createContext, useContext, useState, useEffect } from "react";
-import { listIngestions } from "./api";
+import React, { createContext, useCallback, useContext, useState, useEffect } from "react";
+import { listIngestions, readCachedIngestions } from "./api";
 
 export interface Ingestion {
   id: string;          // real folder name — used in API headers, never shown
@@ -14,6 +14,7 @@ interface IngestionContextType {
   selectedIngestion: string | null;   // stores the real folder id
   selectedBuildLabel: string | null;  // the friendly label for the selected ingestion
   setSelectedIngestion: (id: string) => void;
+  refreshIngestions: () => Promise<void>;
   loading: boolean;
 }
 
@@ -22,6 +23,7 @@ const IngestionContext = createContext<IngestionContextType>({
   selectedIngestion: null,
   selectedBuildLabel: null,
   setSelectedIngestion: () => {},
+  refreshIngestions: async () => {},
   loading: false,
 });
 
@@ -30,25 +32,74 @@ export const useIngestion = () => useContext(IngestionContext);
 export const IngestionProvider: React.FC<{ children: React.ReactNode }> = ({
   children,
 }) => {
-  const [ingestions, setIngestions] = useState<Ingestion[]>([]);
-  const [selectedIngestion, setSelectedIngestion] = useState<string | null>(null);
-  const [loading, setLoading] = useState(true);
+  const [ingestions, setIngestions] = useState<Ingestion[]>(() => {
+    const cached = readCachedIngestions();
+    return ((cached?.ingestions || []) as Ingestion[]) || [];
+  });
+  const [selectedIngestion, setSelectedIngestion] = useState<string | null>(() => {
+    const cached = readCachedIngestions();
+    const list = ((cached?.ingestions || []) as Ingestion[]) || [];
+    if (!list.length || typeof window === "undefined") return null;
+    const saved = localStorage.getItem("selectedIngestion");
+    const stillExists = saved && list.some((i) => i.id === saved);
+    return stillExists ? saved! : list[0].id;
+  });
+  const [loading, setLoading] = useState(() => {
+    const cached = readCachedIngestions();
+    const list = ((cached?.ingestions || []) as Ingestion[]) || [];
+    return list.length === 0;
+  });
+
+  const applyIngestionList = useCallback((list: Ingestion[]) => {
+    setIngestions(list);
+    if (list.length === 0) {
+      setSelectedIngestion(null);
+      return;
+    }
+    const saved = localStorage.getItem("selectedIngestion");
+    const stillExists = saved && list.some((i) => i.id === saved);
+    setSelectedIngestion(stillExists ? saved! : list[0].id);
+  }, []);
+
+  const refreshIngestions = useCallback(async () => {
+    const data = await listIngestions(true);
+    const list = (data?.ingestions || []) as Ingestion[];
+    applyIngestionList(list);
+  }, [applyIngestionList]);
 
   useEffect(() => {
-    listIngestions()
+    const hasCached = ingestions.length > 0;
+
+    let cancelled = false;
+    listIngestions(hasCached)
       .then((data) => {
-        const list: Ingestion[] = data.ingestions;
-        setIngestions(list);
-        if (list.length > 0) {
-          // Try to restore last selected by real folder id
-          const saved = localStorage.getItem("selectedIngestion");
-          const stillExists = saved && list.some((i) => i.id === saved);
-          // If the saved ingestion was deleted, fall back to the newest (index 0)
-          setSelectedIngestion(stillExists ? saved! : list[0].id);
+        if (cancelled) return;
+        const list = (data?.ingestions || []) as Ingestion[];
+        applyIngestionList(list);
+      })
+      .catch(() => {
+        if (!hasCached && !cancelled) {
+          setIngestions([]);
         }
       })
-      .finally(() => setLoading(false));
-  }, []);
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+
+    const onVisible = () => {
+      if (document.visibilityState === "visible") {
+        refreshIngestions().catch(() => {
+          // Keep existing list on transient refresh failures.
+        });
+      }
+    };
+    document.addEventListener("visibilitychange", onVisible);
+
+    return () => {
+      cancelled = true;
+      document.removeEventListener("visibilitychange", onVisible);
+    };
+  }, [applyIngestionList, refreshIngestions, ingestions.length]);
 
   const handleSetSelectedIngestion = (id: string) => {
     setSelectedIngestion(id);
@@ -65,6 +116,7 @@ export const IngestionProvider: React.FC<{ children: React.ReactNode }> = ({
         selectedIngestion,
         selectedBuildLabel,
         setSelectedIngestion: handleSetSelectedIngestion,
+        refreshIngestions,
         loading,
       }}
     >
