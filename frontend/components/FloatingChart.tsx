@@ -6,7 +6,7 @@ import { BarChart3, X, Loader2, Sparkles } from "lucide-react";
 import { useRB } from "@/lib/RBContext";
 import { useIngestion } from "@/lib/IngestionContext";
 import { generateChart, submitFeedback } from "@/lib/api";
-import { getRoleSuggestions } from "@/lib/roleSuggestions";
+import { getRoleSuggestions, getAdaptiveRoleSuggestions } from "@/lib/roleSuggestions";
 
 export default function FloatingChart() {
   const { selectedRole, selectedProject } = useRB();
@@ -18,8 +18,28 @@ export default function FloatingChart() {
   const [recentPrompts, setRecentPrompts] = useState<string[]>([]);
   const [styleFeedback, setStyleFeedback] = useState("");
 
-  // Get role‑specific chart prompts
-  const suggestions = getRoleSuggestions(selectedRole || "").chart;
+  const [suggestions, setSuggestions] = useState<string[]>(
+    getRoleSuggestions(selectedRole || "").chart,
+  );
+
+  useEffect(() => {
+    let cancelled = false;
+    const load = async () => {
+      const fallback = getRoleSuggestions(selectedRole || "").chart;
+      if (!cancelled) setSuggestions(fallback);
+      if (!selectedIngestion) return;
+      const dynamic = await getAdaptiveRoleSuggestions(
+        selectedIngestion,
+        selectedRole,
+        selectedProject,
+      );
+      if (!cancelled) setSuggestions(dynamic.chart);
+    };
+    load();
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedRole, selectedProject, selectedIngestion]);
 
   const handleGenerateChart = async (prompt: string) => {
     const trimmedPrompt = String(prompt || "").trim();

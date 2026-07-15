@@ -7,10 +7,10 @@ import { useRB } from "@/lib/RBContext";
 import { useIngestion } from "@/lib/IngestionContext";
 import { sendChatMessage, submitFeedback } from "@/lib/api";
 import ReactMarkdown from "react-markdown";
-import { getRoleSuggestions } from "@/lib/roleSuggestions";
+import { getRoleSuggestions, getAdaptiveRoleSuggestions } from "@/lib/roleSuggestions";
 
 export default function FloatingChat() {
-  const { selectedRole } = useRB();
+  const { selectedRole, selectedProject } = useRB();
   const { selectedIngestion } = useIngestion();
   const [isOpen, setIsOpen] = useState(false);
   const [messages, setMessages] = useState<
@@ -24,8 +24,28 @@ export default function FloatingChat() {
   const [feedbackStatus, setFeedbackStatus] = useState<Record<number, string>>({});
   const LONG_ANSWER_THRESHOLD = 420;
 
-  // Get role‑specific chat questions
-  const suggestions = getRoleSuggestions(selectedRole || "").chat;
+  const [suggestions, setSuggestions] = useState<string[]>(
+    getRoleSuggestions(selectedRole || "").chat,
+  );
+
+  useEffect(() => {
+    let cancelled = false;
+    const load = async () => {
+      const fallback = getRoleSuggestions(selectedRole || "").chat;
+      if (!cancelled) setSuggestions(fallback);
+      if (!selectedIngestion) return;
+      const dynamic = await getAdaptiveRoleSuggestions(
+        selectedIngestion,
+        selectedRole,
+        selectedProject,
+      );
+      if (!cancelled) setSuggestions(dynamic.chat);
+    };
+    load();
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedRole, selectedProject, selectedIngestion]);
 
   useEffect(() => {
     if (!isOpen) {

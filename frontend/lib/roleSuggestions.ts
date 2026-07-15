@@ -5,6 +5,17 @@ export type Suggestions = {
   chart: string[];
 };
 
+const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+
+function getAuthHeaders(): Record<string, string> {
+  const token = typeof window !== "undefined" ? localStorage.getItem("token") : null;
+  const workspaceId = typeof window !== "undefined" ? localStorage.getItem("workspace_id") : null;
+  const headers: Record<string, string> = {};
+  if (token) headers.Authorization = `Bearer ${token}`;
+  if (workspaceId) headers["x-workspace-id"] = workspaceId;
+  return headers;
+}
+
 // ------------------------------------------------------------
 // Default suggestions – safe and always work
 // ------------------------------------------------------------
@@ -39,7 +50,7 @@ const defaultSuggestions: Suggestions = {
 // Role‑specific suggestions – all mapped to real schema values
 // ------------------------------------------------------------
 const roleSuggestionsMap: Record<string, Suggestions> = {
-  "QA Engineer": {
+  "qa-engineer": {
     chat: [
       "How many tests failed?",
       "List all failed tests with errors",
@@ -77,7 +88,7 @@ const roleSuggestionsMap: Record<string, Suggestions> = {
     ],
   },
 
-  CTO: {
+  "cto": {
     chat: [
       "What is the overall pass rate?",
       "Is this build ready for release?",
@@ -114,14 +125,40 @@ const roleSuggestionsMap: Record<string, Suggestions> = {
 // Helper to get suggestions for a role (case‑insensitive)
 // ------------------------------------------------------------
 export function getRoleSuggestions(roleId: string): Suggestions {
-  const clean = roleId?.toLowerCase().replace(/[^a-z]/g, "") || "";
-  for (const [key, val] of Object.entries(roleSuggestionsMap)) {
-    if (
-      key.toLowerCase() === clean ||
-      key.toLowerCase() === roleId?.toLowerCase()
-    ) {
-      return val;
-    }
-  }
+  const clean = String(roleId || "").toLowerCase().replace(/[^a-z0-9]/g, "");
+  if (clean.includes("cto")) return roleSuggestionsMap["cto"];
+  if (clean.includes("qa")) return roleSuggestionsMap["qa-engineer"];
   return defaultSuggestions;
+}
+
+export async function getAdaptiveRoleSuggestions(
+  ingestionId: string,
+  roleId?: string | null,
+  projectId?: string | null,
+): Promise<Suggestions> {
+  const fallback = getRoleSuggestions(roleId || "");
+  if (!ingestionId) return fallback;
+
+  try {
+    const headers: Record<string, string> = {
+      "x-ingestion-id": ingestionId,
+      ...getAuthHeaders(),
+    };
+    if (roleId) headers["x-role"] = roleId;
+    if (projectId) headers["x-project"] = projectId;
+
+    const res = await fetch(`${API_BASE}/suggestions`, {
+      method: "GET",
+      headers,
+      cache: "no-store",
+    });
+    if (!res.ok) return fallback;
+    const data = await res.json();
+    const chat = Array.isArray(data?.chat) ? data.chat.map((x: unknown) => String(x).trim()).filter(Boolean) : [];
+    const chart = Array.isArray(data?.chart) ? data.chart.map((x: unknown) => String(x).trim()).filter(Boolean) : [];
+    if (chat.length === 0 || chart.length === 0) return fallback;
+    return { chat: chat.slice(0, 8), chart: chart.slice(0, 8) };
+  } catch {
+    return fallback;
+  }
 }

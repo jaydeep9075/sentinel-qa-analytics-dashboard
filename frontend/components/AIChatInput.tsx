@@ -1,10 +1,10 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { generateChart } from "@/lib/api";
 import { useIngestion } from "@/lib/IngestionContext";
 import { useRB } from "@/lib/RBContext";
-import { getRoleSuggestions } from "@/lib/roleSuggestions";
+import { getRoleSuggestions, getAdaptiveRoleSuggestions } from "@/lib/roleSuggestions";
 
 interface AIChatInputProps {
   onChartGenerated: () => void;
@@ -17,8 +17,28 @@ export default function AIChatInput({ onChartGenerated }: AIChatInputProps) {
   const [loading, setLoading] = useState(false);
   const [status, setStatus] = useState<string | null>(null);
 
-  // Get dynamic shortcuts from role suggestions
-  const shortcuts = getRoleSuggestions(selectedRole || "").chart.slice(0, 4);
+  const [shortcuts, setShortcuts] = useState<string[]>(
+    getRoleSuggestions(selectedRole || "").chart.slice(0, 4),
+  );
+
+  useEffect(() => {
+    let cancelled = false;
+    const load = async () => {
+      const fallback = getRoleSuggestions(selectedRole || "").chart.slice(0, 4);
+      if (!cancelled) setShortcuts(fallback);
+      if (!selectedIngestion) return;
+      const dynamic = await getAdaptiveRoleSuggestions(
+        selectedIngestion,
+        selectedRole,
+        selectedProject,
+      );
+      if (!cancelled) setShortcuts(dynamic.chart.slice(0, 4));
+    };
+    load();
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedRole, selectedProject, selectedIngestion]);
 
   const handleSubmit = async (e?: React.FormEvent, manualPrompt?: string) => {
     e?.preventDefault();
