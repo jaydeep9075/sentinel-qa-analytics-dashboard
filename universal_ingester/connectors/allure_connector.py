@@ -6,6 +6,7 @@ import uuid
 from collections import defaultdict
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
+from pathlib import Path
 
 import pandas as pd
 
@@ -32,6 +33,7 @@ class AllureConnector(BaseConnector):
         self.root_path = os.path.abspath(allure_results_path)
         if not os.path.isdir(self.root_path):
             raise ValueError(f"Path does not exist: {self.root_path}")
+        self.processed_files = set()
 
     # ---------- improved file discovery ----------
     def _find_result_files(self):
@@ -133,11 +135,158 @@ class AllureConnector(BaseConnector):
         base["duration_seconds"] = max((r.get("duration_seconds", 0.0) for r in runs), default=0.0)
         return base
 
+    # ---------- HTML artifact parsing (NEW) ----------
+    def _parse_html_artifacts(self) -> List[Dict[str, Any]]:
+        """Extract test data from Allure HTML reports (index.html, report.html)."""
+        html_files = []
+        for root, dirs, files in os.walk(self.root_path):
+            for f in files:
+                if f in ("index.html", "report.html") or f.endswith("-report.html"):
+                    html_files.append(os.path.join(root, f))
+
+        records = []
+        for html_path in html_files:
+            try:
+                import re
+                with open(html_path, 'r', encoding='utf-8', errors='ignore') as f:
+                    content = f.read()
+
+                # Extract test data from HTML (look for JSON embedded in scripts)
+                json_matches = re.findall(r'<script[^>]*type=["\']application/json["\'][^>]*>([^<]+)</script>', content)
+                for json_str in json_matches:
+                    try:
+                        data = json.loads(json_str)
+                        if isinstance(data, list):
+                            records.extend(data)
+                        elif isinstance(data, dict):
+                            records.append(data)
+                    except json.JSONDecodeError:
+                        continue
+
+                # Fallback: extract from data attributes or tables
+                if not records:
+                    test_data = re.findall(r'data-test="([^"]*)"[^>]*>([^<]*)</[^>]*>', content)
+                    for test_id, test_name in test_data:
+                        records.append({"test_id": test_id, "test_name": test_name})
+
+                logger.info(f"Extracted {len(records)} records from {html_path}")
+            except Exception as e:
+                logger.warning(f"Failed to parse HTML {html_path}: {e}")
+
+        return records
+
+    # ---------- Nested JSON handling (NEW) ----------
+    def _flatten_nested_json(self, obj: Any, prefix: str = "") -> Dict[str, Any]:
+        """Flatten nested JSON objects with dot notation."""
+        result = {}
+
+        if isinstance(obj, dict):
+            for key, value in obj.items():
+                new_key = f"{prefix}.{key}" if prefix else key
+                if isinstance(value, (dict, list)):
+                    result.update(self._flatten_nested_json(value, new_key))
+                else:
+                    result[new_key] = value
+        elif isinstance(obj, list):
+            if obj and isinstance(obj[0], dict):
+                # For arrays of objects, take first item's keys
+                for i, item in enumerate(obj[:1]):
+                    result.update(self._flatten_nested_json(item, prefix))
+            else:
+                result[prefix] = json.dumps(obj) if obj else None
+        else:
+            result[prefix] = obj
+
+        return result
+
+    def _parse_any_json_format(self, json_data: Any, source_file: str = "") -> List[Dict[str, Any]]:
+        """Parse any JSON format (nested, flat, arrays, objects)."""
+        records = []
+
+        if isinstance(json_data, list):
+            for item in json_data:
+                if isinstance(item, dict):
+                    records.append(self._flatten_nested_json(item))
+                else:
+                    records.append({"value": item})
+        elif isinstance(json_data, dict):
+            # Check if dict contains a list of records
+            list_fields = [v for v in json_data.values() if isinstance(v, list) and v and isinstance(v[0], dict)]
+
+            if list_fields:
+                for item in list_fields[0]:
+                    records.append(self._flatten_nested_json(item))
+            else:
+                # Single object, flatten it
+                records.append(self._flatten_nested_json(json_data))
+
+        return records
+
+    def _find_all_json_files(self) -> List[str]:
+        """Find all JSON files (not just Allure result files)."""
+        json_files = []
+        for root, dirs, files in os.walk(self.root_path):
+            for f in files:
+                if f.endswith(".json"):
+                    json_files.append(os.path.join(root, f))
+        return json_files
+
+    # ---------- create dataset from generic records ----------
+    def _create_dataset_from_records(self, records: List[Dict[str, Any]], source: str) -> List[Dict[str, Any]]:
+        """Create dataset from generic JSON records (non-Allure format)."""
+        if not records:
+            return []
+
+        df = pd.DataFrame(records)
+
+        return [{
+            "name": "raw_data",
+            "data": df,
+            "type": "structured",
+            "metadata": {
+                "source": source,
+                "rows": len(df),
+                "columns": list(df.columns),
+                "data_type": "generic_json",
+                "detected_at_runtime": True
+            }
+        }]
+
     # ---------- main fetch ----------
     def fetch(self) -> List[Dict[str, Any]]:
         result_files = self._find_result_files()
         logger.info(f"Found {len(result_files)} Allure result files in {self.root_path}")
+
+        # Try HTML artifacts if no Allure JSON found
         if not result_files:
+            logger.info("No Allure JSON results found, trying HTML artifacts...")
+            html_records = self._parse_html_artifacts()
+            if html_records:
+                logger.info(f"Found {len(html_records)} records in HTML artifacts")
+                return self._create_dataset_from_records(html_records, "html")
+
+            # Try any JSON files in folder
+            logger.info("No HTML artifacts found, trying any JSON files...")
+            json_files = self._find_all_json_files()
+            all_records = []
+            for json_file in json_files:
+                if json_file in self.processed_files:
+                    continue
+                try:
+                    with open(json_file, 'r', encoding='utf-8') as f:
+                        data = json.load(f)
+                    records = self._parse_any_json_format(data, json_file)
+                    all_records.extend(records)
+                    self.processed_files.add(json_file)
+                    logger.info(f"Parsed {len(records)} records from {json_file}")
+                except Exception as e:
+                    logger.warning(f"Failed to parse JSON file {json_file}: {e}")
+
+            if all_records:
+                logger.info(f"Found {len(all_records)} records in JSON files")
+                return self._create_dataset_from_records(all_records, "json")
+
+            # Empty fallback
             empty_df = pd.DataFrame(columns=[
                 "id", "executed_at", "test_name", "full_name", "history_id",
                 "status", "duration_seconds", "error_message",

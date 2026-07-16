@@ -24,12 +24,14 @@ try:
     from .connectors.db_connector import DBConnector
     from .connectors.api_connector import APIConnector
     from .utils import EmbeddingGenerator
+    from .schema.runtime_detector import RuntimeSchemaDetector
 except ImportError:
     # Fallback for direct script execution inside universal_ingester folder
     from connectors.file_connector import FileConnector
     from connectors.db_connector import DBConnector
     from connectors.api_connector import APIConnector
     from utils import EmbeddingGenerator
+    from schema.runtime_detector import RuntimeSchemaDetector
 
 logger = logging.getLogger(__name__)
 
@@ -38,8 +40,10 @@ class UniversalIngester:
         self.data_base_path = Path(data_base_path).absolute()
         self.data_base_path.mkdir(parents=True, exist_ok=True)
         self.embedder = EmbeddingGenerator()
+        self.schema_detector = RuntimeSchemaDetector()
         self.duck_db = None
         self.lance_db = None
+        self.detected_schemas = {}  # Cache schemas per ingestion
 
     def ingest_source(self, source_config: Dict[str, Any], build_id: str):
         ingestion_folder = self.data_base_path / build_id
@@ -306,6 +310,26 @@ class UniversalIngester:
 
         source_id = f"{name}_{build_id}"
         logger.info(f"Ingesting dataset {name} as {data_type} (build {build_id})")
+
+        # Runtime schema detection (NEW)
+        schema_info = None
+        if data_type == 'structured' and isinstance(data, pd.DataFrame):
+            if name not in self.detected_schemas:
+                records = data.to_dict('records')[:20]  # Sample for detection
+                schema_info = self.schema_detector.detect(
+                    records=records,
+                    data_context=f"{source_type} {name}"
+                )
+                self.detected_schemas[name] = schema_info
+                logger.info(f"Detected schema for {name}: {len(schema_info.get('fields', {}))} fields, confidence={schema_info.get('confidence', 0)}")
+            else:
+                schema_info = self.detected_schemas[name]
+
+            if schema_info:
+                source_metadata.update({
+                    "detected_schema": schema_info,
+                    "runtime_detection": True
+                })
 
         if data_type == 'structured':
             df = data.copy()
