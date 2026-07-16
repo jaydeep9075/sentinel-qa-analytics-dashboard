@@ -30,9 +30,32 @@ class AllureConnector(BaseConnector):
     def __init__(self, allure_results_path: str):
         if not allure_results_path:
             raise ValueError("Allure results path is required")
-        self.root_path = os.path.abspath(allure_results_path)
+
+        # Clean up path: remove extra quotes, normalize slashes, handle spaces
+        cleaned_path = allure_results_path.strip('"').strip("'")
+        cleaned_path = cleaned_path.replace('\\\\', '\\')  # Fix double backslashes
+        self.root_path = os.path.abspath(cleaned_path)
+
+        # Try to find the actual path (handles nested folders, spaces, special chars)
         if not os.path.isdir(self.root_path):
-            raise ValueError(f"Path does not exist: {self.root_path}")
+            # Try parent directories
+            for _ in range(3):
+                parent = os.path.dirname(self.root_path)
+                if parent == self.root_path:  # Reached root
+                    break
+                if os.path.isdir(parent):
+                    self.root_path = parent
+                    logger.warning(f"Path didn't exist, using parent: {self.root_path}")
+                    break
+
+            # Final check
+            if not os.path.isdir(self.root_path):
+                raise ValueError(
+                    f"Path does not exist: {self.root_path}\n"
+                    f"Original: {allure_results_path}\n"
+                    f"Please verify the path exists and is accessible."
+                )
+
         self.processed_files = set()
 
     # ---------- improved file discovery ----------
