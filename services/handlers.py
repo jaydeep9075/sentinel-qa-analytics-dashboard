@@ -512,6 +512,7 @@ async def handle_chat(user_message: str, session_id: str, ingestion_id: str,
                 df_safe = _prepare_df_for_prompt(df)
                 answer_prompt = CHAT_ANSWER_PROMPT.format(
                     user_message=augmented_message,
+                    feedback_hints=feedback_hints or "None",
                     row_count=len(df),
                     data_json=df_safe.head(50).to_json(orient="records", force_ascii=False),
                 )
@@ -653,6 +654,7 @@ async def handle_chart(user_prompt: str, session_id: str, ingestion_id: str,
         df,
         user_prompt,
         prompt_for_llm,
+        feedback_hints,
         session_id,
         sql,
         chart_type,
@@ -663,7 +665,7 @@ async def handle_chart(user_prompt: str, session_id: str, ingestion_id: str,
     )
 
 
-def _generate_chart(df, user_prompt, prompt_for_llm, session_id, sql, chart_type, llm, user_id, ingestion_id, workspace_id):
+def _generate_chart(df, user_prompt, prompt_for_llm, feedback_hints, session_id, sql, chart_type, llm, user_id, ingestion_id, workspace_id):
     if not _is_df_usable(df):
         return None, "No data available."
     df = df.dropna(how="all")
@@ -682,6 +684,7 @@ def _generate_chart(df, user_prompt, prompt_for_llm, session_id, sql, chart_type
     code = llm.generate(
         CHART_CODE_PROMPT.format(
             user_prompt=prompt_for_llm,
+            feedback_hints=feedback_hints or "None",
             chart_type=chart_type,
             data_sample=json.dumps(data_sample, indent=2, ensure_ascii=False),
             columns=list(df.columns),

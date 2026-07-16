@@ -186,6 +186,9 @@ CHAT_ANSWER_PROMPT = """You are a concise QA analytics assistant. Answer directl
 
 USER QUESTION: {user_message}
 
+USER FEEDBACK PREFERENCES:
+{feedback_hints}
+
 DATA ({row_count} rows):
 {data_json}
 
@@ -392,6 +395,9 @@ SQL:"""
 CHART_CODE_PROMPT = """You are a Plotly Python expert. Generate chart code for this EXACT chart type.
 
 USER REQUEST: "{user_prompt}"
+
+USER FEEDBACK PREFERENCES:
+{feedback_hints}
 
 ⚠️ MANDATORY CHART TYPE: {chart_type}
 You MUST use ONLY the chart pattern shown below. Do NOT substitute a different chart type.

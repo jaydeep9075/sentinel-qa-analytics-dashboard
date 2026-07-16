@@ -87,7 +87,7 @@ export default function FloatingChat() {
     setIsLoading(true);
     try {
       const regenPrompt = `${question}\n\nRegenerate this answer with a noticeably improved structure and apply the user's latest feedback preferences.`;
-      const answer = await sendChatMessage(regenPrompt, selectedIngestion, selectedRole);
+      const answer = await sendChatMessage(regenPrompt, selectedIngestion, selectedRole, selectedProject);
       setMessages((prev) =>
         prev.map((m, idx) => (idx === aiIndex ? { ...m, content: answer } : m)),
       );
@@ -98,6 +98,53 @@ export default function FloatingChat() {
           idx === aiIndex ? { ...m, content: `❌ Error: ${message}` } : m,
         ),
       );
+    } finally {
+      setIsLoading(false);
+      setRegeneratingIndex(null);
+    }
+  };
+
+  const regenerateFromFeedback = async (
+    aiIndex: number,
+    feedbackType: "down" | "improve",
+    notes: string,
+  ) => {
+    if (!selectedIngestion || isLoading) return;
+    const question = findRelatedUserQuestion(aiIndex);
+    const previous = messages[aiIndex]?.content || "";
+    if (!question) return;
+
+    setRegeneratingIndex(aiIndex);
+    setIsLoading(true);
+    try {
+      const strongPrompt = [
+        question,
+        "",
+        "Previous answer was not accepted by user feedback.",
+        `Feedback type: ${feedbackType}`,
+        `User notes: ${notes || "No additional note provided"}`,
+        "Previous answer:",
+        previous,
+        "",
+        "Return a clearly improved answer:",
+        "- more accurate and directly actionable",
+        "- crisp structure with short bullets",
+        "- avoid repeated vague phrases",
+        "- ensure quality higher than previous answer",
+      ].join("\n");
+
+      const improved = await sendChatMessage(
+        strongPrompt,
+        selectedIngestion,
+        selectedRole,
+        selectedProject,
+      );
+
+      setMessages((prev) =>
+        prev.map((m, idx) => (idx === aiIndex ? { ...m, content: improved } : m)),
+      );
+    } catch {
+      // Keep existing answer if regeneration fails.
     } finally {
       setIsLoading(false);
       setRegeneratingIndex(null);
@@ -134,6 +181,9 @@ export default function FloatingChat() {
             ? "Marked as not good. Next responses will avoid this style."
             : "Tune feedback saved. Next responses will adapt to your notes.";
       setFeedbackStatus((prev) => ({ ...prev, [aiIndex]: statusText }));
+      if (feedbackType === "down" || feedbackType === "improve") {
+        await regenerateFromFeedback(aiIndex, feedbackType, notes);
+      }
       setTimeout(() => {
         setFeedbackStatus((prev) => {
           const next = { ...prev };
@@ -165,7 +215,8 @@ export default function FloatingChat() {
       const answer = await sendChatMessage(
         question,
         selectedIngestion,
-        selectedRole
+        selectedRole,
+        selectedProject,
       );
       setMessages((prev) => [...prev, { role: "ai", content: answer }]);
     } catch (error: unknown) {

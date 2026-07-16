@@ -838,7 +838,7 @@ def get_feedback_prompt_hints(
     if prefs.get("tags"):
         lines.append("Style tags: " + ", ".join(prefs["tags"]))
 
-    if state.lance_db and "feedback_signals" in state.lance_db.table_names() and current_prompt:
+    if state.lance_db and "feedback_signals" in state.lance_db.table_names():
         try:
             df = state.lance_db.open_table("feedback_signals").to_pandas()
             if not df.empty:
@@ -852,27 +852,56 @@ def get_feedback_prompt_hints(
                     df = df[df["target_kind"] == tkind]
 
                 if not df.empty:
-                    prompt_terms = set(_extract_keywords(current_prompt, max_terms=14))
-                    similar_rows = []
-                    for _, row in df.sort_values("created_at", ascending=False).head(60).iterrows():
-                        src = " ".join([
-                            str(row.get("prompt", "")),
-                            str(row.get("notes", "")),
-                        ])
-                        overlap = _text_overlap_score(prompt_terms, set(_extract_keywords(src, max_terms=14)))
-                        if overlap > 0.15:
-                            similar_rows.append(row)
+                    recent = df.sort_values("created_at", ascending=False).head(80)
+                    down_all = int((recent["feedback_type"].astype(str).str.lower().isin(["down", "negative"])).sum())
+                    up_all = int((recent["feedback_type"].astype(str).str.lower().isin(["up", "positive"])).sum())
+                    improve_all = int((recent["feedback_type"].astype(str).str.lower() == "improve").sum())
+                    if down_all or up_all or improve_all:
+                        lines.append(
+                            f"Recent feedback mix: up={up_all}, down={down_all}, improve={improve_all}. "
+                            "Use this to calibrate tone, structure, and depth."
+                        )
 
-                    if similar_rows:
-                        down = sum(1 for r in similar_rows if str(r.get("feedback_type", "")).lower() in {"down", "negative"})
-                        up = sum(1 for r in similar_rows if str(r.get("feedback_type", "")).lower() in {"up", "positive"})
-                        latest_notes = [str(r.get("notes", "")).strip() for r in similar_rows if str(r.get("notes", "")).strip()]
-                        if down > 0:
-                            lines.append("For similar requests, user marked prior outputs as weak. Change structure and provide a clearly improved version.")
-                        if up > down and up > 0:
-                            lines.append("For similar requests, user approved concise structure. Keep that style.")
-                        if latest_notes:
-                            lines.append("Specific feedback notes: " + "; ".join(latest_notes[:2]))
+                    negative_notes = [
+                        str(r.get("notes", "")).strip()
+                        for _, r in recent.iterrows()
+                        if str(r.get("feedback_type", "")).strip().lower() in {"down", "negative", "improve"}
+                        and str(r.get("notes", "")).strip()
+                    ]
+                    if negative_notes:
+                        lines.append("Latest improvement requests: " + "; ".join(negative_notes[:3]))
+
+                    positive_notes = [
+                        str(r.get("notes", "")).strip()
+                        for _, r in recent.iterrows()
+                        if str(r.get("feedback_type", "")).strip().lower() in {"up", "positive"}
+                        and str(r.get("notes", "")).strip()
+                    ]
+                    if positive_notes:
+                        lines.append("Keep these approved traits: " + "; ".join(positive_notes[:2]))
+
+                    if current_prompt:
+                        prompt_terms = set(_extract_keywords(current_prompt, max_terms=14))
+                        similar_rows = []
+                        for _, row in recent.iterrows():
+                            src = " ".join([
+                                str(row.get("prompt", "")),
+                                str(row.get("notes", "")),
+                            ])
+                            overlap = _text_overlap_score(prompt_terms, set(_extract_keywords(src, max_terms=14)))
+                            if overlap > 0.15:
+                                similar_rows.append(row)
+
+                        if similar_rows:
+                            down = sum(1 for r in similar_rows if str(r.get("feedback_type", "")).lower() in {"down", "negative"})
+                            up = sum(1 for r in similar_rows if str(r.get("feedback_type", "")).lower() in {"up", "positive"})
+                            latest_notes = [str(r.get("notes", "")).strip() for r in similar_rows if str(r.get("notes", "")).strip()]
+                            if down > 0:
+                                lines.append("For similar requests, user marked prior outputs as weak. Change structure and provide a clearly improved version.")
+                            if up > down and up > 0:
+                                lines.append("For similar requests, user approved concise structure. Keep that style.")
+                            if latest_notes:
+                                lines.append("Specific feedback notes: " + "; ".join(latest_notes[:2]))
         except Exception as exc:
             logger.error(f"Error computing prompt-aware feedback hints: {exc}")
 
