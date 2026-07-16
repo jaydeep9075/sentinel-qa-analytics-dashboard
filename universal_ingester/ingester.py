@@ -6,7 +6,7 @@ import re
 import math
 from pathlib import Path
 from datetime import datetime, timezone
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 
 import pandas as pd
 import numpy as np
@@ -165,8 +165,20 @@ class UniversalIngester:
         out = out.replace({np.inf: None, -np.inf: None})
         return out
 
-    def _ai_structured_parse(self, dataset_name: str, items: List[Dict[str, Any]]) -> pd.DataFrame:
-        """Optional AI parser for messy/unstructured records.
+    def _ai_structured_parse(
+        self,
+        dataset_name: str,
+        items: List[Dict[str, Any]],
+        source_type: str = "",
+        metadata: Optional[Dict[str, Any]] = None,
+    ) -> pd.DataFrame:
+        """AI parser used when heuristic key-value extraction can't make sense
+        of unstructured content. Grounds the LLM in what's actually known
+        about the data's origin (source connector type, original file
+        extension, a raw text excerpt showing real structure/formatting)
+        rather than asking it to guess blind from a bare JSON dump — this
+        materially improves parsing accuracy for varied inputs (PDF text
+        extracts, log files, freeform notes, CSV-like text, etc.).
         Returns empty DataFrame if AI parsing is unavailable or fails.
         """
         if not items or litellm is None:
@@ -187,14 +199,39 @@ class UniversalIngester:
             return pd.DataFrame()
         model_name = model if "/" in model else (f"{provider}/{model}" if provider else model)
 
+        meta = metadata or {}
+        file_path = str(meta.get("file_path", "") or "")
+        file_ext = Path(file_path).suffix.lower().lstrip(".") if file_path else ""
+
         sample = items[:25]
+        # Show the LLM the actual raw text of a few items (not just a JSON
+        # dump) so it can see real structure — delimiters, headers,
+        # indentation, key:value lines, etc. — rather than guessing blind.
+        raw_text_excerpt = "\n---\n".join(
+            str(item.get("text", ""))[:800] for item in sample[:5] if isinstance(item, dict) and item.get("text")
+        )
+
+        context_lines = [
+            f"Dataset name: {dataset_name}",
+            f"Source connector type: {source_type or 'unknown'}",
+        ]
+        if file_ext:
+            context_lines.append(f"Original file extension: .{file_ext}")
+        if file_path:
+            context_lines.append(f"Original file path: {file_path}")
+
         prompt = (
-            "You are a robust data normalizer. Convert the sample input list into a JSON array of flat objects. "
-            "Preserve information, infer stable column names, and avoid nested structures. "
-            "If input is plain text, extract key-value fields when obvious; otherwise keep a text field. "
+            "You are a robust data normalizer. The heuristic key:value parser could not make sense of this "
+            "content, so use the context below (data source, file type, raw excerpt) to infer its real structure "
+            "and convert the sample input list into a JSON array of flat objects.\n"
+            "Preserve information, infer stable column names from the actual content shape, and avoid nested "
+            "structures. If the raw excerpt looks like tabular/delimited data, split it into columns accordingly. "
+            "If it looks like a report or log, extract the meaningful fields (e.g. names, dates, statuses, "
+            "amounts) rather than dumping the whole text into one field.\n"
             "Return ONLY valid JSON array.\n\n"
-            f"Dataset name: {dataset_name}\n"
-            f"Sample input:\n{json.dumps(sample, ensure_ascii=False)[:18000]}"
+            + "\n".join(context_lines)
+            + f"\n\nRaw content excerpt (for structural context only):\n{raw_text_excerpt[:4000]}\n\n"
+            f"Sample input (full items to convert):\n{json.dumps(sample, ensure_ascii=False)[:18000]}"
         )
 
         try:
@@ -336,7 +373,9 @@ class UniversalIngester:
             parse_strategy = "none"
             parser_confidence = 0.15
             if heuristic_df.empty:
-                heuristic_df = self._ai_structured_parse(name, data)
+                heuristic_df = self._ai_structured_parse(
+                    name, data, source_type=source_type, metadata=source_metadata
+                )
                 if not heuristic_df.empty:
                     parse_strategy = "ai-structured-fallback"
                     parser_confidence = 0.86

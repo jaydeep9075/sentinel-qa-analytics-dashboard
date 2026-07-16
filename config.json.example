@@ -1,0 +1,20 @@
+{
+    "sources": [
+        {
+            "type": "db",
+            "params": {
+                "connection_string": "mysql+pymysql://USERNAME:PASSWORD@HOST:4000/DATABASE_NAME",
+                "tables": [
+                    "test_cases",
+                    "test_results"
+                ],
+                "connect_args": {
+                    "ssl": {
+                        "verify_cert": false,
+                        "verify_identity": false
+                    }
+                }
+            }
+        }
+    ]
+}

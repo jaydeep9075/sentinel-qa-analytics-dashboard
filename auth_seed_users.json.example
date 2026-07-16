@@ -1,0 +1,14 @@
+{
+  "users": [
+    {
+      "username": "admin",
+      "password": "CHANGE_ME_STRONG_PASSWORD",
+      "role": "cto"
+    },
+    {
+      "username": "qa1",
+      "password": "CHANGE_ME_STRONG_PASSWORD",
+      "role": "qa-engineer"
+    }
+  ]
+}

@@ -14,7 +14,7 @@ from datetime import datetime
 import numpy as np
 import pandas as pd
 
-from . import config, data_loader, memory, llm_client, state
+from . import config, data_loader, memory, llm_client, state, schema_context
 from .prompts import (
     CHAT_DECISION_PROMPT,
     CHAT_ANSWER_PROMPT,
@@ -104,7 +104,81 @@ def _fallback_sql(prompt: str, sql_map: dict) -> str:
     for pattern, sql in sql_map.items():
         if re.search(pattern, p):
             return sql
-    return ""
+    # Schema-aware dynamic fallback: match whatever real project/module/
+    # platform value is actually mentioned in the prompt, for THIS ingested
+    # dataset — not a fixed hardcoded set of project codes.
+    return schema_context.build_entity_filter_sql(prompt) or ""
+
+
+# ---------------------------------------------------------------------------
+# Correctness guards: entity existence, fallback scope-drift, contradictions
+# ---------------------------------------------------------------------------
+
+_ENTITY_REFERENCE_PATTERNS = {
+    "project": r"\bproject\s+([A-Za-z][\w\-]{0,24})\b",
+    "platform": r"\bplatform\s+([A-Za-z][\w\-]{0,24})\b",
+}
+
+_CONTRADICTION_JOINERS = (" that ", " which ", " but ", " and also ", " yet ")
+
+
+def _find_unknown_entity_reference(user_message: str, schema_summary: dict):
+    """Detect phrasing like 'project ZZZ' or 'platform XYZ' naming a value
+    that does not exist anywhere in the ingested data. Returns
+    (column_hint, referenced_value) or None."""
+    p = user_message or ""
+    for col_hint, pattern in _ENTITY_REFERENCE_PATTERNS.items():
+        m = re.search(pattern, p, re.IGNORECASE)
+        if not m:
+            continue
+        candidate = m.group(1).strip()
+        if not candidate:
+            continue
+        known = {v.lower() for v in schema_context.all_known_values(schema_summary, column_hint=col_hint)}
+        if candidate.lower() not in known:
+            return (col_hint, candidate)
+    return None
+
+
+def _fallback_would_drop_entity(original_sql: str, fallback_sql: str, mentions: dict) -> bool:
+    """True if the user named a specific known entity value, the originally
+    attempted SQL referenced it, but the fallback SQL doesn't — i.e. the
+    fallback would silently broaden scope past what was asked."""
+    orig_lower = (original_sql or "").lower()
+    fb_lower = (fallback_sql or "").lower()
+    for value in mentions.values():
+        v = str(value).lower()
+        if v in orig_lower and v not in fb_lower:
+            return True
+    return False
+
+
+def _detect_contradiction(user_message: str, schema_summary: dict):
+    """Detect prompts that logically AND together two mutually-exclusive
+    known status values (e.g. 'failed tests that passed'). Returns the
+    list of conflicting values, or None."""
+    p = (user_message or "").lower()
+    status_values = [v.lower() for v in schema_context.all_known_values(schema_summary, column_hint="status")]
+    mentioned = [v for v in status_values if re.search(rf"(?<![a-z0-9]){re.escape(v)}(?![a-z0-9])", p)]
+    distinct_mentioned = list(dict.fromkeys(mentioned))
+    if len(distinct_mentioned) < 2:
+        return None
+    if any(j in p for j in _CONTRADICTION_JOINERS):
+        return distinct_mentioned
+    return None
+
+
+_MAX_STRUCTURED_LIMIT = 50
+
+
+def _parse_requested_limit(p: str) -> int:
+    """Extract N from phrasing like 'top 5', 'bottom 10', '3 highest'. Defaults to 1."""
+    m = re.search(r"\btop\s+(\d+)\b", p) or re.search(r"\bbottom\s+(\d+)\b", p)
+    if not m:
+        m = re.search(r"\b(\d+)\s+(?:highest|lowest|best|worst)\b", p)
+    if not m:
+        return 1
+    return max(1, min(_MAX_STRUCTURED_LIMIT, int(m.group(1))))
 
 
 def _detect_structured_intent(prompt: str):
@@ -138,7 +212,8 @@ def _detect_structured_intent(prompt: str):
         entity = "module"
 
     direction = "both" if highest and lowest else ("highest" if highest else "lowest")
-    return {"metric": metric, "entity": entity, "direction": direction}
+    limit = _parse_requested_limit(p)
+    return {"metric": metric, "entity": entity, "direction": direction, "limit": limit}
 
 
 def _build_structured_sql(intent: dict) -> str:
@@ -180,17 +255,19 @@ def _build_structured_sql(intent: dict) -> str:
         "duration": "avg_duration_seconds",
     }.get(metric, "pass_rate")
 
+    limit = max(1, min(_MAX_STRUCTURED_LIMIT, int(intent.get("limit", 1))))
+
     if direction == "both":
         return (
             "WITH base AS ("
             f"{base}"
             ") "
             "SELECT * FROM ("
-            "SELECT 'highest' AS rank_type, * FROM base ORDER BY " + metric_col + " DESC NULLS LAST LIMIT 1"
+            "SELECT 'highest' AS rank_type, * FROM base ORDER BY " + metric_col + f" DESC NULLS LAST LIMIT {limit}"
             ") h "
             "UNION ALL "
             "SELECT * FROM ("
-            "SELECT 'lowest' AS rank_type, * FROM base ORDER BY " + metric_col + " ASC NULLS LAST LIMIT 1"
+            "SELECT 'lowest' AS rank_type, * FROM base ORDER BY " + metric_col + f" ASC NULLS LAST LIMIT {limit}"
             ") l"
         )
 
@@ -199,7 +276,7 @@ def _build_structured_sql(intent: dict) -> str:
         "WITH base AS ("
         f"{base}"
         ") "
-        "SELECT * FROM base ORDER BY " + metric_col + f" {order} NULLS LAST LIMIT 1"
+        "SELECT * FROM base ORDER BY " + metric_col + f" {order} NULLS LAST LIMIT {limit}"
     )
 
 
@@ -235,7 +312,7 @@ def _fallback_tabular_response(df: pd.DataFrame) -> str:
     return f"Found **{len(df)} rows**. Use the chart feature to visualize."
 
 
-def _validate_grounded_response(
+async def _validate_grounded_response(
     llm,
     user_message: str,
     draft_answer: str,
@@ -243,7 +320,7 @@ def _validate_grounded_response(
     user_id: str = "anonymous",
     workspace_id: str = "default",
 ) -> str:
-    raw = llm.generate(
+    raw = await llm.agenerate(
         CHAT_VALIDATION_PROMPT.format(
             user_message=user_message,
             draft_answer=draft_answer or "",
@@ -299,13 +376,29 @@ def _format_structured_response(intent: dict, df: pd.DataFrame) -> str:
             f"'{row.get('project_name', 'unknown')}' ({row.get('platform_type', 'all')})"
         )
 
+    source_table = (
+        "project_metrics" if entity == "project"
+        else "flattened_tests" if entity == "platform"
+        else "module_metrics"
+    )
+
     if "rank_type" in df.columns and len(df) >= 2:
         lines = ["📊 **Validated comparison result**"]
-        for _, row in df.iterrows():
-            direction = str(row.get("rank_type", "")).strip().lower() or "result"
+        for direction_label, rank_key in (("Highest", "highest"), ("Lowest", "lowest")):
+            group = df[df["rank_type"] == rank_key]
+            for i, (_, row) in enumerate(group.iterrows(), start=1):
+                value = row.get(value_col, "N/A")
+                prefix = f"{direction_label} #{i}" if len(group) > 1 else direction_label
+                lines.append(f"- **{prefix} {metric_label}:** {value} on {_entity_name(row)}")
+        lines.append(f"Validation source: computed directly from {source_table}.")
+        return "\n".join(lines)
+
+    if len(df) > 1:
+        lines = [f"📊 **Validated result — {len(df)} results by {metric_label}**"]
+        for i, (_, row) in enumerate(df.iterrows(), start=1):
             value = row.get(value_col, "N/A")
-            lines.append(f"- **{direction.title()} {metric_label}:** {value} on {_entity_name(row)}")
-        lines.append(f"Validation source: computed directly from {'project_metrics' if entity == 'project' else 'flattened_tests' if entity == 'platform' else 'module_metrics'}.")
+            lines.append(f"{i}. **{value}** — {_entity_name(row)}")
+        lines.append(f"Validation source: computed directly from {source_table}.")
         return "\n".join(lines)
 
     row = df.iloc[0]
@@ -314,7 +407,7 @@ def _format_structured_response(intent: dict, df: pd.DataFrame) -> str:
         "📊 **Validated result**\n"
         f"- **{metric_label.title()}:** {value}\n"
         f"- **Entity:** {_entity_name(row)}\n"
-        f"- Validation source: computed directly from {'project_metrics' if entity == 'project' else 'flattened_tests' if entity == 'platform' else 'module_metrics'}."
+        f"- Validation source: computed directly from {source_table}."
     )
 
 
@@ -445,14 +538,17 @@ async def handle_chat(user_message: str, session_id: str, ingestion_id: str,
         augmented_message += f"\n\n[RELATED CONCEPTS]\n{concepts}"
     if feedback_hints:
         augmented_message += f"\n\n[USER FEEDBACK PREFERENCES]\n{feedback_hints}"
-    schema_context = _build_schema_context()
-    if schema_context:
-        augmented_message += f"\n\n{schema_context}"
+    schema_context_block = _build_schema_context()
+    if schema_context_block:
+        augmented_message += f"\n\n{schema_context_block}"
 
-    raw = llm.generate(
+    schema_summary = schema_context.build_schema_summary()
+
+    raw = await llm.agenerate(
         CHAT_DECISION_PROMPT.format(
             history=_build_history(session_id, user_id, nid),
             user_message=augmented_message,
+            schema_examples=schema_context.render_prompt_examples(schema_summary),
         ),
         temperature=0.05,
         user_id=user_id,
@@ -482,56 +578,108 @@ async def handle_chat(user_message: str, session_id: str, ingestion_id: str,
 
     if action == "sql":
         sql = _sanitize_sql(data) if data else ""
-        df, err = data_loader.execute_sql(sql) if sql else (pd.DataFrame(), "empty")
-        if err or not _is_df_usable(df):
-            fb = _fallback_sql(user_message, FALLBACK_SQL_MAP)
-            if fb and fb != sql:
-                df, err = data_loader.execute_sql(fb)
-                sql = fb
+        # schema_summary already computed above, reused here (cached per ingestion_id).
 
-        if err:
-            response = f"⚠️ Could not retrieve that data. Details: {err}"
-        elif not _is_df_usable(df):
-            response = "📭 No data found for your query."
+        contradiction = _detect_contradiction(user_message, schema_summary)
+        if contradiction:
+            response = (
+                "⚠️ That question combines conditions that can't both be true for the same test ("
+                + " + ".join(contradiction)
+                + "). Could you clarify which status you meant?"
+            )
         else:
-            is_release = any(kw in user_message.lower()
-                             for kw in ("release", "good to go", "ready for", "ship", "deploy"))
-            if is_release and "pass_rate" in df.columns:
-                pr = float(df.iloc[0].get("pass_rate", 0))
-                total = int(df.iloc[0].get("total", 0))
-                failed = int(df.iloc[0].get("failed_count", 0))
-                passed = total - failed
-                if pr >= 95:   verdict, rec = "✅ GOOD FOR RELEASE", "Quality meets criteria. Proceed."
-                elif pr >= 80: verdict, rec = "⚠️ CONSIDER WITH CAUTION", f"Pass rate {pr}% below target. Review failures."
-                else:          verdict, rec = "❌ NOT READY FOR RELEASE", f"Pass rate {pr}% critically low. Fix failures first."
-                response = CHAT_RELEASE_VERDICT.format(
-                    pass_rate=pr, passed=passed, total=total,
-                    failed_count=failed, verdict=verdict, recommendation=rec,
+            df, err = data_loader.execute_sql(sql) if sql else (pd.DataFrame(), "empty")
+            unknown_ref = _find_unknown_entity_reference(user_message, schema_summary)
+
+            if (err or not _is_df_usable(df)) and unknown_ref:
+                col_hint, bad_value = unknown_ref
+                known_values = schema_context.all_known_values(schema_summary, column_hint=col_hint)
+                response = (
+                    f"❌ I couldn't find '{bad_value}' as a {col_hint} in the ingested data. "
+                    f"Available: {', '.join(known_values) if known_values else 'none ingested yet'}."
                 )
             else:
-                df_safe = _prepare_df_for_prompt(df)
-                answer_prompt = CHAT_ANSWER_PROMPT.format(
-                    user_message=augmented_message,
-                    feedback_hints=feedback_hints or "None",
-                    row_count=len(df),
-                    data_json=df_safe.head(50).to_json(orient="records", force_ascii=False),
-                )
-                response = llm.generate(answer_prompt, temperature=0.15)
-                response = response or _fallback_tabular_response(df)
-                response = _validate_grounded_response(
-                    llm,
-                    user_message,
-                    response,
-                    df_safe,
-                    user_id=user_id,
-                    workspace_id=workspace_id,
-                )
+                if err or not _is_df_usable(df):
+                    mentions = schema_context.find_entity_mentions(user_message, schema_summary)
+                    fb = _fallback_sql(user_message, FALLBACK_SQL_MAP)
+                    if fb and fb != sql and not _fallback_would_drop_entity(sql, fb, mentions):
+                        df, err = data_loader.execute_sql(fb)
+                        sql = fb
+
+                if err:
+                    response = f"⚠️ Could not retrieve that data. Details: {err}"
+                elif not _is_df_usable(df):
+                    response = "📭 I couldn't find data matching exactly what you asked. Try rephrasing or broadening the request."
+                else:
+                    is_release = any(kw in user_message.lower()
+                                     for kw in ("release", "good to go", "ready for", "ship", "deploy"))
+                    if is_release and "pass_rate" in df.columns:
+                        scope_note = ""
+                        mentions = schema_context.find_entity_mentions(user_message, schema_summary)
+                        scope_issue = None
+                        sql_lower = (sql or "").lower()
+                        for col, value in mentions.items():
+                            if str(value).lower() not in sql_lower:
+                                scope_issue = (col, value)
+                                break
+
+                        if scope_issue:
+                            col, value = scope_issue
+                            escaped_value = str(value).replace("'", "''")
+                            scoped_sql = (
+                                "SELECT ROUND(SUM(CASE WHEN status='passed' THEN 1.0 ELSE 0 END)*100.0/COUNT(*), 2) AS pass_rate,"
+                                " COUNT(*) AS total,"
+                                " SUM(CASE WHEN status='failed' THEN 1 ELSE 0 END) AS failed_count"
+                                f" FROM flattened_tests WHERE status IN ('passed','failed') AND {col} = '{escaped_value}'"
+                            )
+                            scoped_df, scoped_err = data_loader.execute_sql(scoped_sql)
+                            if not scoped_err and _is_df_usable(scoped_df):
+                                df = scoped_df
+                                scope_note = f"\n\n*(Scoped to {col} = '{value}', not the global figure across all projects.)*"
+                            else:
+                                scope_note = (
+                                    f"\n\n⚠️ *Could not verify this is scoped to '{value}' — the figures above are "
+                                    "GLOBAL across all projects.*"
+                                )
+
+                        pr = float(df.iloc[0].get("pass_rate", 0))
+                        total = int(df.iloc[0].get("total", 0))
+                        failed = int(df.iloc[0].get("failed_count", 0))
+                        passed = total - failed
+                        if pr >= 95:   verdict, rec = "✅ GOOD FOR RELEASE", "Quality meets criteria. Proceed."
+                        elif pr >= 80: verdict, rec = "⚠️ CONSIDER WITH CAUTION", f"Pass rate {pr}% below target. Review failures."
+                        else:          verdict, rec = "❌ NOT READY FOR RELEASE", f"Pass rate {pr}% critically low. Fix failures first."
+                        response = CHAT_RELEASE_VERDICT.format(
+                            pass_rate=pr, passed=passed, total=total,
+                            failed_count=failed, verdict=verdict, recommendation=rec,
+                        )
+                        response = f"{response}{scope_note}"
+                    else:
+                        df_safe = _prepare_df_for_prompt(df)
+                        answer_prompt = CHAT_ANSWER_PROMPT.format(
+                            user_message=augmented_message,
+                            feedback_hints=feedback_hints or "None",
+                            row_count=len(df),
+                            data_json=df_safe.head(50).to_json(orient="records", force_ascii=False),
+                        )
+                        response = await llm.agenerate(
+                            answer_prompt, temperature=0.15, user_id=user_id, workspace_id=workspace_id
+                        )
+                        response = response or _fallback_tabular_response(df)
+                        response = await _validate_grounded_response(
+                            llm,
+                            user_message,
+                            response,
+                            df_safe,
+                            user_id=user_id,
+                            workspace_id=workspace_id,
+                        )
 
     elif action == "vector":
         docs = data_loader.vector_search(data, top_k=5)
         ctx = "\n\n".join(d["text"][:400] for d in docs) if docs else ""
         response = (
-            llm.generate(
+            await llm.agenerate(
                 f"Context:\n{ctx}\n\nQuestion: {user_message}\n\nAnswer concisely:",
                 temperature=0.2,
                 user_id=user_id,
@@ -580,9 +728,9 @@ async def handle_chart(user_prompt: str, session_id: str, ingestion_id: str,
     prompt_for_llm = user_prompt
     if feedback_hints:
         prompt_for_llm += f"\n\n[USER FEEDBACK PREFERENCES]\n{feedback_hints}"
-    schema_context = _build_schema_context()
-    if schema_context:
-        prompt_for_llm += f"\n\n{schema_context}"
+    schema_context_block = _build_schema_context()
+    if schema_context_block:
+        prompt_for_llm += f"\n\n{schema_context_block}"
 
     # STEP 1: Deterministic chart type (no LLM involved)
     chart_type = detect_chart_type(user_prompt)
@@ -590,13 +738,24 @@ async def handle_chart(user_prompt: str, session_id: str, ingestion_id: str,
 
     # STEP 2: SQL
     structured_intent = _detect_structured_intent(user_prompt)
-    cache_key = user_prompt.lower().strip()
-    sql = _sql_cache.get(cache_key)
+    chart_schema_summary = schema_context.build_schema_summary()
+    chart_entity_mentions = schema_context.find_entity_mentions(user_prompt, chart_schema_summary)
+    # Only cache prompts that resolved to something concrete (a structured
+    # intent or a known entity mention). Ambiguous prompts like "compare
+    # them" have no concrete anchor, so caching them risks replaying a
+    # stale, wrong-context result across unrelated sessions/datasets.
+    is_cacheable_prompt = bool(structured_intent) or bool(chart_entity_mentions)
+    cache_key = f"{nid}:{session_id or 'global'}:{user_prompt.lower().strip()}"
+    sql = _sql_cache.get(cache_key) if is_cacheable_prompt else None
     if structured_intent:
         sql = _build_structured_sql(structured_intent)
     if not sql:
-        raw_sql = llm.generate(
-            CHART_SQL_PROMPT.format(user_prompt=prompt_for_llm, chart_type=chart_type),
+        raw_sql = await llm.agenerate(
+            CHART_SQL_PROMPT.format(
+                user_prompt=prompt_for_llm,
+                chart_type=chart_type,
+                schema_examples=schema_context.render_prompt_examples(chart_schema_summary),
+            ),
             temperature=0.05,
             user_id=user_id,
             workspace_id=workspace_id,
@@ -619,7 +778,7 @@ async def handle_chart(user_prompt: str, session_id: str, ingestion_id: str,
                 if not err and _is_df_usable(df):
                     break
             else:
-                fixed_sql = llm.generate(
+                fixed_sql = await llm.agenerate(
                     f"Fix this DuckDB SQL. Error: {err or 'empty'}\nSQL: {sql}\n"
                     f"Request: {user_prompt}\nReturn ONLY corrected SQL:",
                     temperature=0.1,
@@ -645,12 +804,13 @@ async def handle_chart(user_prompt: str, session_id: str, ingestion_id: str,
                 df = df_fb
                 sql = fb
 
-    _sql_cache[cache_key] = sql
-    if len(_sql_cache) > 100:
-        for k in list(_sql_cache.keys())[:20]:
-            del _sql_cache[k]
+    if is_cacheable_prompt:
+        _sql_cache[cache_key] = sql
+        if len(_sql_cache) > 100:
+            for k in list(_sql_cache.keys())[:20]:
+                del _sql_cache[k]
 
-    return _generate_chart(
+    return await _generate_chart(
         df,
         user_prompt,
         prompt_for_llm,
@@ -665,7 +825,7 @@ async def handle_chart(user_prompt: str, session_id: str, ingestion_id: str,
     )
 
 
-def _generate_chart(df, user_prompt, prompt_for_llm, feedback_hints, session_id, sql, chart_type, llm, user_id, ingestion_id, workspace_id):
+async def _generate_chart(df, user_prompt, prompt_for_llm, feedback_hints, session_id, sql, chart_type, llm, user_id, ingestion_id, workspace_id):
     if not _is_df_usable(df):
         return None, "No data available."
     df = df.dropna(how="all")
@@ -681,7 +841,7 @@ def _generate_chart(df, user_prompt, prompt_for_llm, feedback_hints, session_id,
     title    = _make_title(user_prompt)
     template = get_chart_template(chart_type, title)
 
-    code = llm.generate(
+    code = await llm.agenerate(
         CHART_CODE_PROMPT.format(
             user_prompt=prompt_for_llm,
             feedback_hints=feedback_hints or "None",

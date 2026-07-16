@@ -4,14 +4,14 @@ prompts.py — LLM prompts for chat and chart generation.
 KEY FIX: Chart type is now STRICTLY enforced via a dedicated per-type code template.
 The LLM receives the exact Plotly pattern it must use — no room to substitute chart types.
 
-Schema:
+Schema (column shape is fixed; actual project/module/browser VALUES are
+whatever was ingested — see services/schema_context.py for live introspection):
   flattened_tests:
     test_name, status (passed|failed|skipped|pending|unknown),
     duration FLOAT (seconds), error, spec_file,
-    project_name (FSA|HSA|WDH|unknown),
-    module_name  ("Eligibility Tests"|"Checkout Tests"|"Cart Tests"|…),
+    project_name, module_name,
     platform_type (desktop|mobile),
-    browser  ("GoogleChrome"|"GoogleChromeiPhoneX"|"GoogleChromeiPad"|…)
+    browser
 
   module_metrics:
     project_name, module_name, platform_type,
@@ -41,14 +41,12 @@ flattened_tests:
   duration      FLOAT     – seconds
   error         VARCHAR   – failure message
   spec_file     VARCHAR
-  project_name  VARCHAR   – FSA | HSA | WDH | unknown
-  module_name   VARCHAR   – "Eligibility Tests" | "Checkout Tests" | "Cart Tests" |
-                            "Catalog/Products Tests" | "My Account Tests" |
-                            "Sign-up/Registration Tests" | "FSA Perks Tests" |
-                            "Eligibility TPA Tests" | "Expense Dashboard Tests" |
-                            "Split Payment Tests" | …
+  project_name  VARCHAR   – see ACTUAL VALUES section below for this dataset's real project names
+  module_name   VARCHAR   – see ACTUAL VALUES section below for this dataset's real module names
   platform_type VARCHAR   – desktop | mobile
-  browser       VARCHAR   – "GoogleChrome" | "GoogleChromeiPhoneX" | "GoogleChromeiPad" | …
+  browser       VARCHAR   – see ACTUAL VALUES section below for this dataset's real browser strings
+
+{schema_examples}
 
 module_metrics:
   project_name, module_name, platform_type,
@@ -144,9 +142,10 @@ FROM module_metrics ORDER BY project_name, module_name, platform_type
 SELECT project_name, platform_type, total_tests, passed, failed, pass_rate, module_count
 FROM project_metrics ORDER BY project_name, platform_type
 
--- failed tests in specific module
+-- failed tests in a specific module (substitute a real module_name substring
+-- from the ACTUAL VALUES section, e.g. '%Checkout%' if that module exists here)
 SELECT test_name, project_name, platform_type, browser, error
-FROM flattened_tests WHERE status = 'failed' AND module_name ILIKE '%Eligibility%'
+FROM flattened_tests WHERE status = 'failed' AND module_name ILIKE '%<module keyword>%'
 ORDER BY platform_type, test_name
 
 -- all failed tests
@@ -226,7 +225,11 @@ or
 {{"is_valid": false, "corrected_answer": "..."}}"""
 
 
-SUGGESTION_PROMPT = """You are a QA analytics copilot generating prompt suggestions.
+SUGGESTION_PROMPT = """You are an analytics copilot generating prompt suggestions for whatever
+data has actually been ingested. It may be QA/test results, but it could just as easily be
+sales records, support tickets, survey responses, PDF report extracts, or any other dataset —
+infer the actual domain from the RUNTIME DATA PROFILE below. Do not assume test/QA analytics
+unless the profile's real columns (status, pass_rate, failed, etc.) actually show that.
 
 ROLE ID: {role_id}
 PROJECT: {project_id}
@@ -234,19 +237,23 @@ PROJECT: {project_id}
 ROLE INSTRUCTION:
 {role_instruction}
 
-RUNTIME DATA PROFILE:
+RUNTIME DATA PROFILE (actual tables, columns, and sample rows in this ingestion):
 {schema_profile}
 
 INGESTION QUALITY SUMMARY:
 {quality_summary}
 
 TASK:
-Generate practical and high-value suggestions for this role so users can click and run them directly.
+Generate practical, high-value suggestions so users can click and run them directly. Ground
+every suggestion in the REAL column names and, where useful, real sample values shown in the
+RUNTIME DATA PROFILE above — never invent a field that isn't present, and never default to
+test/QA phrasing ("pass rate", "failed tests", etc.) unless those columns genuinely exist in
+the profile.
 
 OUTPUT RULES:
 1. Return ONLY valid JSON.
 2. Provide exactly 8 chat suggestions and 8 chart suggestions.
-3. Suggestions must be specific to test analytics and role priorities.
+3. Suggestions must be grounded in the actual schema above, tailored to this role's priorities.
 4. Avoid duplicates and vague phrases.
 5. Each suggestion should be one concise sentence.
 
@@ -279,8 +286,10 @@ Tables:
 flattened_tests:
   test_name, status(passed|failed|skipped|pending|unknown),
   duration FLOAT (seconds), error, spec_file,
-  project_name(FSA|HSA|WDH), module_name, platform_type(desktop|mobile),
-  browser (GoogleChrome | GoogleChromeiPhoneX | …)
+  project_name, module_name, platform_type(desktop|mobile),
+  browser
+
+{schema_examples}
 
 module_metrics:
   project_name, module_name, platform_type,
@@ -717,31 +726,11 @@ FALLBACK_SQL_MAP = {
         "SELECT project_name, module_name, platform_type, total_tests, passed, failed, pass_rate"
         " FROM module_metrics ORDER BY project_name, total_tests DESC"
     ),
-    r"\bfsa\b": (
-        "SELECT module_name, platform_type, total_tests, passed, failed, pass_rate"
-        " FROM module_metrics WHERE project_name = 'FSA'"
-        " ORDER BY module_name, platform_type"
-    ),
-    r"\bhsa\b": (
-        "SELECT module_name, platform_type, total_tests, passed, failed, pass_rate"
-        " FROM module_metrics WHERE project_name = 'HSA'"
-        " ORDER BY module_name, platform_type"
-    ),
-    r"\bwdh\b": (
-        "SELECT module_name, platform_type, total_tests, passed, failed, pass_rate"
-        " FROM module_metrics WHERE project_name = 'WDH'"
-        " ORDER BY module_name, platform_type"
-    ),
-    r"eligibility.*tpa|tpa.*eligibility": (
-        "SELECT test_name, project_name, module_name, platform_type, status, error"
-        " FROM flattened_tests WHERE module_name ILIKE '%EligibilityTPA%' OR module_name ILIKE '%Eligibility TPA%'"
-        " ORDER BY status, platform_type, test_name"
-    ),
-    r"eligibility": (
-        "SELECT test_name, project_name, module_name, platform_type, status, error"
-        " FROM flattened_tests WHERE module_name ILIKE '%Eligibility%'"
-        " ORDER BY status, platform_type, test_name"
-    ),
+    # Note: per-project (e.g. "FSA"/"HSA"/"WDH") and per-module (e.g.
+    # "eligibility") keyword lookups are handled dynamically by
+    # schema_context.build_entity_filter_sql() in handlers._fallback_sql,
+    # which matches against whatever project/module values actually exist
+    # in the ingested data rather than a fixed hardcoded set.
     r"fail.*test|failed.*test|list.*fail": (
         "SELECT test_name, project_name, module_name, platform_type, browser, error"
         " FROM flattened_tests WHERE status = 'failed'"
@@ -823,7 +812,10 @@ CHART_FALLBACK_SQL_MAP = {
         " FROM flattened_tests WHERE duration IS NOT NULL AND duration > 0"
         " ORDER BY duration DESC LIMIT 50"
     ),
-    r"project|fsa|hsa|wdh": (
+    # A bare mention of a specific project code (whatever this dataset's
+    # actual project names are) is handled dynamically by
+    # schema_context.build_entity_filter_sql() in handlers._fallback_sql.
+    r"\bproject\b": (
         "SELECT project_name, platform_type,"
         " ROUND(pass_rate, 1) AS pass_rate, total_tests, passed, failed"
         " FROM project_metrics ORDER BY project_name, platform_type"

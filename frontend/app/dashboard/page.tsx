@@ -10,7 +10,7 @@ import RoleSelector from "@/components/RoleSelector";
 import FloatingChat from "@/components/FloatingChat";
 import FloatingChart from "@/components/FloatingChart";  // new
 import BrandLogo from "@/components/BrandLogo";
-import { getDashboardOverview, ingestFromConfigPath, prefetchDashboardQuality, readCachedDashboardOverview } from "@/lib/api";
+import { getDashboardOverview, ingestFromConfigPath, readCachedDashboardOverview } from "@/lib/api";
 import { useIngestion } from "@/lib/IngestionContext";
 
 export default function Dashboard() {
@@ -107,26 +107,16 @@ export default function Dashboard() {
       if (typeof document !== "undefined" && document.visibilityState !== "visible") return;
 
       try {
+        // Quality is computed from already-in-memory DuckDB aggregates (no LLM,
+        // no disk I/O) — same cost class as status — so fetching both in one
+        // call removes two redundant round trips (a separate /data/quality
+        // prefetch plus a second /dashboard/overview call) with no first-paint
+        // cost.
         const overview = await getDashboardOverview(selectedIngestion, {
           forceRefresh: true,
-          includeQuality: false,
+          includeQuality: true,
         });
         applyOverview(overview);
-
-        prefetchDashboardQuality(selectedIngestion).then(async () => {
-          if (cancelled) return;
-          try {
-            const enriched = await getDashboardOverview(selectedIngestion, {
-              forceRefresh: true,
-              includeQuality: true,
-            });
-            if (!cancelled && enriched.quality) {
-              setDataQuality(enriched.quality);
-            }
-          } catch {
-            // Ignore delayed quality refresh failures.
-          }
-        });
       } catch {
         if (!cancelled) setBackendConnected(false);
       }

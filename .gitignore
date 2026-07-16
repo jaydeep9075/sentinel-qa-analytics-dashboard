@@ -13,3 +13,14 @@ build/
 
 *.pyc
 __pycache__/
+
+# Secrets / local credentials — never commit real values, use the .example templates
+config.json
+auth_seed_users.json
+
+# Local auth database (SQLite) — runtime-generated, contains password hashes
+users.db
+users.db-journal
+
+# Runtime-generated ingestion output and token usage data — not source, regenerated per environment
+data/

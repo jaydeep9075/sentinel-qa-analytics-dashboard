@@ -1,0 +1,1846 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Sentinel QA Analytics — Architecture Report</title>
+    <style>
+        :root {
+            /* Professional technical palette */
+            --bg-primary: #0f1419;
+            --bg-secondary: #1a2332;
+            --bg-tertiary: #242f3f;
+            --text-primary: #e8eef7;
+            --text-secondary: #a8b5cc;
+            --text-muted: #6b7794;
+            --accent-blue: #3b82f6;
+            --accent-green: #10b981;
+            --accent-amber: #f59e0b;
+            --accent-red: #ef4444;
+            --border-color: #2d3a4f;
+            --code-bg: #1a2332;
+
+            /* Type scale */
+            --fs-xs: 0.75rem;
+            --fs-sm: 0.875rem;
+            --fs-base: 1rem;
+            --fs-lg: 1.125rem;
+            --fs-xl: 1.25rem;
+            --fs-2xl: 1.5rem;
+            --fs-3xl: 1.875rem;
+            --fs-4xl: 2.25rem;
+
+            --lh-tight: 1.3;
+            --lh-normal: 1.6;
+            --lh-relaxed: 1.8;
+        }
+
+        @media (prefers-color-scheme: light) {
+            :root {
+                --bg-primary: #fafbfc;
+                --bg-secondary: #f0f3f8;
+                --bg-tertiary: #e8ecf3;
+                --text-primary: #0f1419;
+                --text-secondary: #3d4557;
+                --text-muted: #7a849e;
+                --accent-blue: #2563eb;
+                --accent-green: #059669;
+                --accent-amber: #d97706;
+                --accent-red: #dc2626;
+                --border-color: #d1d9e8;
+                --code-bg: #f0f3f8;
+            }
+        }
+
+        :root[data-theme="light"] {
+            --bg-primary: #fafbfc;
+            --bg-secondary: #f0f3f8;
+            --bg-tertiary: #e8ecf3;
+            --text-primary: #0f1419;
+            --text-secondary: #3d4557;
+            --text-muted: #7a849e;
+            --accent-blue: #2563eb;
+            --accent-green: #059669;
+            --accent-amber: #d97706;
+            --accent-red: #dc2626;
+            --border-color: #d1d9e8;
+            --code-bg: #f0f3f8;
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        html, body {
+            background: var(--bg-primary);
+            color: var(--text-primary);
+            font: var(--fs-base) / var(--lh-normal) -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+            -webkit-font-smoothing: antialiased;
+        }
+
+        body {
+            display: grid;
+            grid-template-columns: 280px 1fr;
+            gap: 0;
+            min-height: 100vh;
+        }
+
+        /* Navigation sidebar */
+        nav {
+            position: fixed;
+            left: 0;
+            top: 0;
+            width: 280px;
+            height: 100vh;
+            background: var(--bg-secondary);
+            border-right: 1px solid var(--border-color);
+            overflow-y: auto;
+            padding: 2rem 0;
+            z-index: 100;
+        }
+
+        nav h2 {
+            font: 600 var(--fs-lg) / 1.2 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto;
+            padding: 0 1.5rem 1rem;
+            color: var(--accent-blue);
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            font-size: var(--fs-sm);
+        }
+
+        nav ul {
+            list-style: none;
+        }
+
+        nav li {
+            border-bottom: 1px solid var(--border-color);
+        }
+
+        nav a {
+            display: block;
+            padding: 0.75rem 1.5rem;
+            color: var(--text-secondary);
+            text-decoration: none;
+            font-size: var(--fs-sm);
+            border-left: 3px solid transparent;
+            transition: all 0.2s ease;
+        }
+
+        nav a:hover {
+            background: var(--bg-tertiary);
+            color: var(--accent-blue);
+            border-left-color: var(--accent-blue);
+        }
+
+        main {
+            grid-column: 2;
+            padding: 3rem;
+            max-width: 1000px;
+        }
+
+        h1 {
+            font: 600 var(--fs-4xl) / 1.2 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto;
+            margin-bottom: 0.5rem;
+            color: var(--text-primary);
+            text-wrap: balance;
+        }
+
+        .subtitle {
+            font-size: var(--fs-lg);
+            color: var(--text-secondary);
+            margin-bottom: 2.5rem;
+            font-weight: 400;
+        }
+
+        section {
+            margin-bottom: 4rem;
+        }
+
+        section h2 {
+            font: 600 var(--fs-2xl) / 1.3 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto;
+            margin-bottom: 1.5rem;
+            padding-bottom: 0.75rem;
+            border-bottom: 2px solid var(--accent-blue);
+            color: var(--text-primary);
+        }
+
+        section h3 {
+            font: 600 var(--fs-xl) / 1.3 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto;
+            margin-top: 1.75rem;
+            margin-bottom: 1rem;
+            color: var(--text-primary);
+        }
+
+        section h4 {
+            font: 600 var(--fs-lg) / 1.3 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto;
+            margin-top: 1.25rem;
+            margin-bottom: 0.75rem;
+            color: var(--text-secondary);
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            font-size: var(--fs-sm);
+        }
+
+        p {
+            line-height: var(--lh-relaxed);
+            margin-bottom: 1rem;
+            color: var(--text-secondary);
+        }
+
+        p + p {
+            margin-top: -0.5rem;
+        }
+
+        ul, ol {
+            margin: 1.5rem 0 1.5rem 1.5rem;
+        }
+
+        li {
+            margin-bottom: 0.5rem;
+            line-height: var(--lh-relaxed);
+            color: var(--text-secondary);
+        }
+
+        strong {
+            color: var(--text-primary);
+            font-weight: 600;
+        }
+
+        /* Code blocks and inline */
+        code {
+            font-family: "Courier New", monospace;
+            font-size: var(--fs-sm);
+            background: var(--code-bg);
+            padding: 0.125rem 0.375rem;
+            border-radius: 3px;
+            color: var(--accent-blue);
+        }
+
+        pre {
+            background: var(--code-bg);
+            border: 1px solid var(--border-color);
+            border-radius: 6px;
+            padding: 1rem;
+            overflow-x: auto;
+            margin: 1.5rem 0;
+            font-size: var(--fs-sm);
+            line-height: 1.5;
+            color: var(--text-secondary);
+        }
+
+        pre code {
+            background: none;
+            padding: 0;
+            color: var(--accent-blue);
+        }
+
+        /* Cards and panels */
+        .card {
+            background: var(--bg-secondary);
+            border: 1px solid var(--border-color);
+            border-radius: 8px;
+            padding: 1.5rem;
+            margin: 1.5rem 0;
+        }
+
+        .card.alert {
+            border-left: 4px solid var(--accent-amber);
+            background: rgba(245, 158, 11, 0.05);
+        }
+
+        .card.alert-error {
+            border-left: 4px solid var(--accent-red);
+            background: rgba(239, 68, 68, 0.05);
+        }
+
+        .card.alert-success {
+            border-left: 4px solid var(--accent-green);
+            background: rgba(16, 185, 129, 0.05);
+        }
+
+        .card h4 {
+            margin-top: 0;
+        }
+
+        .grid-2 {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 1.5rem;
+            margin: 1.5rem 0;
+        }
+
+        @media (max-width: 1200px) {
+            .grid-2 {
+                grid-template-columns: 1fr;
+            }
+        }
+
+        .flow-diagram {
+            background: var(--bg-secondary);
+            border: 1px solid var(--border-color);
+            border-radius: 8px;
+            padding: 2rem;
+            margin: 2rem 0;
+            text-align: center;
+            font-family: monospace;
+            color: var(--text-secondary);
+            line-height: 1.8;
+            white-space: pre-line;
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin: 1.5rem 0;
+            font-size: var(--fs-sm);
+        }
+
+        th {
+            background: var(--bg-secondary);
+            padding: 0.75rem;
+            text-align: left;
+            font-weight: 600;
+            border-bottom: 2px solid var(--border-color);
+            color: var(--text-primary);
+        }
+
+        td {
+            padding: 0.75rem;
+            border-bottom: 1px solid var(--border-color);
+            color: var(--text-secondary);
+        }
+
+        tr:last-child td {
+            border-bottom: none;
+        }
+
+        /* Status badges */
+        .badge {
+            display: inline-block;
+            padding: 0.25rem 0.75rem;
+            border-radius: 12px;
+            font-size: var(--fs-xs);
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+        }
+
+        .badge-good {
+            background: rgba(16, 185, 129, 0.15);
+            color: var(--accent-green);
+        }
+
+        .badge-warning {
+            background: rgba(245, 158, 11, 0.15);
+            color: var(--accent-amber);
+        }
+
+        .badge-critical {
+            background: rgba(239, 68, 68, 0.15);
+            color: var(--accent-red);
+        }
+
+        .badge-info {
+            background: rgba(59, 130, 246, 0.15);
+            color: var(--accent-blue);
+        }
+
+        /* Responsive */
+        @media (max-width: 900px) {
+            body {
+                grid-template-columns: 1fr;
+            }
+
+            nav {
+                position: relative;
+                width: 100%;
+                height: auto;
+                border-right: none;
+                border-bottom: 1px solid var(--border-color);
+                overflow: visible;
+                padding: 1rem 0;
+            }
+
+            nav h2 {
+                padding: 0 1.5rem;
+            }
+
+            nav ul {
+                display: flex;
+                flex-wrap: wrap;
+                list-style: none;
+            }
+
+            nav li {
+                border: none;
+                flex: 0 0 auto;
+            }
+
+            nav a {
+                border: none;
+                padding: 0.5rem 1.5rem;
+            }
+
+            main {
+                grid-column: 1;
+                padding: 2rem;
+            }
+
+            h1 {
+                font-size: var(--fs-3xl);
+            }
+        }
+
+        /* Print */
+        @media print {
+            nav {
+                display: none;
+            }
+
+            body {
+                grid-template-columns: 1fr;
+            }
+
+            main {
+                grid-column: 1;
+                padding: 0;
+            }
+        }
+
+        .spacer {
+            height: 0.5rem;
+        }
+    </style>
+</head>
+<body>
+
+<nav>
+    <h2>Contents</h2>
+    <ul>
+        <li><a href="#overview">Overview</a></li>
+        <li><a href="#architecture">Architecture</a></li>
+        <li><a href="#folder-structure">Folder Structure</a></li>
+        <li><a href="#backend-flow">Backend Flow</a></li>
+        <li><a href="#frontend-flow">Frontend Flow</a></li>
+        <li><a href="#database-flow">Database Flow</a></li>
+        <li><a href="#ai-opportunities">AI Opportunities</a></li>
+        <li><a href="#code-smells">Code Smells</a></li>
+        <li><a href="#security">Security Issues</a></li>
+        <li><a href="#performance">Performance Bottlenecks</a></li>
+        <li><a href="#technical-debt">Technical Debt</a></li>
+    </ul>
+</nav>
+
+<main>
+    <h1>Sentinel QA Analytics Dashboard</h1>
+    <p class="subtitle">Comprehensive Architecture Report</p>
+
+    <section id="overview">
+        <h2>Overview</h2>
+        <p>
+            <strong>Sentinel QA Analytics Dashboard</strong> is a full-stack AI-powered analytics platform designed to help Quality Assurance teams visualize, analyze, and derive insights from test data. It combines traditional data analytics with natural language processing, role-aware context, and multi-source data ingestion.
+        </p>
+
+        <div class="card">
+            <h4>Core Characteristics</h4>
+            <ul>
+                <li>Full-stack application: Next.js frontend + FastAPI backend</li>
+                <li>AI-powered natural language queries and chart generation</li>
+                <li>Multi-source data ingestion (Allure, files, databases, APIs)</li>
+                <li>JWT-based authentication with role and workspace scoping</li>
+                <li>Session-aware conversation memory and learning signals</li>
+                <li>Dark/light theme toggle with responsive design</li>
+                <li>Token usage tracking and cost visibility</li>
+            </ul>
+        </div>
+
+        <p><strong>Tech Stack Summary:</strong></p>
+        <table>
+            <tr>
+                <th>Layer</th>
+                <th>Technology</th>
+                <th>Key Libraries</th>
+            </tr>
+            <tr>
+                <td>Frontend</td>
+                <td>Next.js 16 + React 18</td>
+                <td>Tailwind CSS, Framer Motion, Recharts, ApexCharts</td>
+            </tr>
+            <tr>
+                <td>Backend</td>
+                <td>FastAPI + Uvicorn</td>
+                <td>SQLAlchemy, Pydantic, python-jose</td>
+            </tr>
+            <tr>
+                <td>Database</td>
+                <td>SQLite (auth), LanceDB (vectors), DuckDB (analytics)</td>
+                <td>lancedb, duckdb, pyarrow</td>
+            </tr>
+            <tr>
+                <td>AI/LLM</td>
+                <td>LiteLLM abstraction layer</td>
+                <td>Gemini, OpenAI, Anthropic, Ollama</td>
+            </tr>
+            <tr>
+                <td>Ingestion</td>
+                <td>Universal Ingester with connectors</td>
+                <td>Pandas, sentence-transformers, plotly</td>
+            </tr>
+        </table>
+    </section>
+
+    <section id="architecture">
+        <h2>System Architecture</h2>
+
+        <h3>High-Level Architecture Diagram</h3>
+        <div class="flow-diagram">Data Sources
+├── Allure Results
+├── CSV/JSON Files
+├── MySQL/TiDB
+└── REST APIs
+    ↓
+Universal Ingester
+├── Allure Connector
+├── File Connector
+├── DB Connector
+└── API Connector
+    ↓
+Data Persistence Layer
+├── LanceDB (vectors/documents)
+└── DuckDB (queryable tables)
+    ↓
+FastAPI Service
+├── Auth Handler (JWT)
+├── Chat Handler (NLP queries)
+├── Chart Handler (visualization)
+└── Ingestion Orchestrator
+    ↓
+LLM Provider
+├── Google Gemini (default)
+├── OpenAI GPT
+├── Anthropic Claude
+└── Ollama (local)
+    ↓
+Next.js Frontend
+├── Landing Page
+├── Login
+├── Dashboard
+└── Build Trends
+        </div>
+
+        <h3>Component Interactions</h3>
+        <p>The system follows a clean layered architecture with clear boundaries:</p>
+
+        <div class="card">
+            <h4>Application Layers</h4>
+            <p><strong>Presentation Layer (Next.js):</strong> Handles UI rendering, user interactions, session management, and API communication with caching.</p>
+            <p><strong>API Layer (FastAPI):</strong> Provides RESTful endpoints with JWT authentication, request routing, and business logic coordination.</p>
+            <p><strong>Processing Layer:</strong> Handles chat/chart logic, SQL generation, validation, and LLM orchestration.</p>
+            <p><strong>Data Layer:</strong> Manages data loading, querying, memory storage, and ingestion orchestration.</p>
+            <p><strong>Persistence Layer:</strong> Multi-database approach with SQLite (auth), LanceDB (vectors), and DuckDB (analytics).</p>
+        </div>
+
+        <h3>Key Architectural Decisions</h3>
+        <ol>
+            <li><strong>Multi-database strategy:</strong> Different databases for different purposes (auth, vector search, analytics queries)</li>
+            <li><strong>LLM abstraction:</strong> LiteLLM enables provider flexibility without code changes</li>
+            <li><strong>Workspace scoping:</strong> Built-in multi-tenancy support at the auth and data layer</li>
+            <li><strong>Deterministic chart types:</strong> Chart type determined by regex, not LLM (prevents hallucination)</li>
+            <li><strong>Learning signals:</strong> Self-learning through chat history, keywords, and graph edges</li>
+        </ol>
+    </section>
+
+    <section id="folder-structure">
+        <h2>Folder Structure & Organization</h2>
+
+        <pre><code>sentinel-qa-analytics-dashboard/
+├── services/                          # FastAPI backend
+│   ├── main.py                        # Entry point + route definitions
+│   ├── handlers.py                    # Chat/chart business logic
+│   ├── auth.py                        # JWT auth + token mgmt
+│   ├── user_store.py                  # SQLAlchemy user model
+│   ├── data_loader.py                 # DuckDB + LanceDB loading
+│   ├── llm_client.py                  # LLM provider wrapper
+│   ├── prompts.py                     # AI prompt templates
+│   ├── memory.py                      # Session/chat persistence
+│   ├── role_manager.py                # Persona loading
+│   ├── project_manager.py             # Project context mgmt
+│   ├── config.py                      # Runtime configuration
+│   ├── state.py                       # Global app state
+│   ├── admin_users.py                 # User CLI admin tool
+│   └── token_usage_store.py           # LLM token tracking
+│
+├── frontend/                          # Next.js application
+│   ├── app/
+│   │   ├── page.tsx                   # Landing page
+│   │   ├── login/page.tsx             # Login UI
+│   │   ├── dashboard/
+│   │   │   ├── page.tsx               # Main dashboard
+│   │   │   └── layout.tsx             # Auth gate + providers
+│   │   ├── build-trends/page.tsx      # Build trend analysis
+│   │   └── api/
+│   │       ├── builds/route.ts        # Build summaries
+│   │       └── config2-path/route.ts  # Config path endpoint
+│   ├── components/                    # React components
+│   │   ├── AIChatbot.tsx
+│   │   ├── AIGeneratedChart.tsx
+│   │   ├── ChartGallery.tsx
+│   │   ├── FloatingChat.tsx
+│   │   ├── FloatingChart.tsx
+│   │   ├── RoleSelector.tsx
+│   │   ├── ProjectSelector.tsx
+│   │   ├── IngestionSelector.tsx
+│   │   ├── ThemeToggle.tsx
+│   │   └── BrandLogo.tsx
+│   ├── lib/
+│   │   ├── api.ts                     # API client with caching
+│   │   ├── IngestionContext.tsx       # State management
+│   │   ├── RBContext.tsx              # Role/project context
+│   │   └── session.ts                 # Session management
+│   ├── package.json
+│   └── tsconfig.json
+│
+├── universal_ingester/                # Data ingestion engine
+│   ├── ingester.py                    # Main ingester class
+│   ├── utils.py                       # Embedding generators
+│   ├── connectors/
+│   │   ├── base.py                    # Base connector interface
+│   │   ├── allure_connector.py        # Allure JSON parsing
+│   │   ├── file_connector.py          # File ingestion
+│   │   ├── db_connector.py            # Database connectors
+│   │   └── api_connector.py           # REST API connector
+│   └── test_*.py                      # Integration tests
+│
+├── data/                              # Generated ingestion outputs
+│   └── ingestion_YYYYMMDD_HHMMSS/
+│       ├── lancedb/                   # LanceDB vector store
+│       ├── summary.json               # Build summary metadata
+│       └── summary.md                 # Formatted summary
+│
+├── roles/                             # Role persona definitions
+│   ├── cto.md
+│   └── qa-engineer.md
+│
+├── projects/                          # Project-specific context
+│   └── example-project/
+│       ├── context.md
+│       └── embeddings.json
+│
+├── scripts/                           # Helper scripts
+├── tests/                             # Test suite
+│
+├── config.json                        # Data source config (TiDB example)
+├── config2.json                       # Allure ingestion config
+├── auth_seed_users.json               # Optional user bootstrap
+├── requirements.txt                   # Python dependencies
+├── package.json                       # Root-level JS deps
+├── .env                               # Environment variables
+├── README.md                          # Documentation
+└── ARCHITECTURE_DIAGRAM.md            # ASCII architecture</code></pre>
+
+        <div class="card">
+            <h4>Key Directory Purposes</h4>
+            <table>
+                <tr>
+                    <th>Directory</th>
+                    <th>Purpose</th>
+                    <th>Ownership</th>
+                </tr>
+                <tr>
+                    <td><code>services/</code></td>
+                    <td>FastAPI backend application and business logic</td>
+                    <td>Backend team</td>
+                </tr>
+                <tr>
+                    <td><code>frontend/</code></td>
+                    <td>Next.js React application and UI components</td>
+                    <td>Frontend team</td>
+                </tr>
+                <tr>
+                    <td><code>universal_ingester/</code></td>
+                    <td>Data ingestion pipeline and connectors</td>
+                    <td>Data/Backend team</td>
+                </tr>
+                <tr>
+                    <td><code>data/</code></td>
+                    <td>Runtime-generated ingestion outputs and databases</td>
+                    <td>Generated (not source control)</td>
+                </tr>
+                <tr>
+                    <td><code>roles/, projects/</code></td>
+                    <td>Configuration and context for AI persona selection</td>
+                    <td>Product/Config team</td>
+                </tr>
+            </table>
+        </div>
+    </section>
+
+    <section id="backend-flow">
+        <h2>Backend Request Flow</h2>
+
+        <h3>1. Authentication Flow</h3>
+        <div class="flow-diagram">User
+  ↓
+POST /auth/login (username, password)
+  ↓
+[auth.py: authenticate_user]
+  ├─ Load user from SQLite via UserStore
+  ├─ Verify bcrypt hash
+  └─ Generate JWT token (HS256, 24h expiry)
+  ↓
+Return token → localStorage (client)
+  ↓
+All subsequent requests: Authorization: Bearer {token}
+        </div>
+
+        <div class="card">
+            <h4>Auth Details</h4>
+            <ul>
+                <li><strong>Algorithm:</strong> HS256 (HMAC with SHA-256)</li>
+                <li><strong>Token Duration:</strong> 24 hours</li>
+                <li><strong>Storage:</strong> JWT payload includes username, role, workspace_id</li>
+                <li><strong>Password Hashing:</strong> bcrypt with configurable rounds (default 12)</li>
+                <li><strong>User Store:</strong> SQLite with SQLAlchemy ORM (free, no external dependency)</li>
+            </ul>
+        </div>
+
+        <h3>2. Chat Request Flow</h3>
+        <div class="flow-diagram">User Input (Dashboard)
+  ↓
+POST /chat
+  headers: Authorization, x-ingestion-id, x-role, x-project, x-session-id
+  body: { message: "...", session_id: "..." }
+  ↓
+[handlers.handle_chat]
+  ├─ Load ingestion context (DuckDB + LanceDB)
+  ├─ Retrieve chat history (last 10 turns)
+  ├─ Extract learning signals (keywords, patterns)
+  ├─ Fetch related knowledge graph concepts
+  ├─ Load role persona (CTO vs QA Engineer)
+  └─ Load project context
+  ↓
+[llm_client.generate with CHAT_DECISION_PROMPT]
+  ├─ LLM decides action: SQL query | vector search | direct answer
+  └─ Returns JSON: { "action": "sql|vector|answer", "sql": "...", ... }
+  ↓
+[Execution based on action]
+  ├─ IF sql: sanitize → validate → execute in DuckDB
+  ├─ IF vector: search LanceDB for documents
+  └─ IF answer: use context to generate response
+  ↓
+[llm_client.generate with CHAT_ANSWER_PROMPT]
+  └─ Generate human-readable response
+  ↓
+[memory.store_chat]
+  ├─ Save to LanceDB chat_history
+  ├─ Extract keywords → update learning_signals
+  └─ Update knowledge_graph_edges
+  ↓
+Return response → Client
+        </div>
+
+        <h3>3. Chart Generation Flow</h3>
+        <div class="flow-diagram">User Input (Dashboard)
+  ↓
+POST /chart
+  headers: Authorization, x-ingestion-id, x-role, x-project, x-session-id
+  body: { message: "show me..." }
+  ↓
+[handlers.handle_chart]
+  ├─ Detect chart type (deterministic via regex, NOT LLM)
+  ├─ Load ingestion + role/project context
+  ├─ Retrieve chart history
+  └─ Build prompt with chart template constraints
+  ↓
+[llm_client.generate with CHART_SQL_PROMPT]
+  └─ LLM generates SQL query (must be valid DuckDB)
+  ↓
+[data_loader.execute_sql]
+  ├─ Sanitize SQL (remove markdown, comments)
+  ├─ Validate against disallowed operations
+  ├─ Execute in DuckDB
+  └─ Return DataFrame
+  ↓
+[llm_client.generate with CHART_CODE_PROMPT]
+  └─ LLM fills in Plotly template (pre-determined chart type)
+  ↓
+[Execute chart code]
+  ├─ Render chart
+  ├─ Apply visual layout (colors, fonts, margins)
+  └─ Convert to JSON
+  ↓
+[memory.store_chart]
+  ├─ Save to LanceDB chart_history
+  └─ Update learning_signals
+  ↓
+Return chart JSON → Client (via Plotly.js)
+        </div>
+
+        <div class="card alert">
+            <h4>🔑 Chart Type Safety Mechanism</h4>
+            <p>Chart types are <strong>NOT decided by the LLM</strong> — they are detected deterministically using regex patterns. The LLM only fills in column names within a pre-written Plotly template. This prevents hallucination of unsupported chart types.</p>
+        </div>
+
+        <h3>4. Data Ingestion Flow</h3>
+        <div class="flow-diagram">User specifies source path
+  ↓
+[Frontend: POST /ingest/config2]
+  body: { source_path: "/path/to/allure-results" }
+  ↓
+[Backend: main.py ingest_config2_endpoint]
+  ├─ Infer source type (allure | file | db | api)
+  ├─ Create config dict
+  └─ Trigger UniversalIngester
+  ↓
+[UniversalIngester.ingest_source]
+  ├─ Create ingestion folder: data/ingestion_TIMESTAMP/
+  ├─ Initialize LanceDB and DuckDB
+  └─ Route to appropriate connector
+  ↓
+[Connector.fetch]
+  └─ Fetch data based on type
+  ↓
+[Ingester._ingest_dataset]
+  ├─ Flatten JSON columns
+  ├─ Generate embeddings (sentence-transformers)
+  ├─ Store in LanceDB
+  └─ Register in DuckDB
+  ↓
+[Ingester.link_to_duckdb]
+  └─ Build aggregate tables (module_metrics, project_metrics)
+  ↓
+[Ingester._generate_summary]
+  ├─ Create summary.json with metadata
+  ├─ Generate summary.md (formatted report)
+  └─ Save to ingestion folder
+  ↓
+Ingestion complete → Cached in memory
+        </div>
+
+        <h3>5. SQL Query Safety</h3>
+        <div class="card alert-error">
+            <h4>⚠️ Security: SQL Injection Prevention</h4>
+            <p><strong>All user-generated SQL is:</strong></p>
+            <ul>
+                <li>Sanitized (markdown removed, comments stripped)</li>
+                <li>Validated against disallowed keywords: DROP, DELETE, UPDATE, INSERT, ALTER, TRUNCATE, ATTACH, DETACH, COPY</li>
+                <li>Executed in read-only context (DuckDB session)</li>
+                <li>Limited to pre-loaded ingestion tables (no direct system access)</li>
+            </ul>
+        </div>
+    </section>
+
+    <section id="frontend-flow">
+        <h2>Frontend Request & UI Flow</h2>
+
+        <h3>Page Navigation & Layout</h3>
+        <table>
+            <tr>
+                <th>Route</th>
+                <th>Component</th>
+                <th>Auth Required</th>
+                <th>Purpose</th>
+            </tr>
+            <tr>
+                <td><code>/</code></td>
+                <td><code>page.tsx</code></td>
+                <td>No</td>
+                <td>Marketing/landing page with features overview</td>
+            </tr>
+            <tr>
+                <td><code>/login</code></td>
+                <td><code>login/page.tsx</code></td>
+                <td>No</td>
+                <td>JWT authentication form</td>
+            </tr>
+            <tr>
+                <td><code>/dashboard</code></td>
+                <td><code>dashboard/page.tsx</code></td>
+                <td>Yes</td>
+                <td>Main analytics dashboard with chat/chart UI</td>
+            </tr>
+            <tr>
+                <td><code>/build-trends</code></td>
+                <td><code>build-trends/page.tsx</code></td>
+                <td>Yes</td>
+                <td>Multi-build trend visualization and comparison</td>
+            </tr>
+        </table>
+
+        <h3>Dashboard Component Interaction</h3>
+        <div class="flow-diagram">Dashboard Layout
+├── Header
+│   ├── BrandLogo
+│   ├── IngestionSelector (dropdown)
+│   ├── RoleSelector (dropdown)
+│   ├── ProjectSelector (dropdown)
+│   ├── ThemeToggle (dark/light)
+│   └── LogOut button
+│
+├── Left Sidebar
+│   ├── Data Status Summary
+│   ├── Quality Metrics
+│   └── Token Usage Stats
+│
+├── Main Content Area
+│   ├── ChartGallery
+│   │   └── AIGeneratedChart components
+│   └── FloatingChart widget
+│
+└── Bottom UI (always visible)
+    ├── FloatingChat (AI Chatbot)
+    └── AIChatInput with suggestions
+        </div>
+
+        <h3>Context & State Management</h3>
+        <p><strong>Global Context Providers:</strong></p>
+        <ul>
+            <li><code>IngestionContext</code> — Selected ingestion ID, refresh trigger</li>
+            <li><code>RBContext</code> — Role, project, workspace, permissions</li>
+            <li><code>ThemeContext</code> — Dark/light mode state</li>
+        </ul>
+
+        <p><strong>Data Caching Strategy:</strong></p>
+        <div class="card">
+            <ul>
+                <li><code>Memory cache</code> — In-memory Map (fast)</li>
+                <li><code>SessionStorage</code> — Browser session-scoped (survives navigation)</li>
+                <li><code>TTLs:</code> Health 5s, Status 12s, Quality 20s, Overview 15s, Chart history 10s</li>
+                <li>Cache keys namespaced: <code>qa_cache:{endpoint}:{scope}</code></li>
+            </ul>
+        </div>
+
+        <h3>Chat & Chart Request Flow (Client)</h3>
+        <div class="flow-diagram">User types message
+  ↓
+AIChatInput component
+  ├─ Trigger onClick or Enter key
+  └─ Call api.sendChatMessage()
+  ↓
+[lib/api.ts: sendChatMessage]
+  ├─ Get session ID (stable, per-user)
+  ├─ Prepare headers:
+  │   ├─ Authorization: Bearer {token}
+  │   ├─ x-ingestion-id
+  │   ├─ x-role
+  │   ├─ x-project
+  │   └─ x-session-id
+  ├─ POST /chat
+  └─ Parse response
+  ↓
+FloatingChat component
+  ├─ Display message + response
+  ├─ Add to conversation history
+  └─ Trigger re-render
+  ↓
+Similar flow for charts:
+  └─ api.generateChart() → FloatingChart display
+        </div>
+
+        <h3>Performance Optimizations</h3>
+        <div class="card">
+            <h4>Frontend Optimizations</h4>
+            <ul>
+                <li><strong>Request caching:</strong> Memory + sessionStorage with TTL</li>
+                <li><strong>Lazy loading:</strong> Charts loaded on demand</li>
+                <li><strong>Performance monitoring:</strong> Built-in perf logging (if enabled)</li>
+                <li><strong>Code splitting:</strong> Next.js automatic route-based splitting</li>
+                <li><strong>Image optimization:</strong> Next.js Image component for landing page</li>
+            </ul>
+        </div>
+    </section>
+
+    <section id="database-flow">
+        <h2>Database Architecture & Flow</h2>
+
+        <h3>Database Topology</h3>
+        <table>
+            <tr>
+                <th>Database</th>
+                <th>Purpose</th>
+                <th>Storage</th>
+                <th>Driver</th>
+            </tr>
+            <tr>
+                <td><strong>SQLite</strong></td>
+                <td>User authentication & roles</td>
+                <td>./users.db (single file)</td>
+                <td>SQLAlchemy</td>
+            </tr>
+            <tr>
+                <td><strong>LanceDB</strong></td>
+                <td>Vectors, documents, chat/chart history, learning signals</td>
+                <td>data/ingestion_*/lancedb/</td>
+                <td>lancedb Python SDK</td>
+            </tr>
+            <tr>
+                <td><strong>DuckDB</strong></td>
+                <td>In-memory query engine for test analytics</td>
+                <td>Memory (session-scoped)</td>
+                <td>duckdb Python SDK</td>
+            </tr>
+        </table>
+
+        <h3>SQLite Schema (Auth Store)</h3>
+        <pre><code>CREATE TABLE users (
+    username VARCHAR PRIMARY KEY,
+    password_hash VARCHAR NOT NULL,
+    role VARCHAR DEFAULT 'qa-engineer',
+    is_active BOOLEAN DEFAULT TRUE,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);</code></pre>
+
+        <div class="card">
+            <h4>User Roles</h4>
+            <ul>
+                <li><code>cto</code> — Executive/admin role; can view all user history, cross-workspace access</li>
+                <li><code>qa-engineer</code> — Standard QA role; scoped to own sessions and data</li>
+            </ul>
+        </div>
+
+        <h3>LanceDB Tables (Per Ingestion)</h3>
+        <p><strong>LanceDB</strong> stores all ingested test data, documents, and learning artifacts. Key tables:</p>
+
+        <h4>Data Tables</h4>
+        <ul>
+            <li><code>flattened_tests</code> — One row per test result (after retry merge)
+                <ul>
+                    <li>Columns: test_name, status, duration, error, spec_file, project_name, module_name, platform_type, browser</li>
+                </ul>
+            </li>
+            <li><code>module_metrics</code> — Aggregates by (project, module, platform)
+                <ul>
+                    <li>Columns: total_tests, passed, failed, skipped, pass_rate, avg_duration</li>
+                </ul>
+            </li>
+            <li><code>project_metrics</code> — Aggregates by (project, platform)
+                <ul>
+                    <li>Columns: module_count, total_tests, pass_rate, avg_duration</li>
+                </ul>
+            </li>
+            <li><code>test_cases</code> — Test metadata (backward-compat table)
+                <ul>
+                    <li>Columns: module_name, priority, title (=test_name), project_name, platform_type</li>
+                </ul>
+            </li>
+        </ul>
+
+        <h4>Memory & Learning Tables</h4>
+        <ul>
+            <li><code>chat_history</code> — Chat messages and responses
+                <ul>
+                    <li>Columns: id, workspace_id, user_id, ingestion_id, session_id, prompt, response, created_at</li>
+                </ul>
+            </li>
+            <li><code>chart_history</code> — Generated charts
+                <ul>
+                    <li>Columns: id, workspace_id, user_id, ingestion_id, session_id, title, chart (Plotly JSON), created_at</li>
+                </ul>
+            </li>
+            <li><code>learning_signals</code> — Keyword patterns and frequency
+                <ul>
+                    <li>Used to surface related concepts and accelerate future queries</li>
+                </ul>
+            </li>
+            <li><code>knowledge_graph_edges</code> — Co-occurrence graph of keywords
+                <ul>
+                    <li>Enables semantic retrieval and context expansion</li>
+                </ul>
+            </li>
+        </ul>
+
+        <h3>DuckDB Query Execution</h3>
+        <div class="flow-diagram">[Load Ingestion]
+  ├─ Create DuckDB in-memory connection
+  ├─ Register LanceDB tables as views
+  └─ Pre-compute aggregates
+  ↓
+[User SQL Query]
+  ├─ Sanitize (remove markdown, comments)
+  ├─ Validate (block DROP/DELETE/UPDATE)
+  ├─ Execute in DuckDB
+  └─ Return DataFrame
+  ↓
+[Chart/Response Generation]
+  └─ Use DataFrame for visualization or LLM context
+        </div>
+
+        <div class="card alert-error">
+            <h4>⚠️ Important: Platform Type Detection</h4>
+            <p>Platform type (mobile vs desktop) comes from the <strong>Allure "Project" parameter</strong>, NOT text-matching on test names:</p>
+            <ul>
+                <li><code>GoogleChrome</code> → <code>desktop</code></li>
+                <li><code>GoogleChromeiPhoneX</code> → <code>mobile</code></li>
+                <li><code>GoogleChromeiPad</code> → <code>mobile</code></li>
+            </ul>
+        </div>
+
+        <h3>Data Ingestion Output Structure</h3>
+        <pre><code>data/ingestion_20260709_110143/
+├── lancedb/                       # LanceDB vector database
+│   ├── flattened_tests.lance/
+│   ├── module_metrics.lance/
+│   ├── project_metrics.lance/
+│   ├── chat_history.lance/
+│   ├── chart_history.lance/
+│   ├── learning_signals.lance/
+│   └── knowledge_graph_edges.lance/
+│
+├── summary.json                   # Machine-readable summary
+│   {
+│     "ingestion_id": "ingestion_20260709_110143",
+│     "source_type": "allure",
+│     "total_records": 5432,
+│     "projects": ["FSA", "HSA", "WDH"],
+│     "modules": [...],
+│     "status_summary": { "passed": 4200, "failed": 432, ... }
+│   }
+│
+└── summary.md                     # Human-readable summary
+    # Ingestion Summary
+    - Source: Allure Results
+    - Records: 5,432
+    - Pass Rate: 87.3%
+    ...</code></pre>
+    </section>
+
+    <section id="ai-opportunities">
+        <h2>AI Enhancement Opportunities</h2>
+
+        <h3>Short-Term Improvements (1-2 sprints)</h3>
+        <div class="card">
+            <h4>1. Advanced Retrieval Augmented Generation (RAG)</h4>
+            <p>Current: Simple keyword overlap for learning signals. Better: Implement hybrid retrieval combining:</p>
+            <ul>
+                <li><strong>Dense retrieval:</strong> Semantic similarity using embeddings</li>
+                <li><strong>Sparse retrieval:</strong> BM25 keyword matching</li>
+                <li><strong>Graph-based:</strong> Knowledge graph edge traversal for related concepts</li>
+            </ul>
+            <p><strong>Impact:</strong> More accurate context retrieval → better responses, faster queries</p>
+        </div>
+
+        <div class="card">
+            <h4>2. Failure Root Cause Analysis</h4>
+            <p>Analyze failure patterns across builds to detect:</p>
+            <ul>
+                <li>Repeated failure signatures (similar errors across tests)</li>
+                <li>Flaky test detection (fails occasionally)</li>
+                <li>Correlation between failures and infrastructure changes</li>
+                <li>Regression patterns (new vs existing failures)</li>
+            </ul>
+            <p><strong>Implementation:</strong> LLM-powered pattern extraction + knowledge graph storage</p>
+        </div>
+
+        <div class="card">
+            <h4>3. Proactive Test Health Monitoring</h4>
+            <p>Generate automated insights without waiting for user queries:</p>
+            <ul>
+                <li>Daily/weekly health summaries (pass rate trends, slowest tests)</li>
+                <li>Risk alerts (high-impact modules failing)</li>
+                <li>Anomaly detection (unusual test duration, failure clustering)</li>
+            </ul>
+            <p><strong>Implementation:</strong> Scheduled jobs with LLM-powered insight generation</p>
+        </div>
+
+        <h3>Mid-Term Improvements (3-6 sprints)</h3>
+        <div class="card">
+            <h4>4. Graph Database Integration</h4>
+            <p>Replace simple keyword edges with structured graph:</p>
+            <ul>
+                <li>Entities: TestCase, Module, Project, Build, FailureSignature, Owner</li>
+                <li>Edges: FAILED_IN, DEPENDS_ON, AFFECTS, REGRESSED_IN, OWNED_BY</li>
+                <li>Use Neo4j or Memgraph for enterprise-grade graph queries</li>
+            </ul>
+            <p><strong>Benefits:</strong> Root cause neighborhoods, impact analysis, failure propagation patterns</p>
+        </div>
+
+        <div class="card">
+            <h4>5. Multi-Modal Intelligence</h4>
+            <p>Combine multiple data sources for richer insights:</p>
+            <ul>
+                <li>Test code (repo analysis) — what's being tested?</li>
+                <li>Requirements/specs — what should work?</li>
+                <li>CI logs — infrastructure issues?</li>
+                <li>Slack/email context — known issues?</li>
+            </ul>
+            <p><strong>Implementation:</strong> Multi-source ingester extension + semantic search</p>
+        </div>
+
+        <div class="card">
+            <h4>6. Predictive Test Prioritization</h4>
+            <p>ML model to predict which tests are most likely to fail:</p>
+            <ul>
+                <li>Learn from historical failure patterns</li>
+                <li>Prioritize test execution based on risk</li>
+                <li>Recommend test combinations to maximize coverage with minimal runtime</li>
+            </ul>
+            <p><strong>Implementation:</strong> Offline model training + real-time scoring</p>
+        </div>
+
+        <h3>Long-Term Vision (6+ months)</h3>
+        <div class="card">
+            <h4>7. Autonomous QA Orchestration</h4>
+            <p>AI-driven test orchestration and remediation:</p>
+            <ul>
+                <li>Auto-generate flaky test remediation suggestions (increase timeout, add retry logic)</li>
+                <li>Recommend test refactoring (consolidate redundant tests)</li>
+                <li>Suggest test coverage gaps based on code/requirements analysis</li>
+            </ul>
+        </div>
+
+        <div class="card">
+            <h4>8. Custom Fine-Tuned Models</h4>
+            <p>Fine-tune LLMs on QA-specific data:</p>
+            <ul>
+                <li>Collect feedback signals from user corrections</li>
+                <li>Create QA-specific instruction-following model</li>
+                <li>Deploy locally for privacy + latency</li>
+            </ul>
+        </div>
+
+        <h3>Current LLM Provider Configuration</h3>
+        <p><strong>Default:</strong> Google Gemini (models/gemini-2.5-flash)</p>
+        <p><strong>Alternatives configured:</strong> OpenAI (GPT-4), Anthropic (Claude), Ollama (local)</p>
+        <p><strong>LiteLLM enables:</strong> Provider switching without code changes, fallback routing, cost tracking</p>
+    </section>
+
+    <section id="code-smells">
+        <h2>Code Smells & Refactoring Candidates</h2>
+
+        <div class="card alert-warning">
+            <h4>1. Hardcoded Prompt Templates in Code</h4>
+            <p><strong>Location:</strong> <code>services/prompts.py</code></p>
+            <p>All prompt templates are embedded as string constants. While this works, it makes AB testing and versioning difficult.</p>
+            <p><strong>Suggestion:</strong> Move prompts to database or structured config; add version tracking and A/B test capability.</p>
+        </div>
+
+        <div class="card alert-warning">
+            <h4>2. Global State in services/state.py</h4>
+            <p><strong>Location:</strong> <code>services/state.py</code></p>
+            <p>Application state (current_ingestion_id, lance_db, duck_conn) stored in module-level globals. Makes testing harder, potential race conditions in async context.</p>
+            <p><strong>Suggestion:</strong> Use FastAPI dependency injection; pass state as context parameter to handlers.</p>
+        </div>
+
+        <div class="card alert-warning">
+            <h4>3. Missing Error Handling in Ingestion</h4>
+            <p><strong>Location:</strong> <code>universal_ingester/ingester.py</code></p>
+            <p>Limited try-catch in connector fetch operations. If one source fails, entire ingestion fails silently.</p>
+            <p><strong>Suggestion:</strong> Implement partial ingestion success; log errors per source; return detailed ingestion report with partial data warning.</p>
+        </div>
+
+        <div class="card alert-warning">
+            <h4>4. Monolithic handlers.py</h4>
+            <p><strong>Location:</strong> <code>services/handlers.py</code></p>
+            <p>Chat and chart logic mixed together; 300+ lines of interdependent functions. Hard to test, high cyclomatic complexity.</p>
+            <p><strong>Suggestion:</strong> Split into <code>chat_handler.py</code> and <code>chart_handler.py</code>; extract validation logic to separate module.</p>
+        </div>
+
+        <div class="card alert-warning">
+            <h4>5. Frontend Type Safety Gaps</h4>
+            <p><strong>Location:</strong> <code>frontend/lib/api.ts</code>, component files</p>
+            <p>Many <code>any</code> types used in API responses; potential null reference errors. Props not always typed in components.</p>
+            <p><strong>Suggestion:</strong> Add strict TypeScript; use discriminated unions for API response types; run <code>npm run lint</code> pre-commit.</p>
+        </div>
+
+        <div class="card alert-warning">
+            <h4>6. SQL Generation Without Type Safety</h4>
+            <p><strong>Location:</strong> <code>services/handlers.py</code></p>
+            <p>LLM generates SQL strings that are string-concatenated into queries. While validated, no compile-time type checking.</p>
+            <p><strong>Suggestion:</strong> Consider SQL query builder (sqlglot) to construct queries programmatically; validate AST before execution.</p>
+        </div>
+
+        <div class="card alert-warning">
+            <h4>7. Inconsistent Error Response Format</h4>
+            <p><strong>Location:</strong> Multiple endpoints in <code>main.py</code></p>
+            <p>Some endpoints return <code>{ "error": "..." }</code>, others <code>{ "detail": "..." }</code>, some throw HTTPException. Inconsistent client error handling.</p>
+            <p><strong>Suggestion:</strong> Create standardized error response schema; use exception handler middleware; document error codes.</p>
+        </div>
+
+        <div class="card alert-warning">
+            <h4>8. Missing Logging & Observability</h4>
+            <p><strong>Location:</strong> Backend services (sparse logging)</p>
+            <p>Limited structured logging; no request IDs for tracing; token usage tracked but not exposed as metrics.</p>
+            <p><strong>Suggestion:</strong> Add request/response logging middleware; implement structured logging (JSON format); expose Prometheus metrics.</p>
+        </div>
+
+        <div class="card alert-warning">
+            <h4>9. No Input Validation on Frontend</h4>
+            <p><strong>Location:</strong> Form inputs across components</p>
+            <p>User input accepted without client-side validation (length, format, special chars). Relies on backend validation.</p>
+            <p><strong>Suggestion:</strong> Add zod or yup for schema validation; provide immediate user feedback.</p>
+        </div>
+
+        <div class="card alert-warning">
+            <h4>10. Coupling Between Auth and Workspace</h4>
+            <p><strong>Location:</strong> <code>services/auth.py</code>, header handling</p>
+            <p>Workspace ID mixed into auth token and headers. Makes it unclear which is source of truth for tenant context.</p>
+            <p><strong>Suggestion:</strong> Define clear tenant isolation boundary; make workspace part of explicit authorization context (not magic header).</p>
+        </div>
+    </section>
+
+    <section id="security">
+        <h2>Security Assessment</h2>
+
+        <h3>Current Security Controls</h3>
+        <div class="card alert-success">
+            <h4>✓ Strengths</h4>
+            <ul>
+                <li><strong>JWT Authentication:</strong> Bearer tokens with 24-hour expiry; HS256 HMAC</li>
+                <li><strong>Password Security:</strong> bcrypt hashing with configurable rounds (default 12)</li>
+                <li><strong>SQL Injection Prevention:</strong> LLM-generated SQL validated against disallowed keywords</li>
+                <li><strong>CORS Protection:</strong> Configurable origin allowlist (not wildcard)</li>
+                <li><strong>Environment Secrets:</strong> Sensitive values loaded from .env (not hardcoded)</li>
+                <li><strong>Role-Based Access:</strong> Admin/CTO vs QA Engineer roles restrict cross-user access</li>
+            </ul>
+        </div>
+
+        <h3>Security Issues & Recommendations</h3>
+        <div class="card alert-error">
+            <h4>🔴 Critical: Hardcoded Credentials in config.json</h4>
+            <p><strong>Location:</strong> <code>config.json</code> contains TiDB connection string with plaintext password</p>
+            <p><strong>Risk:</strong> Database credentials exposed if repo is leaked or in shared environments</p>
+            <p><strong>Fix:</strong></p>
+            <ul>
+                <li>Never commit credentials; use environment variables only</li>
+                <li>Example: <code>DB_CONNECTION_STRING=mysql+pymysql://user:pass@host/db</code> in .env</li>
+                <li>Add <code>config*.json</code> to .gitignore</li>
+                <li>Use secrets management (HashiCorp Vault, AWS Secrets Manager) in production</li>
+            </ul>
+        </div>
+
+        <div class="card alert-error">
+            <h4>🔴 Critical: Gemini API Key in .env (Visible)</h4>
+            <p><strong>Location:</strong> <code>.env</code> file contains LLM_API_KEY (checked into git history)</p>
+            <p><strong>Risk:</strong> API key compromised = unauthorized API usage, cost explosion, data leakage</p>
+            <p><strong>Fix:</strong></p>
+            <ul>
+                <li>Never commit .env to git; add to .gitignore</li>
+                <li>Use local .env.local for development (not in git)</li>
+                <li>Rotate API keys immediately if exposed</li>
+                <li>Use short-lived credentials (refresh tokens)</li>
+                <li>Implement API rate limiting and quota alerts</li>
+            </ul>
+        </div>
+
+        <div class="card alert-error">
+            <h4>🔴 High: JWT Secret in .env (Weak)</h4>
+            <p><strong>Location:</strong> <code>.env</code> contains SECRET_KEY</p>
+            <p><strong>Risk:</strong> If exposed, attacker can forge JWTs and impersonate any user</p>
+            <p><strong>Fix:</strong></p>
+            <ul>
+                <li>Ensure SECRET_KEY ≥32 characters (config.py validates minimum length)</li>
+                <li>Use cryptographically secure random value: <code>python -c "import secrets; print(secrets.token_urlsafe(32))"</code></li>
+                <li>Rotate SECRET_KEY periodically (invalidates all existing tokens)</li>
+                <li>Store in secure secrets manager, not .env files</li>
+            </ul>
+        </div>
+
+        <div class="card alert-error">
+            <h4>🔴 High: No HTTPS Enforcement</h4>
+            <p><strong>Location:</strong> Frontend/backend assume HTTP in development</p>
+            <p><strong>Risk:</strong> Tokens, credentials, and data transmitted in plaintext over network</p>
+            <p><strong>Fix:</strong></p>
+            <ul>
+                <li>Deploy backend with HTTPS only (use Let's Encrypt for certs)</li>
+                <li>Set Secure and HttpOnly flags on JWT cookies (if using cookies instead of localStorage)</li>
+                <li>Add HSTS header (Strict-Transport-Security) to force HTTPS</li>
+                <li>Use TLS 1.3 minimum</li>
+            </ul>
+        </div>
+
+        <div class="card alert-warning">
+            <h4>⚠️ Medium: Token Stored in localStorage</h4>
+            <p><strong>Location:</strong> <code>frontend/lib/api.ts</code></p>
+            <p><strong>Risk:</strong> Vulnerable to XSS attacks; attacker can steal token and impersonate user</p>
+            <p><strong>Mitigation:</strong></p>
+            <ul>
+                <li>Implement Content Security Policy (CSP) to prevent inline scripts</li>
+                <li>Consider moving to httpOnly cookies (harder to steal via XSS)</li>
+                <li>Add token expiry refresh mechanism (shorter-lived access tokens, long-lived refresh tokens)</li>
+            </ul>
+        </div>
+
+        <div class="card alert-warning">
+            <h4>⚠️ Medium: SQL Query Validation (Partial)</h4>
+            <p><strong>Location:</strong> <code>services/data_loader.py</code></p>
+            <p><strong>Risk:</strong> Regex-based keyword blocking can be bypassed (e.g., DROP with spaces, backticks)</p>
+            <p><strong>Fix:</strong></p>
+            <ul>
+                <li>Use SQL parser (sqlglot) to validate query structure</li>
+                <li>Only allow SELECT statements; parse and validate whitelist of allowed tables</li>
+                <li>Test against known SQL injection patterns</li>
+            </ul>
+        </div>
+
+        <div class="card alert-warning">
+            <h4>⚠️ Medium: No Rate Limiting</h4>
+            <p><strong>Location:</strong> FastAPI routes (no middleware)</p>
+            <p><strong>Risk:</strong> Brute force attacks, DoS, LLM token quota exhaustion</p>
+            <p><strong>Fix:</strong></p>
+            <ul>
+                <li>Add rate limiting middleware (slowapi for FastAPI)</li>
+                <li>Implement per-user and per-IP limits</li>
+                <li>Track LLM token spend; set per-user/per-workspace quotas</li>
+                <li>Alert on unusual activity (spike in requests, quota overage)</li>
+            </ul>
+        </div>
+
+        <div class="card alert-warning">
+            <h4>⚠️ Medium: No Input Sanitization on Chat Prompts</h4>
+            <p><strong>Location:</strong> <code>services/handlers.py</code> chat handler</p>
+            <p><strong>Risk:</strong> Prompt injection attacks (adversarial input to LLM)</p>
+            <p><strong>Fix:</strong></p>
+            <ul>
+                <li>Validate prompt length (reject extremely long inputs)</li>
+                <li>Implement prompt injection detection (check for "ignore previous instructions")</li>
+                <li>Add user feedback loop to flag malicious prompts</li>
+                <li>Log and monitor suspicious patterns</li>
+            </ul>
+        </div>
+
+        <div class="card alert-warning">
+            <h4>⚠️ Medium: Workspace Isolation Not Enforced</h4>
+            <p><strong>Location:</strong> Data loading and querying</p>
+            <p><strong>Risk:</strong> If x-workspace-id header is spoofed, user could access other workspace data</p>
+            <p><strong>Fix:</strong></p>
+            <ul>
+                <li>Extract workspace_id from JWT token (not header)</li>
+                <li>Validate all queries are scoped to current user's workspace</li>
+                <li>Add integration tests for cross-workspace access denial</li>
+            </ul>
+        </div>
+
+        <div class="card alert-warning">
+            <h4>⚠️ Low: CORS Allowlist Default</h4>
+            <p><strong>Current:</strong> Defaults to http://localhost:3000 (dev-only)</p>
+            <p><strong>Risk:</strong> Production may accidentally use dev allowlist</p>
+            <p><strong>Fix:</strong></p>
+            <ul>
+                <li>Fail startup if CORS_ALLOWED_ORIGINS not explicitly set (no default for prod)</li>
+                <li>Document the env variable requirement</li>
+            </ul>
+        </div>
+
+        <h3>Security Best Practices Checklist</h3>
+        <div class="card">
+            <h4>For Deployment & Operations</h4>
+            <table>
+                <tr>
+                    <th>Item</th>
+                    <th>Status</th>
+                    <th>Action</th>
+                </tr>
+                <tr>
+                    <td>Secrets in secrets manager (Vault, AWS Secrets Manager)</td>
+                    <td>❌ Not implemented</td>
+                    <td>Integrate before production</td>
+                </tr>
+                <tr>
+                    <td>HTTPS/TLS enforcement</td>
+                    <td>⚠️ Dev only</td>
+                    <td>Enable for production deployments</td>
+                </tr>
+                <tr>
+                    <td>Rate limiting</td>
+                    <td>❌ Not implemented</td>
+                    <td>Add slowapi middleware</td>
+                </tr>
+                <tr>
+                    <td>Audit logging</td>
+                    <td>⚠️ Partial</td>
+                    <td>Add request ID tracking, log auth events</td>
+                </tr>
+                <tr>
+                    <td>Input validation</td>
+                    <td>⚠️ Partial</td>
+                    <td>Add front-end + back-end validation</td>
+                </tr>
+                <tr>
+                    <td>SQL injection testing</td>
+                    <td>❌ Not documented</td>
+                    <td>Add integration tests</td>
+                </tr>
+                <tr>
+                    <td>Dependency vulnerability scanning</td>
+                    <td>❌ Not configured</td>
+                    <td>Add GitHub Dependabot or Snyk</td>
+                </tr>
+            </table>
+        </div>
+    </section>
+
+    <section id="performance">
+        <h2>Performance Bottlenecks & Optimization Opportunities</h2>
+
+        <h3>Current Performance Optimizations</h3>
+        <div class="card alert-success">
+            <h4>✓ Implemented</h4>
+            <ul>
+                <li><strong>Frontend caching:</strong> Memory + sessionStorage with TTL-based cache keys</li>
+                <li><strong>Status cache (10s):</strong> Reduces repeated calls to /data/status</li>
+                <li><strong>Quality cache (20s):</strong> Defers expensive quality checks</li>
+                <li><strong>Chart history cache (10s):</strong> Quick chart re-display</li>
+                <li><strong>In-memory DuckDB:</strong> Fast query execution without disk I/O</li>
+                <li><strong>LanceDB vectors:</strong> Semantic search acceleration</li>
+            </ul>
+        </div>
+
+        <h3>Identified Bottlenecks</h3>
+
+        <div class="card alert-warning">
+            <h4>1. Initial Ingestion Load Time (Critical)</h4>
+            <p><strong>Bottleneck:</strong> First chat/chart request on a new ingestion triggers:</p>
+            <ul>
+                <li>LanceDB load from disk (I/O bound)</li>
+                <li>DuckDB table registration</li>
+                <li>Aggregate table computation (module_metrics, project_metrics)</li>
+            </ul>
+            <p><strong>Impact:</strong> 5-30 second delay on first request</p>
+            <p><strong>Solution:</strong></p>
+            <ul>
+                <li>Pre-compute aggregates during ingestion (not lazy)</li>
+                <li>Implement background job to warm up database on startup</li>
+                <li>Show loading indicator to user with estimated time</li>
+                <li>Cache metadata (# tests, # modules) after first load</li>
+            </ul>
+        </div>
+
+        <div class="card alert-warning">
+            <h4>2. Large Ingestion Dataset Performance (High)</h4>
+            <p><strong>Bottleneck:</strong> Ingestions with 100K+ tests can be slow to:</p>
+            <ul>
+                <li>Generate embeddings (sentence-transformers inference)</li>
+                <li>Compute aggregates (full table scans)</li>
+                <li>Store in LanceDB (write throughput limited)</li>
+            </ul>
+            <p><strong>Impact:</strong> Ingestion takes 10+ minutes for large datasets</p>
+            <p><strong>Solution:</strong></p>
+            <ul>
+                <li>Batch embeddings (process 100 records at a time)</li>
+                <li>Parallelize ingestion across CPU cores (use ProcessPoolExecutor)</li>
+                <li>Streaming writes to LanceDB (don't load entire dataset into memory)</li>
+                <li>Show progress bar to user during ingestion</li>
+            </ul>
+        </div>
+
+        <div class="card alert-warning">
+            <h4>3. LLM API Latency (High)</h4>
+            <p><strong>Bottleneck:</strong> Chat/chart requests block on LLM API calls (1-10 seconds per call)</p>
+            <p><strong>Impact:</strong> User waits for response; poor UX for poor internet</p>
+            <p><strong>Solution:</strong></p>
+            <ul>
+                <li>Implement streaming responses (stream token generation to client)</li>
+                <li>Add response caching for repeated queries</li>
+                <li>Use faster model for simple queries (fallback to expensive model for complex)</li>
+                <li>Implement timeout with graceful degradation (return cached result if LLM times out)</li>
+            </ul>
+        </div>
+
+        <div class="card alert-warning">
+            <h4>4. Knowledge Graph Traversal (Medium)</h4>
+            <p><strong>Bottleneck:</strong> knowledge_graph_edges table can grow unbounded; queries slow with many edges</p>
+            <p><strong>Impact:</strong> Context retrieval takes 100ms+ for large workspaces</p>
+            <p><strong>Solution:</strong></p>
+            <ul>
+                <li>Implement edge pruning (keep top N edges by weight)</li>
+                <li>Add index on edge sources/targets</li>
+                <li>Limit traversal depth (2-3 hops max)</li>
+                <li>Cache related concepts for popular queries</li>
+            </ul>
+        </div>
+
+        <div class="card alert-warning">
+            <h4>5. Frontend Rendering Performance (Medium)</h4>
+            <p><strong>Bottleneck:</strong> ChartGallery with 50+ charts can lag when rendering/updating</p>
+            <p><strong>Impact:</strong> Scroll jank, slow interactions</p>
+            <p><strong>Solution:</strong></p>
+            <ul>
+                <li>Virtualize chart list (render only visible charts)</li>
+                <li>Use React.memo for chart components</li>
+                <li>Lazy load chart images (use IntersectionObserver)</li>
+                <li>Move animations to CSS (not JS animation frames)</li>
+            </ul>
+        </div>
+
+        <div class="card alert-warning">
+            <h4>6. SQL Query Complexity (Medium)</h4>
+            <p><strong>Bottleneck:</strong> LLM sometimes generates inefficient SQL (nested queries, full table scans)</p>
+            <p><strong>Impact:</strong> Query takes 5+ seconds instead of <100ms</p>
+            <p><strong>Solution:</strong></p>
+            <ul>
+                <li>Add SQL optimization pass (rewrite to use indexes)</li>
+                <li>Profile slow queries; provide feedback to LLM prompt</li>
+                <li>Implement query timeout (5s max); return approximation if exceeded</li>
+                <li>Suggest index creation for frequent column filters</li>
+            </ul>
+        </div>
+
+        <h3>Performance Metrics to Track</h3>
+        <div class="card">
+            <table>
+                <tr>
+                    <th>Metric</th>
+                    <th>Target</th>
+                    <th>Current (Est.)</th>
+                </tr>
+                <tr>
+                    <td>First chat response time</td>
+                    <td>&lt; 3s</td>
+                    <td>5-10s</td>
+                </tr>
+                <tr>
+                    <td>Chart generation time</td>
+                    <td>&lt; 5s</td>
+                    <td>3-8s</td>
+                </tr>
+                <tr>
+                    <td>Ingestion time (10K tests)</td>
+                    <td>&lt; 2 min</td>
+                    <td>3-5 min</td>
+                </tr>
+                <tr>
+                    <td>API p99 latency</td>
+                    <td>&lt; 500ms</td>
+                    <td>2000ms (LLM dependent)</td>
+                </tr>
+                <tr>
+                    <td>Frontend Largest Contentful Paint</td>
+                    <td>&lt; 2.5s</td>
+                    <td>2-4s</td>
+                </tr>
+                <tr>
+                    <td>TTI (Time to Interactive)</td>
+                    <td>&lt; 3.5s</td>
+                    <td>4-6s</td>
+                </tr>
+            </table>
+        </div>
+
+        <h3>Recommended Performance Testing</h3>
+        <div class="card">
+            <ul>
+                <li><strong>Load testing:</strong> k6 or locust with 100 concurrent users</li>
+                <li><strong>Database profiling:</strong> DuckDB EXPLAIN ANALYZE for slow queries</li>
+                <li><strong>Frontend performance:</strong> Lighthouse CI in CI/CD pipeline</li>
+                <li><strong>LLM cost tracking:</strong> Set up billing alerts in provider dashboards</li>
+                <li><strong>Ingestion benchmarks:</strong> Time per 1K records across different source types</li>
+            </ul>
+        </div>
+    </section>
+
+    <section id="technical-debt">
+        <h2>Technical Debt & Refactoring Roadmap</h2>
+
+        <h3>Immediate (Current Sprint)</h3>
+        <div class="card">
+            <h4>Fix Security Issues</h4>
+            <ul>
+                <li>Remove hardcoded credentials from config.json</li>
+                <li>Add config.json to .gitignore (if not already)</li>
+                <li>Rotate API keys immediately</li>
+                <li>Add .env to .gitignore (create .env.example for reference)</li>
+            </ul>
+        </div>
+
+        <div class="card">
+            <h4>Improve Error Handling</h4>
+            <ul>
+                <li>Standardize error response format across all endpoints</li>
+                <li>Add detailed error logging with request IDs</li>
+                <li>Implement exception handler middleware in FastAPI</li>
+            </ul>
+        </div>
+
+        <h3>Short-Term (1-2 Sprints)</h3>
+        <div class="card">
+            <h4>Code Quality Improvements</h4>
+            <ul>
+                <li>Split monolithic <code>handlers.py</code> into chat/chart modules</li>
+                <li>Add type hints throughout backend (use mypy)</li>
+                <li>Fix frontend TypeScript warnings (run lint pre-commit)</li>
+                <li>Add docstrings to all public functions</li>
+            </ul>
+        </div>
+
+        <div class="card">
+            <h4>Testing Infrastructure</h4>
+            <ul>
+                <li>Add unit tests for data_loader validation</li>
+                <li>Add integration tests for chat/chart flows</li>
+                <li>Add SQL injection tests for query validation</li>
+                <li>Set up GitHub Actions CI/CD pipeline</li>
+            </ul>
+        </div>
+
+        <div class="card">
+            <h4>Observability</h4>
+            <ul>
+                <li>Add structured logging (JSON format with request IDs)</li>
+                <li>Implement request/response middleware for timing</li>
+                <li>Expose Prometheus metrics (LLM usage, API latency, error rates)</li>
+                <li>Set up basic monitoring dashboard</li>
+            </ul>
+        </div>
+
+        <h3>Mid-Term (3-6 Sprints)</h3>
+        <div class="card">
+            <h4>Architecture Improvements</h4>
+            <ul>
+                <li>Refactor global state to dependency injection pattern</li>
+                <li>Implement workspace isolation enforcement (extract from JWT)</li>
+                <li>Add rate limiting middleware</li>
+                <li>Implement background job queue for async ingestion</li>
+            </ul>
+        </div>
+
+        <div class="card">
+            <h4>Feature & Performance</h4>
+            <ul>
+                <li>Pre-compute aggregates during ingestion (not lazy)</li>
+                <li>Implement response streaming for LLM outputs</li>
+                <li>Add query caching layer (Redis or memcached)</li>
+                <li>Implement frontend chart virtualization</li>
+            </ul>
+        </div>
+
+        <div class="card">
+            <h4>Documentation & DevEx</h4>
+            <ul>
+                <li>Add API documentation (Swagger/OpenAPI)</li>
+                <li>Create developer setup guide (Docker compose)</li>
+                <li>Document data model (flattened_tests, module_metrics)</li>
+                <li>Add architecture decision records (ADRs)</li>
+            </ul>
+        </div>
+
+        <h3>Long-Term (6+ Months)</h3>
+        <div class="card">
+            <h4>Scalability & Enterprise</h4>
+            <ul>
+                <li>Migrate to PostgreSQL for horizontal scaling</li>
+                <li>Implement graph database for failure analysis (Neo4j)</li>
+                <li>Add multi-region support</li>
+                <li>Implement Kubernetes deployment manifests</li>
+            </ul>
+        </div>
+
+        <div class="card">
+            <h4>AI Enhancements</h4>
+            <ul>
+                <li>Implement hybrid RAG (semantic + keyword + graph search)</li>
+                <li>Add failure root cause analysis</li>
+                <li>Implement predictive test prioritization</li>
+                <li>Fine-tune LLM on QA-specific data</li>
+            </ul>
+        </div>
+
+        <div class="card">
+            <h4>Product Maturity</h4>
+            <ul>
+                <li>Add user workspace management UI</li>
+                <li>Implement audit log for compliance</li>
+                <li>Add SAML/OIDC SSO support</li>
+                <li>Implement multi-level approval workflows</li>
+            </ul>
+        </div>
+
+        <h3>Debt Priority Matrix</h3>
+        <table>
+            <tr>
+                <th>Issue</th>
+                <th>Impact</th>
+                <th>Effort</th>
+                <th>Priority</th>
+            </tr>
+            <tr>
+                <td>Hardcoded credentials in config</td>
+                <td>Critical</td>
+                <td>Low</td>
+                <td>🔴 Do Immediately</td>
+            </tr>
+            <tr>
+                <td>Global state refactoring</td>
+                <td>Medium</td>
+                <td>High</td>
+                <td>🟡 Schedule Later</td>
+            </tr>
+            <tr>
+                <td>Monolithic handlers.py splitting</td>
+                <td>Medium</td>
+                <td>Medium</td>
+                <td>🟡 Next Sprint</td>
+            </tr>
+            <tr>
+                <td>Rate limiting</td>
+                <td>High</td>
+                <td>Low</td>
+                <td>🔴 Do Soon</td>
+            </tr>
+            <tr>
+                <td>Ingestion performance (async)</td>
+                <td>Medium</td>
+                <td>High</td>
+                <td>🟡 Plan Ahead</td>
+            </tr>
+            <tr>
+                <td>Graph database integration</td>
+                <td>Medium</td>
+                <td>Very High</td>
+                <td>⚪ Future</td>
+            </tr>
+        </table>
+    </section>
+
+    <section id="summary">
+        <h2>Summary & Recommendations</h2>
+
+        <p>
+            <strong>Sentinel QA Analytics Dashboard</strong> is a well-architected, full-stack application with a solid foundation. The system demonstrates good separation of concerns (frontend, backend, ingestion), thoughtful use of multiple databases for different purposes, and production-capable authentication patterns.
+        </p>
+
+        <h3>Key Strengths</h3>
+        <ul>
+            <li>Clean API design with JWT authentication and role-based access control</li>
+            <li>Multi-database strategy optimized for different workloads (auth, vectors, analytics)</li>
+            <li>LLM abstraction layer enables provider flexibility without vendor lock-in</li>
+            <li>Self-learning capability through chat history and knowledge graph storage</li>
+            <li>Comprehensive data ingestion pipeline supporting multiple source types</li>
+            <li>Responsive frontend with dark/light theme and caching optimizations</li>
+        </ul>
+
+        <h3>Critical Action Items (Address Before Production)</h3>
+        <ol>
+            <li>🔴 <strong>Remove hardcoded credentials</strong> from config.json and .env; use environment variables</li>
+            <li>🔴 <strong>Implement rate limiting</strong> to prevent LLM API abuse and DoS attacks</li>
+            <li>🔴 <strong>Add HTTPS enforcement</strong> and secure cookie/token handling</li>
+            <li>🔴 <strong>Improve SQL validation</strong> using SQL parser instead of regex patterns</li>
+        </ol>
+
+        <h3>High-Priority Improvements (Next 1-2 Sprints)</h3>
+        <ul>
+            <li>Split monolithic handlers.py for maintainability</li>
+            <li>Add comprehensive error handling and logging</li>
+            <li>Implement TypeScript strict mode in frontend</li>
+            <li>Add integration tests for security-critical paths</li>
+            <li>Optimize initial ingestion load time (pre-compute aggregates)</li>
+        </ul>
+
+        <h3>Long-Term Vision</h3>
+        <p>
+            With the security and performance foundations in place, the next evolution should focus on:
+            <strong>intelligent failure analysis</strong> (using knowledge graphs and root cause detection),
+            <strong>predictive insights</strong> (anomaly detection, test prioritization),
+            and <strong>autonomous remediation</strong> (suggesting fixes for flaky tests).
+        </p>
+
+        <p style="margin-top: 2rem; padding-top: 2rem; border-top: 1px solid var(--border-color); color: var(--text-muted);">
+            <strong>Report Generated:</strong> 2026-07-16 | <strong>Repository:</strong> sentinel-qa-analytics-dashboard
+        </p>
+    </section>
+
+</main>
+
+</body>
+</html>

@@ -4,14 +4,14 @@ import json
 import re
 import tempfile
 import time
-from fastapi import FastAPI, HTTPException, Header, Depends, Query, Request
+from fastapi import FastAPI, HTTPException, Header, Depends, Query, Request, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
 from pydantic import BaseModel
 import uvicorn
 from typing import Optional
 from datetime import datetime, timezone
-from . import config, state, data_loader, handlers, memory, llm_client
+from . import config, state, data_loader, handlers, memory, llm_client, ingestion_jobs
 from . import token_usage_store
 from .prompts import SUGGESTION_PROMPT
 from .auth import authenticate_user, create_access_token, get_current_user, initialize_auth_store
@@ -80,7 +80,72 @@ def _infer_source_type(source_path: str, explicit: Optional[str]) -> str:
     return "file"
 
 
-def _fallback_suggestions(role_id: Optional[str]) -> dict:
+_QA_SCHEMA_TABLES = {"flattened_tests", "module_metrics", "project_metrics"}
+_NUMERIC_TYPE_HINTS = ("INT", "DOUBLE", "FLOAT", "DECIMAL", "REAL", "NUMERIC")
+
+
+def _schema_driven_fallback_suggestions(schema_profile: Optional[dict]) -> Optional[dict]:
+    """Generate simple suggestions directly from the real ingested schema,
+    with no LLM call — the no-LLM safety net for non-QA datasets (CSV/PDF/
+    JSON of any domain) so suggestions reflect the ACTUAL ingested data
+    instead of hardcoded QA/test phrasing that wouldn't apply. Returns None
+    if no usable schema profile is available."""
+    tables = schema_profile.get("tables", {}) if isinstance(schema_profile, dict) else {}
+    if not tables:
+        return None
+
+    chat: list = []
+    chart: list = []
+    for tbl, info in tables.items():
+        if not isinstance(info, dict):
+            continue
+        cols = [c.get("name") for c in info.get("columns", []) if isinstance(c, dict) and c.get("name")]
+        if not cols:
+            continue
+        numeric_cols = [
+            c.get("name") for c in info.get("columns", [])
+            if isinstance(c, dict) and any(h in str(c.get("type", "")).upper() for h in _NUMERIC_TYPE_HINTS)
+        ]
+        categorical_cols = [c for c in cols if c not in numeric_cols]
+
+        chat.append(f"How many records are in {tbl}?")
+        chat.append(f"Show the first 20 rows of {tbl}.")
+        chart.append(f"Bar chart of record counts in {tbl}.")
+        if categorical_cols:
+            chat.append(f"Show a breakdown of {tbl} by {categorical_cols[0]}.")
+            chart.append(f"Bar chart of {tbl} record counts by {categorical_cols[0]}.")
+            chart.append(f"Pie chart of {tbl} distribution by {categorical_cols[0]}.")
+        if len(categorical_cols) > 1:
+            chat.append(f"Compare {tbl} across {categorical_cols[0]} and {categorical_cols[1]}.")
+        if numeric_cols:
+            chat.append(f"What is the average {numeric_cols[0]} in {tbl}?")
+            chart.append(f"Line chart of {numeric_cols[0]} across {tbl}.")
+        if categorical_cols and numeric_cols:
+            chart.append(f"Grouped bar chart of {numeric_cols[0]} by {categorical_cols[0]} in {tbl}.")
+        if len(numeric_cols) > 1:
+            chat.append(f"Compare {numeric_cols[0]} and {numeric_cols[1]} in {tbl}.")
+            chart.append(f"Scatter chart of {numeric_cols[0]} vs {numeric_cols[1]} in {tbl}.")
+
+    chat = list(dict.fromkeys(chat))
+    chart = list(dict.fromkeys(chart))
+    if len(chat) < 4 or len(chart) < 4:
+        return None
+
+    while len(chat) < 8:
+        chat.append(chat[len(chat) % len(chat)])
+    while len(chart) < 8:
+        chart.append(chart[len(chart) % len(chart)])
+    return {"chat": chat[:8], "chart": chart[:8]}
+
+
+def _fallback_suggestions(role_id: Optional[str], schema_profile: Optional[dict] = None) -> dict:
+    tables = schema_profile.get("tables", {}) if isinstance(schema_profile, dict) else {}
+    looks_like_qa_schema = bool(_QA_SCHEMA_TABLES & set(tables.keys()))
+    if not looks_like_qa_schema:
+        dynamic = _schema_driven_fallback_suggestions(schema_profile)
+        if dynamic:
+            return dynamic
+
     role_key = str(role_id or "").strip().lower().replace("_", "-")
     if role_key in {"cto", "chief-technology-officer"}:
         return {
@@ -129,8 +194,8 @@ def _fallback_suggestions(role_id: Optional[str]) -> dict:
     }
 
 
-def _normalize_suggestions(payload: dict, role_id: Optional[str]) -> dict:
-    fallback = _fallback_suggestions(role_id)
+def _normalize_suggestions(payload: dict, role_id: Optional[str], schema_profile: Optional[dict] = None) -> dict:
+    fallback = _fallback_suggestions(role_id, schema_profile)
     if not isinstance(payload, dict):
         return fallback
 
@@ -282,7 +347,9 @@ def _extract_partial_items(raw_section: str) -> list[str]:
     return items
 
 
-def _salvage_suggestions_payload(raw_text: str, role_id: Optional[str]) -> Optional[dict]:
+def _salvage_suggestions_payload(
+    raw_text: str, role_id: Optional[str], schema_profile: Optional[dict] = None
+) -> Optional[dict]:
     text = _strip_code_fences(raw_text)
     if not text:
         return None
@@ -302,7 +369,7 @@ def _salvage_suggestions_payload(raw_text: str, role_id: Optional[str]) -> Optio
     if not chat and not chart:
         return None
 
-    fallback = _fallback_suggestions(role_id)
+    fallback = _fallback_suggestions(role_id, schema_profile)
     chat = _repair_truncated_first_item(chat, fallback["chat"])
     chart = _repair_truncated_first_item(chart, fallback["chart"])
     while len(chat) < 8:
@@ -312,7 +379,9 @@ def _salvage_suggestions_payload(raw_text: str, role_id: Optional[str]) -> Optio
     return {"chat": chat[:8], "chart": chart[:8]}
 
 
-def _parse_suggestions_payload(raw_text: str, role_id: Optional[str]) -> Optional[dict]:
+def _parse_suggestions_payload(
+    raw_text: str, role_id: Optional[str], schema_profile: Optional[dict] = None
+) -> Optional[dict]:
     cleaned = _strip_code_fences(raw_text)
     if not cleaned:
         return None
@@ -323,9 +392,9 @@ def _parse_suggestions_payload(raw_text: str, role_id: Optional[str]) -> Optiona
         except Exception:
             continue
         if isinstance(payload, dict):
-            return _normalize_suggestions(payload, role_id)
+            return _normalize_suggestions(payload, role_id, schema_profile)
 
-    return _salvage_suggestions_payload(cleaned, role_id)
+    return _salvage_suggestions_payload(cleaned, role_id, schema_profile)
 
 
 def _build_retry_suggestion_prompt(
@@ -504,7 +573,11 @@ async def login(username: str, password: str, workspace_id: Optional[str] = None
     }
 
 @app.post("/ingest/config2")
-async def ingest_from_config2(request: IngestRequest, current_user: dict = Depends(get_current_user)):
+async def ingest_from_config2(
+    request: IngestRequest,
+    background_tasks: BackgroundTasks,
+    current_user: dict = Depends(get_current_user),
+):
     source_path = str(request.source_path or "").strip()
     if not source_path:
         raise HTTPException(status_code=400, detail="source_path is required")
@@ -525,26 +598,10 @@ async def ingest_from_config2(request: IngestRequest, current_user: dict = Depen
         "output": {"base_path": str(config.DATA_BASE_PATH)},
     }
 
-    try:
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".json", encoding="utf-8", delete=False) as tf:
-            json.dump(dynamic_cfg, tf, indent=2, ensure_ascii=False)
-            temp_cfg_path = tf.name
-
-        # Lazy import to keep API startup fast when ingestion isn't used.
-        from universal_ingester.ingester import UniversalIngester
-
-        ingester = UniversalIngester(data_base_path=str(config.DATA_BASE_PATH))
-        ingester.run_ingestion_from_config(str(temp_cfg_path), build_id=build_id)
-    except Exception as e:
-        logger.exception(f"Ingestion failed: {e}")
-        raise HTTPException(status_code=500, detail=f"Ingestion failed: {str(e)}")
-    finally:
-        try:
-            if "temp_cfg_path" in locals():
-                import os
-                os.remove(temp_cfg_path)
-        except Exception:
-            pass
+    # Ingestion runs in the background (thread-offloaded) so the request
+    # returns immediately and doesn't block the server for other users
+    # while a large import is in progress. Poll GET /ingest/status/{build_id}.
+    background_tasks.add_task(ingestion_jobs.start_ingestion, build_id, dynamic_cfg, source_path)
 
     return {
         "success": True,
@@ -552,7 +609,16 @@ async def ingest_from_config2(request: IngestRequest, current_user: dict = Depen
         "source_path": source_path,
         "source_type": source_type,
         "workspace_id": workspace_id,
+        "status": "pending",
     }
+
+
+@app.get("/ingest/status/{build_id}")
+async def ingest_status(build_id: str, current_user: dict = Depends(get_current_user)):
+    status = ingestion_jobs.get_status(build_id)
+    if not status:
+        raise HTTPException(status_code=404, detail=f"No ingestion job found for '{build_id}'")
+    return status
 
 # -------------------- PROTECTED ENDPOINTS (all require valid token) --------------------
 @app.post("/chat")
@@ -834,6 +900,10 @@ async def list_ingestions(current_user: dict = Depends(get_current_user)):
     ingestions = []
     for path in config.DATA_BASE_PATH.iterdir():
         if path.is_dir() and (path / "lancedb").exists():
+            if ingestion_jobs.is_failed(path.name):
+                # Ingestion started but failed partway — don't present a
+                # half-written build as a usable one.
+                continue
             summary_json = path / "summary.json"
             summary_text = ""
             if summary_json.exists():
@@ -901,14 +971,14 @@ async def role_suggestions(
     )
 
     workspace_id = _normalize_workspace(x_workspace_id, current_user)
-    raw_primary = llm.generate(
+    raw_primary = await llm.agenerate(
         prompt,
         temperature=0.2,
         max_tokens=1000,
         user_id=current_user.get("username"),
         workspace_id=workspace_id,
     )
-    parsed_primary = _parse_suggestions_payload(raw_primary, role_id)
+    parsed_primary = _parse_suggestions_payload(raw_primary, role_id, schema_profile)
     if parsed_primary:
         return {"role": role_id, "project": project_id, "source": "ai", **parsed_primary}
 
@@ -919,25 +989,26 @@ async def role_suggestions(
         schema_profile=schema_profile,
         quality=quality,
     )
-    raw_retry = llm.generate(
+    raw_retry = await llm.agenerate(
         retry_prompt,
         temperature=0.1,
         max_tokens=900,
         user_id=current_user.get("username"),
         workspace_id=workspace_id,
     )
-    parsed_retry = _parse_suggestions_payload(raw_retry, role_id)
+    parsed_retry = _parse_suggestions_payload(raw_retry, role_id, schema_profile)
     if parsed_retry:
         return {"role": role_id, "project": project_id, "source": "ai-retry", **parsed_retry}
 
     parsed_partial = _salvage_suggestions_payload(
         f"{raw_primary or ''}\n{raw_retry or ''}",
         role_id,
+        schema_profile,
     )
     if parsed_partial:
         return {"role": role_id, "project": project_id, "source": "ai-partial", **parsed_partial}
 
-    data = _normalize_suggestions({}, role_id)
+    data = _normalize_suggestions({}, role_id, schema_profile)
     return {"role": role_id, "project": project_id, "source": "fallback", **data}
 
 
@@ -1004,7 +1075,7 @@ async def list_roles(current_user: dict = Depends(get_current_user)):
 @app.get("/test/llm")
 async def test_llm(current_user: dict = Depends(get_current_user)):
     llm = llm_client.LLMClient()
-    resp = llm.generate(
+    resp = await llm.agenerate(
         "Say hello in one word",
         user_id=current_user.get("username"),
         workspace_id=_normalize_workspace(None, current_user),

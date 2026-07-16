@@ -1,5 +1,0 @@
-$8b1c8f72-d938-486d-836d-bc2d14d26a86²èid ÿÿÿÿÿÿÿÿÿ*string08%
-session_id ÿÿÿÿÿÿÿÿÿ*string08type ÿÿÿÿÿÿÿÿÿ*string08!prompt ÿÿÿÿÿÿÿÿÿ*string08#response ÿÿÿÿÿÿÿÿÿ*string08!config ÿÿÿÿÿÿÿÿÿ*string08%
-created_at ÿÿÿÿÿÿÿÿÿ*string08#metadata ÿÿÿÿÿÿÿÿÿ*string08"!
-lance.auto_cleanup.interval20"'
-lance.auto_cleanup.older_than14days

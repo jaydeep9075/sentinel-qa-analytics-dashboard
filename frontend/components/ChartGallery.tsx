@@ -638,7 +638,7 @@ export default function ChartGallery() {
                 key={chart.id}
                 chart={chart}
                 onDelete={handleDelete}
-                ingestionId={selectedIngestion}
+                ingestionId={selectedIngestion ?? undefined}
               />
             ))}
           </div>

@@ -47,6 +47,24 @@ class ProjectManager:
         }
         return True
 
+    def _load_summary_fallback(self, project_path: Path) -> Dict:
+        """Optional per-project override for when the LLM summary call fails,
+        so the fallback isn't hardcoded to one customer's product taxonomy.
+        Add projects/<id>/summary_fallback.json to customize; otherwise an
+        empty, schema-agnostic default is used."""
+        fallback_file = project_path / "summary_fallback.json"
+        if fallback_file.exists():
+            try:
+                return json.loads(fallback_file.read_text(encoding="utf-8"))
+            except Exception:
+                logger.warning(f"Invalid summary_fallback.json at {fallback_file}, using empty default")
+        return {
+            "platforms": [],
+            "critical_flows": [],
+            "risk_areas": [],
+            "features_per_platform": {},
+        }
+
     def _generate_summary(self, content: str, project_id: str) -> Dict:
         """Use LLM once per project to create a compact summary."""
         llm = LLMClient()
@@ -65,14 +83,9 @@ Return only JSON.
         try:
             cleaned = re.sub(r"```json\n?|```", "", response).strip()
             return json.loads(cleaned)
-        except:
+        except Exception:
             logger.warning(f"LLM summary failed for {project_id}, using fallback")
-            return {
-                "platforms": ["FSA Store", "HSA Store", "WellDeserved Health"],
-                "critical_flows": ["checkout", "eligibility validation", "payment", "rewards"],
-                "risk_areas": ["payment failures", "telehealth integration", "LMN workflow"],
-                "features_per_platform": {}
-            }
+            return self._load_summary_fallback(self.projects_root / project_id)
 
     def _split_into_sections(self, content: str) -> List[Dict[str, str]]:
         sections = []
@@ -110,21 +123,13 @@ Return only JSON.
         return db
 
     def _load_criticality_map(self, project_path: Path, content: str) -> Dict:
+        """Per-project keyword -> {priority, severity} map, used to flag
+        high-risk areas. Add projects/<id>/criticality.json to customize;
+        otherwise empty (no product-specific assumptions baked into code)."""
         criticality_file = project_path / "criticality.json"
         if criticality_file.exists():
             return json.loads(criticality_file.read_text())
-        # Default map – can be extended
-        return {
-            "checkout": {"priority": "P0", "severity": "S1"},
-            "payment": {"priority": "P0", "severity": "S1"},
-            "eligibility": {"priority": "P0", "severity": "S1"},
-            "lmn": {"priority": "P0", "severity": "S1"},
-            "login": {"priority": "P1", "severity": "S2"},
-            "rewards": {"priority": "P1", "severity": "S2"},
-            "telehealth": {"priority": "P1", "severity": "S2"},
-            "dashboard": {"priority": "P2", "severity": "S3"},
-            "search": {"priority": "P2", "severity": "S3"},
-        }
+        return {}
 
     def get_project_summary(self, project_id: str) -> Optional[Dict]:
         if project_id not in self._projects_cache:

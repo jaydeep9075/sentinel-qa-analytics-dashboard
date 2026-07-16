@@ -50,20 +50,18 @@ export default function AIChatInput({ onChartGenerated }: AIChatInputProps) {
     window.dispatchEvent(new CustomEvent("chart-generating-start", { detail: activePrompt }));
 
     try {
-      const result = await generateChart(
+      // generateChart() throws on failure (see lib/api.ts) and only ever
+      // resolves with { chart }, so reaching here means it succeeded.
+      await generateChart(
         activePrompt,
         selectedIngestion,
         selectedRole,
         selectedProject,
       );
-      if (result.success) {
-        setPrompt("");
-        setStatus("Chart generated successfully!");
-        onChartGenerated();
-        setTimeout(() => setStatus(null), 3000);
-      } else {
-        throw new Error(result.error || "Generation failed");
-      }
+      setPrompt("");
+      setStatus("Chart generated successfully!");
+      onChartGenerated();
+      setTimeout(() => setStatus(null), 3000);
     } catch (err: unknown) {
       console.error("Chart generation error:", err);
       const message = err instanceof Error ? err.message : "Unknown error";

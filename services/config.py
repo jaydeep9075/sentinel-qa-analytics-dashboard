@@ -58,6 +58,12 @@ DEFAULT_WORKSPACE_ID = os.getenv("DEFAULT_WORKSPACE_ID", "default").strip().lowe
 PROJECTS_ROOT = os.getenv("PROJECTS_ROOT", str(BASE_DIR / "projects"))
 ROLES_ROOT = os.getenv("ROLES_ROOT", str(BASE_DIR / "roles"))
 
+# Ingestion guards (background ingestion runs off the request thread, but
+# still needs sane bounds so one huge/malformed source can't hang forever)
+INGEST_MAX_FILE_SIZE_BYTES = int(os.getenv("INGEST_MAX_FILE_SIZE_BYTES", str(200 * 1024 * 1024)))
+INGEST_MAX_ROWS = int(os.getenv("INGEST_MAX_ROWS", "500000"))
+INGEST_TIMEOUT_SECONDS = float(os.getenv("INGEST_TIMEOUT_SECONDS", "600"))
+
 
 def validate_runtime_config() -> None:
     provider = (LLM_PROVIDER or "").strip().lower()
