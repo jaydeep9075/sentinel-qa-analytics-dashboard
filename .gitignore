@@ -24,3 +24,5 @@ users.db-journal
 
 # Runtime-generated ingestion output and token usage data — not source, regenerated per environment
 data/
+vm-data
+vm-data.zip

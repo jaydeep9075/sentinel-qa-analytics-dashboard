@@ -3,6 +3,8 @@ import json
 import logging
 import os
 import uuid
+import zipfile
+import tempfile
 from collections import defaultdict
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
@@ -34,29 +36,85 @@ class AllureConnector(BaseConnector):
         # Clean up path: remove extra quotes, normalize slashes, handle spaces
         cleaned_path = allure_results_path.strip('"').strip("'")
         cleaned_path = cleaned_path.replace('\\\\', '\\')  # Fix double backslashes
-        self.root_path = os.path.abspath(cleaned_path)
+        self.input_path = os.path.abspath(cleaned_path)
 
-        # Try to find the actual path (handles nested folders, spaces, special chars)
-        if not os.path.isdir(self.root_path):
-            # Try parent directories
-            for _ in range(3):
-                parent = os.path.dirname(self.root_path)
-                if parent == self.root_path:  # Reached root
-                    break
-                if os.path.isdir(parent):
-                    self.root_path = parent
-                    logger.warning(f"Path didn't exist, using parent: {self.root_path}")
-                    break
+        # Check if it's a zip file
+        if self.input_path.endswith('.zip') and os.path.isfile(self.input_path):
+            logger.info(f"Detected zip file: {self.input_path}")
+            # Extract zip to temp directory
+            self.root_path = self._extract_zip(self.input_path)
+            logger.info(f"Extracted to: {self.root_path}")
+        else:
+            # Regular directory path
+            self.root_path = self.input_path
 
-            # Final check
+            # Try to find the actual path (handles nested folders, spaces, special chars)
             if not os.path.isdir(self.root_path):
-                raise ValueError(
-                    f"Path does not exist: {self.root_path}\n"
-                    f"Original: {allure_results_path}\n"
-                    f"Please verify the path exists and is accessible."
-                )
+                # Try parent directories
+                for _ in range(3):
+                    parent = os.path.dirname(self.root_path)
+                    if parent == self.root_path:  # Reached root
+                        break
+                    if os.path.isdir(parent):
+                        self.root_path = parent
+                        logger.warning(f"Path didn't exist, using parent: {self.root_path}")
+                        break
+
+                # Final check
+                if not os.path.isdir(self.root_path):
+                    raise ValueError(
+                        f"Path does not exist: {self.root_path}\n"
+                        f"Original: {allure_results_path}\n"
+                        f"Please verify the path is a valid zip file or directory."
+                    )
 
         self.processed_files = set()
+
+    def _extract_zip(self, zip_path: str) -> str:
+        """Extract zip file to temp directory."""
+        try:
+            # Create temp directory for extraction
+            temp_dir = tempfile.mkdtemp(prefix="allure_")
+
+            # Extract zip
+            with zipfile.ZipFile(zip_path, 'r') as zip_ref:
+                zip_ref.extractall(temp_dir)
+
+            logger.info(f"Extracted {len(zip_ref.namelist())} files to {temp_dir}")
+
+            # Find the actual results directory
+            results_dir = self._find_results_directory(temp_dir)
+            if results_dir:
+                return results_dir
+
+            # If no specific results dir found, return temp dir
+            return temp_dir
+
+        except zipfile.BadZipFile:
+            raise ValueError(f"Invalid zip file: {zip_path}")
+        except Exception as e:
+            raise ValueError(f"Failed to extract zip: {e}")
+
+    def _find_results_directory(self, base_path: str) -> Optional[str]:
+        """Find the actual Allure results directory in extracted files."""
+        # Look for directories containing *-result.json files
+        for root, dirs, files in os.walk(base_path):
+            for f in files:
+                if f.endswith("-result.json"):
+                    # Found Allure results, return this directory
+                    return root
+
+        # Look for 'results' or 'allure-results' directory
+        for root, dirs, files in os.walk(base_path):
+            for d in dirs:
+                if d in ('results', 'allure-results', 'allure'):
+                    results_path = os.path.join(root, d)
+                    # Check if it contains Allure files
+                    for sub_root, sub_dirs, sub_files in os.walk(results_path):
+                        if any(f.endswith("-result.json") for f in sub_files):
+                            return results_path
+
+        return None
 
     # ---------- improved file discovery ----------
     def _find_result_files(self):
