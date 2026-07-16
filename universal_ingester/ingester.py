@@ -57,6 +57,16 @@ class UniversalIngester:
         source_type = source_config['type']
         # Support both nested 'params' and flat config
         params = source_config.get('params', source_config)
+        path = params.get('path') or params.get('directory', '')
+
+        # Auto-detect Allure data
+        if source_type == 'file' and path:
+            path_str = str(path).lower()
+            if (path_str.endswith('.zip') or
+                'allure' in path_str or
+                any(f in path_str for f in ['result.json', 'container.json'])):
+                logger.info(f"Auto-detected Allure data from path: {path}")
+                source_type = 'allure'
 
         if source_type == 'file':
             connector = FileConnector(params['path'])
@@ -154,6 +164,37 @@ class UniversalIngester:
 
         return out
 
+    def _sanitize_column_names(self, df: pd.DataFrame) -> pd.DataFrame:
+        """Sanitize column names for LanceDB compatibility.
+        Replace dots and special chars with underscores."""
+        if df is None or df.empty:
+            return df
+
+        # Replace dots, hyphens, spaces with underscores
+        # LanceDB doesn't allow dots in top-level field names
+        rename_map = {}
+        for col in df.columns:
+            new_col = str(col)
+            # Replace problematic characters
+            new_col = new_col.replace('.', '_')
+            new_col = new_col.replace('-', '_')
+            new_col = new_col.replace(' ', '_')
+            new_col = new_col.replace('(', '_')
+            new_col = new_col.replace(')', '_')
+            # Remove consecutive underscores
+            while '__' in new_col:
+                new_col = new_col.replace('__', '_')
+            new_col = new_col.strip('_')
+
+            if new_col != col:
+                rename_map[col] = new_col
+                logger.debug(f"Renamed column: {col} → {new_col}")
+
+        if rename_map:
+            df = df.rename(columns=rename_map)
+
+        return df
+
     def _normalize_structured_df(self, df: pd.DataFrame) -> pd.DataFrame:
         if df is None:
             return pd.DataFrame()
@@ -163,6 +204,9 @@ class UniversalIngester:
 
         # Flatten nested JSON-like columns to improve queryability for arbitrary schemas.
         out = self._flatten_json_column(out)
+
+        # Sanitize column names for LanceDB (remove dots and special chars)
+        out = self._sanitize_column_names(out)
 
         # Replace NaN/Inf with None-safe values for storage and downstream parsing.
         out = out.replace({np.nan: None})

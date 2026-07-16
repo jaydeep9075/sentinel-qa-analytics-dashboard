@@ -32,6 +32,25 @@ _PERF_PATH_PREFIXES = (
     "/usage/tokens",
 )
 
+def _get_test_results_table() -> str:
+    """Get the actual table name for test results.
+    Supports both old (flattened_tests) and new (structured_test_results) names."""
+    try:
+        tables = state.duck_conn.execute("SELECT table_name FROM information_schema.tables WHERE table_schema='memory'").df()
+        table_names = tables['table_name'].tolist() if not tables.empty else []
+
+        # Try new name first, fallback to old name
+        if "structured_test_results" in table_names:
+            return "structured_test_results"
+        elif "flattened_tests" in table_names:
+            return "flattened_tests"
+        else:
+            # Neither exists - return default (will fail with clear error)
+            return "flattened_tests"
+    except Exception as e:
+        logger.warning(f"Could not query table names: {e}, using default")
+        return "flattened_tests"
+
 class ChatRequest(BaseModel):
     message: str
     session_id: Optional[str] = None
@@ -449,13 +468,14 @@ def _get_status_payload(normalized_ingestion_id: str) -> dict:
         payload = {"has_data": False, "total_rows": 0, "status_summary": {"passed": 0, "failed": 0}}
         return _cache_set(_status_cache, normalized_ingestion_id, payload)
 
+    test_table = _get_test_results_table()
     row = state.duck_conn.execute(
-        """
+        f"""
         SELECT
           COUNT(*) AS total_rows,
           SUM(CASE WHEN status='passed' THEN 1 ELSE 0 END) AS passed,
           SUM(CASE WHEN status='failed' THEN 1 ELSE 0 END) AS failed
-        FROM flattened_tests
+        FROM {test_table}
         """
     ).fetchone()
     total_rows = int(row[0] or 0)
@@ -776,10 +796,12 @@ async def debug_data(
     if state.duck_conn:
         tables = state.duck_conn.execute("SHOW TABLES").fetchall()
         data["tables"] = [t[0] for t in tables]
-        if "flattened_tests" in data["tables"]:
-            sample = state.duck_conn.execute("SELECT * FROM flattened_tests LIMIT 5").df()
-            data["flattened_tests_sample"] = sample.to_dict(orient="records")
-            data["flattened_tests_count"] = state.duck_conn.execute("SELECT COUNT(*) FROM flattened_tests").fetchone()[0]
+        test_table = _get_test_results_table()
+        # Check if test table exists
+        if test_table in data["tables"]:
+            sample = state.duck_conn.execute(f"SELECT * FROM {test_table} LIMIT 5").df()
+            data["test_results_sample"] = sample.to_dict(orient="records")
+            data["test_results_count"] = state.duck_conn.execute(f"SELECT COUNT(*) FROM {test_table}").fetchone()[0]
     return data
 
 @app.get("/data/status")

@@ -28,6 +28,23 @@ from .prompts import (
     get_chart_template,
 )
 
+def _get_test_results_table() -> str:
+    """Get the actual table name for test results.
+    Supports both old (flattened_tests) and new (structured_test_results) names."""
+    try:
+        tables = state.duck_conn.execute("SELECT table_name FROM information_schema.tables WHERE table_schema='memory'").df()
+        table_names = tables['table_name'].tolist() if not tables.empty else []
+
+        if "structured_test_results" in table_names:
+            return "structured_test_results"
+        elif "flattened_tests" in table_names:
+            return "flattened_tests"
+        else:
+            return "flattened_tests"
+    except Exception as e:
+        logging.warning(f"Could not query table names: {e}, using default")
+        return "flattened_tests"
+
 logger = logging.getLogger(__name__)
 _sql_cache: dict = {}
 
@@ -237,7 +254,7 @@ def _build_structured_sql(intent: dict) -> str:
             " ROUND(SUM(CASE WHEN status='passed' THEN 1.0 ELSE 0 END) * 100.0 / NULLIF(COUNT(*), 0), 2) AS pass_rate,"
             " ROUND(SUM(COALESCE(duration, 0)), 2) AS total_duration_seconds,"
             " ROUND(AVG(NULLIF(duration, 0)), 2) AS avg_duration_seconds"
-            " FROM flattened_tests"
+            f" FROM {_get_test_results_table()}"
             " GROUP BY platform_type"
         )
     else:
