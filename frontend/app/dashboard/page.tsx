@@ -21,6 +21,7 @@ export default function Dashboard() {
     status_summary?: {
       passed?: number;
       failed?: number;
+      skipped?: number;
     };
   } | null>(null);
   const [backendConnected, setBackendConnected] = useState(false);
@@ -67,7 +68,7 @@ export default function Dashboard() {
       status?: {
         has_data?: boolean;
         total_rows?: number;
-        status_summary?: { passed?: number; failed?: number };
+        status_summary?: { passed?: number; failed?: number; skipped?: number };
       };
       quality?: {
         score?: number;
@@ -364,7 +365,7 @@ export default function Dashboard() {
       <div className="relative z-10 max-w-[1600px] mx-auto px-6 py-8">
         {/* Data Summary Cards */}
         {(dataStatus?.has_data && dataStatus.total_rows) || isHeaderLoading ? (
-          <div className="grid grid-cols-1 md:grid-cols-5 gap-4 mb-4">
+          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-6 gap-4 mb-4">
             {/* Total Tests */}
             <div className="group relative rounded-2xl p-5 border border-slate-200 bg-white hover:border-cyan-500/20 hover:bg-cyan-500/[0.03] transition-all overflow-hidden dark:border-white/[0.06] dark:bg-white/[0.02]">
               <div className="absolute -top-12 -right-12 w-24 h-24 bg-cyan-500/[0.06] blur-2xl rounded-full opacity-0 group-hover:opacity-100 transition-opacity" />
@@ -399,9 +400,24 @@ export default function Dashboard() {
               <p className="text-3xl font-bold bg-gradient-to-r from-cyan-400 to-blue-500 bg-clip-text text-transparent">
                 {isHeaderLoading
                   ? "..."
-                  : `${Math.round(
-                      (((dataStatus?.status_summary?.passed || 0) / Math.max(1, dataStatus?.total_rows || 0)) * 100),
-                    )}%`}
+                  : (() => {
+                      const passed = dataStatus?.status_summary?.passed || 0;
+                      const failed = dataStatus?.status_summary?.failed || 0;
+                      const total = passed + failed;
+                      const rate = total > 0 ? (passed / total) * 100 : 0;
+                      return `${Math.round(rate)}%`;
+                    })()}
+              </p>
+            </div>
+
+            {/* Skipped Tests */}
+            <div className="group relative rounded-2xl p-5 border border-yellow-500/20 bg-yellow-500/[0.04] hover:border-yellow-500/25 hover:bg-yellow-500/[0.08] transition-all overflow-hidden motion-safe:group-hover:opacity-100">
+              <div className="absolute -top-12 -right-12 w-24 h-24 bg-yellow-500/[0.1] blur-2xl rounded-full opacity-0 group-hover:opacity-100 transition-opacity" />
+              <p className="text-[10px] uppercase tracking-widest font-semibold mb-1 text-yellow-800 dark:text-yellow-200">Skipped Tests</p>
+              <p className="text-3xl font-bold bg-gradient-to-r from-yellow-400 to-amber-500 bg-clip-text text-transparent">
+                {isHeaderLoading
+                  ? "..."
+                  : (dataStatus?.status_summary?.skipped || 0).toLocaleString()}
               </p>
             </div>
 

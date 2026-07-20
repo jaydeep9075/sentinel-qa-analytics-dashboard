@@ -465,7 +465,7 @@ def _get_status_payload(normalized_ingestion_id: str) -> dict:
         return cached
 
     if not state.duck_conn:
-        payload = {"has_data": False, "total_rows": 0, "status_summary": {"passed": 0, "failed": 0}}
+        payload = {"has_data": False, "total_rows": 0, "status_summary": {"passed": 0, "failed": 0, "skipped": 0}}
         return _cache_set(_status_cache, normalized_ingestion_id, payload)
 
     test_table = _get_test_results_table()
@@ -474,13 +474,15 @@ def _get_status_payload(normalized_ingestion_id: str) -> dict:
         SELECT
           COUNT(*) AS total_rows,
           SUM(CASE WHEN status='passed' THEN 1 ELSE 0 END) AS passed,
-          SUM(CASE WHEN status='failed' THEN 1 ELSE 0 END) AS failed
+          SUM(CASE WHEN status='failed' THEN 1 ELSE 0 END) AS failed,
+          SUM(CASE WHEN status='skipped' THEN 1 ELSE 0 END) AS skipped
         FROM {test_table}
         """
     ).fetchone()
     total_rows = int(row[0] or 0)
     passed = int(row[1] or 0)
     failed = int(row[2] or 0)
+    skipped = int(row[3] or 0)
 
     payload = {
         "has_data": total_rows > 0,
@@ -488,6 +490,7 @@ def _get_status_payload(normalized_ingestion_id: str) -> dict:
         "status_summary": {
             "passed": passed,
             "failed": failed,
+            "skipped": skipped,
         },
     }
     return _cache_set(_status_cache, normalized_ingestion_id, payload)

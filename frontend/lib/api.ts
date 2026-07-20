@@ -290,7 +290,7 @@ export interface DashboardOverview {
   status?: {
     has_data?: boolean;
     total_rows?: number;
-    status_summary?: { passed?: number; failed?: number };
+    status_summary?: { passed?: number; failed?: number; skipped?: number };
   };
   quality?: {
     score?: number;
@@ -321,7 +321,7 @@ export async function getDashboardOverview(
   if (!ingestionId) {
     return {
       connected: true,
-      status: { has_data: false, total_rows: 0, status_summary: { passed: 0, failed: 0 } },
+      status: { has_data: false, total_rows: 0, status_summary: { passed: 0, failed: 0, skipped: 0 } },
       quality: { score: 0, quality: "unknown", guidance: ["No ingestion selected"], checks: [] },
       token_usage: { totals: { total_tokens: 0, prompt_tokens: 0, completion_tokens: 0, calls: 0 } },
     };
