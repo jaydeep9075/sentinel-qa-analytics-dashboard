@@ -2,6 +2,7 @@ import logging
 import uuid
 import json
 import re
+import shutil
 import tempfile
 import time
 from fastapi import FastAPI, HTTPException, Header, Depends, Query, Request, BackgroundTasks

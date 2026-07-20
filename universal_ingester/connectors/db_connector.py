@@ -1,11 +1,16 @@
 # connectors/db_connector.py
-from sqlalchemy import create_engine, inspect, text
+from sqlalchemy import create_engine, inspect
+import os
 import pandas as pd
 from typing import List, Dict, Any, Optional
 from .base import BaseConnector
 import logging
 
 logger = logging.getLogger(__name__)
+
+# Tables stream in chunks so a huge table never loads fully in memory.
+DB_CHUNK_ROWS = int(os.getenv("INGEST_DB_CHUNK_ROWS", "50000"))
+
 
 class DBConnector(BaseConnector):
     def __init__(self, connection_string: str, tables: List[str] = None, connect_args: Optional[Dict] = None):
@@ -18,9 +23,13 @@ class DBConnector(BaseConnector):
         self.tables = tables
         self.inspector = inspect(self.engine)
 
+    def _stream_table(self, table: str):
+        for chunk in pd.read_sql_table(table, self.engine, chunksize=DB_CHUNK_ROWS):
+            yield chunk
+
     def fetch(self) -> List[Dict[str, Any]]:
-        """Fetch each table as a structured dataset."""
-        # Determine which tables to fetch
+        """Expose each table as a streamed structured dataset; the engine
+        writes batches as they arrive."""
         if self.tables is None:
             table_names = self.inspector.get_table_names()
         else:
@@ -28,15 +37,11 @@ class DBConnector(BaseConnector):
 
         datasets = []
         for table in table_names:
-            try:
-                logger.info(f"Reading table {table}...")
-                df = pd.read_sql_table(table, self.engine)
-                datasets.append({
-                    'name': table,
-                    'data': df,
-                    'type': 'structured',
-                    'metadata': {'table': table, 'rows': len(df)}
-                })
-            except Exception as e:
-                logger.error(f"Error reading {table}: {e}")
+            datasets.append({
+                'name': table,
+                'data': None,
+                'data_iter': self._stream_table(table),
+                'type': 'structured',
+                'metadata': {'table': table, 'streamed': True},
+            })
         return datasets

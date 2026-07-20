@@ -1,12 +1,33 @@
+"""Universal ingestion engine.
+
+Connectors return data (raw payloads, DataFrames, text documents, or batch
+iterators); everything after that — parsing, normalization, schema
+discovery, chunking, embedding decisions, metadata, storage — happens here
+in one generalized pipeline:
+
+    connector → parse/normalize → schema detect → dedup/hash → store → report
+
+Strategy order is Python-first, AI-second: deterministic parsing handles
+everything it can (native DataFrames, generic JSON normalization, key:value
+heuristics), and the LLM is only consulted when deterministic parsing
+cannot confidently make sense of the content.
+
+Dataset contract (what a connector's fetch() yields):
+    name:      str
+    type:      'structured' | 'unstructured' | 'raw'
+    data:      DataFrame | list[{'text': ...}] | any parsed payload (raw)
+    data_iter: optional generator of DataFrames for streaming large sources
+    metadata:  dict
+"""
+
 import os
 import json
 import uuid
 import logging
 import re
-import math
 from pathlib import Path
 from datetime import datetime, timezone
-from typing import List, Dict, Any, Optional
+from typing import Any, Dict, Iterable, List, Optional
 
 import pandas as pd
 import numpy as np
@@ -25,6 +46,11 @@ try:
     from .connectors.api_connector import APIConnector
     from .utils import EmbeddingGenerator
     from .schema.runtime_detector import RuntimeSchemaDetector
+    from .core.normalizer import normalize_payload
+    from .core.chunking import chunk_text
+    from .core.report import IngestionReport
+    from .core.storage import LanceStorage, compute_text_hash
+    from .summary import generate_summary
 except ImportError:
     # Fallback for direct script execution inside universal_ingester folder
     from connectors.file_connector import FileConnector
@@ -32,18 +58,51 @@ except ImportError:
     from connectors.api_connector import APIConnector
     from utils import EmbeddingGenerator
     from schema.runtime_detector import RuntimeSchemaDetector
+    from core.normalizer import normalize_payload
+    from core.chunking import chunk_text
+    from core.report import IngestionReport
+    from core.storage import LanceStorage, compute_text_hash
+    from summary import generate_summary
 
 logger = logging.getLogger(__name__)
+
+# Embedding policy: don't blindly embed everything. Structured records are
+# already queryable via DuckDB/SQL; embeddings only add value for semantic
+# search, and embedding hundreds of thousands of rows is slow and bloats
+# storage. "auto" embeds structured rows only up to a size cap; documents
+# (real text) are always embedded.
+EMBED_STRUCTURED_MODE = os.getenv("INGEST_EMBED_STRUCTURED", "auto").strip().lower()  # auto|always|never
+EMBED_MAX_ROWS = int(os.getenv("INGEST_EMBED_MAX_ROWS", "20000"))
+
 
 class UniversalIngester:
     def __init__(self, data_base_path: str = "../data"):
         self.data_base_path = Path(data_base_path).absolute()
         self.data_base_path.mkdir(parents=True, exist_ok=True)
-        self.embedder = EmbeddingGenerator()
+        self._embedder = None  # lazy: not every ingestion needs embeddings
         self.schema_detector = RuntimeSchemaDetector()
         self.duck_db = None
         self.lance_db = None
-        self.detected_schemas = {}  # Cache schemas per ingestion
+        self.storage: Optional[LanceStorage] = None
+        self.report: Optional[IngestionReport] = None
+        self.detected_schemas = {}  # cache keyed by (build_id, dataset name)
+
+    @property
+    def embedder(self) -> EmbeddingGenerator:
+        if self._embedder is None:
+            self._embedder = EmbeddingGenerator()
+        return self._embedder
+
+    # ------------------------------------------------------------------
+    # entry points
+    # ------------------------------------------------------------------
+    def run_ingestion_from_config(self, config_path: str, build_id: str = None):
+        if build_id is None:
+            build_id = f"ingestion_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}"
+        with open(config_path, 'r') as f:
+            config = json.load(f)
+        for source in config['sources']:
+            self.ingest_source(source, build_id)
 
     def ingest_source(self, source_config: Dict[str, Any], build_id: str):
         ingestion_folder = self.data_base_path / build_id
@@ -53,7 +112,37 @@ class UniversalIngester:
 
         self.lance_db = lancedb.connect(str(lancedb_path))
         self.duck_db = duckdb.connect()
+        self.report = IngestionReport(build_id)
+        self.storage = LanceStorage(self.lance_db, self.report)
 
+        connector, source_type = self._build_connector(source_config)
+
+        total_rows = 0
+        try:
+            datasets = connector.fetch()
+        except Exception as exc:
+            self.report.dataset_failed(source_type, exc)
+            datasets = []
+
+        for dataset in datasets:
+            name = dataset.get('name', 'unnamed')
+            self.report.dataset_started(name, source_type)
+            try:
+                rows = self._ingest_dataset(dataset, source_type, build_id)
+                total_rows += rows
+            except Exception as exc:
+                # One bad dataset must not abort the run.
+                logger.exception("Dataset %s failed", name)
+                self.report.dataset_failed(name, exc)
+
+        self.link_to_duckdb()
+        self.report.finish()
+        self.report.write(ingestion_folder)
+        self._generate_summary(build_id, total_rows)
+        logger.info(f"Ingestion {build_id} completed. Summary saved.")
+        return total_rows
+
+    def _build_connector(self, source_config: Dict[str, Any]):
         source_type = source_config['type']
         # Support both nested 'params' and flat config
         params = source_config.get('params', source_config)
@@ -88,27 +177,306 @@ class UniversalIngester:
                 from .connectors.allure_connector import AllureConnector
             except ImportError:
                 from connectors.allure_connector import AllureConnector
-            path = params.get('path') or params.get('directory')
-            if not path:
+            allure_path = params.get('path') or params.get('directory')
+            if not allure_path:
                 raise ValueError("Allure source requires 'path' or 'directory' in config")
-            connector = AllureConnector(path)
+            connector = AllureConnector(allure_path)
         else:
             raise ValueError(f"Unsupported source type: {source_type}")
+        return connector, source_type
 
-        datasets = connector.fetch()
-        total_rows = 0
-        for dataset in datasets:
-            rows = self._ingest_dataset(dataset, source_type, build_id)
-            total_rows += rows
+    # ------------------------------------------------------------------
+    # dataset dispatch
+    # ------------------------------------------------------------------
+    def _ingest_dataset(self, dataset: Dict[str, Any], source_type: str, build_id: str) -> int:
+        name = dataset['name']
+        data_type = dataset.get('type', 'raw')
+        metadata = dict(dataset.get('metadata', {}) or {})
+        source_id = f"{name}_{build_id}"
+        logger.info(f"Ingesting dataset {name} as {data_type} (build {build_id})")
 
-        self.link_to_duckdb()
-        self._generate_summary(build_id, total_rows)
-        logger.info(f"Ingestion {build_id} completed. Summary saved.")
+        if dataset.get('data_iter') is not None:
+            return self._ingest_structured_stream(name, dataset['data_iter'], metadata, source_type, source_id, build_id)
+        if data_type == 'structured':
+            return self._ingest_structured(name, dataset['data'], metadata, source_type, source_id, build_id)
+        if data_type == 'unstructured':
+            return self._ingest_unstructured(name, dataset['data'], metadata, source_type, source_id, build_id)
+        if data_type == 'raw':
+            return self._ingest_raw(name, dataset['data'], metadata, source_type, source_id, build_id)
 
+        # Unknown type: try to make sense of it as a raw payload rather than
+        # failing the whole dataset outright.
+        self.report.warn(name, f"Unknown data type '{data_type}', attempting generic normalization")
+        return self._ingest_raw(name, dataset['data'], metadata, source_type, source_id, build_id)
+
+    # ------------------------------------------------------------------
+    # raw payloads → generic structure normalization (deterministic)
+    # ------------------------------------------------------------------
+    def _ingest_raw(self, name: str, payload: Any, metadata: dict,
+                    source_type: str, source_id: str, build_id: str) -> int:
+        normalized = normalize_payload(payload, name)
+        if not normalized.tables:
+            self.report.warn(name, "Raw payload produced no records")
+            self._record_source(source_id, source_type, name, 0, {
+                **metadata,
+                "ingested_data_type": "raw",
+                "parser_strategy": "structure-normalizer",
+                "parser_confidence": 0.95,
+                "parsed_rows": 0,
+            }, build_id)
+            return 0
+
+        total = 0
+        tables_written = []
+        for table_key, df in normalized.tables.items():
+            rows = self._store_structured_frame(
+                dataset_name=name,
+                table_key=table_key,
+                df=df,
+                metadata=metadata,
+                source_type=source_type,
+                source_id=source_id,
+                build_id=build_id,
+            )
+            total += rows
+            tables_written.append(f"structured_{table_key}")
+
+        source_meta = {
+            **metadata,
+            "ingested_data_type": "raw",
+            "parser_strategy": "structure-normalizer",
+            "parser_confidence": 0.95,
+            "parsed_rows": total,
+            "normalized_tables": tables_written,
+            "normalizer_stats": normalized.stats,
+        }
+        self._record_source(source_id, source_type, name, total, source_meta, build_id)
+        self.report.dataset_completed(
+            name, rows_stored=total, tables=tables_written,
+            parser_strategy="structure-normalizer", parser_confidence=0.95,
+        )
+        return total
+
+    # ------------------------------------------------------------------
+    # structured DataFrames
+    # ------------------------------------------------------------------
+    def _ingest_structured(self, name: str, df: pd.DataFrame, metadata: dict,
+                           source_type: str, source_id: str, build_id: str) -> int:
+        if df is None:
+            df = pd.DataFrame()
+        df = self._flatten_json_column(df)
+        # Preserve any original build_id column from the source data.
+        if 'build_id' in df.columns:
+            if 'original_build_id' not in df.columns:
+                df = df.rename(columns={'build_id': 'original_build_id'})
+            else:
+                df = df.drop(columns=['build_id'])
+
+        rows = self._store_structured_frame(
+            dataset_name=name, table_key=name, df=df, metadata=metadata,
+            source_type=source_type, source_id=source_id, build_id=build_id,
+        )
+
+        source_meta = {
+            **metadata,
+            "ingested_data_type": "structured",
+            "parser_strategy": "native-structured",
+            "parser_confidence": 1.0,
+            "parsed_rows": rows,
+        }
+        schema_info = self.detected_schemas.get((build_id, name))
+        if schema_info:
+            source_meta.update({"detected_schema": schema_info, "runtime_detection": True})
+
+        self._record_source(source_id, source_type, name, rows, source_meta, build_id)
+        self.report.dataset_completed(
+            name, rows_stored=rows, tables=[f"structured_{name}"],
+            parser_strategy="native-structured", parser_confidence=1.0,
+        )
+        return rows
+
+    def _ingest_structured_stream(self, name: str, batches: Iterable[pd.DataFrame], metadata: dict,
+                                  source_type: str, source_id: str, build_id: str) -> int:
+        """Streaming ingestion: batches are written as they arrive, so a
+        multi-GB CSV/JSONL/DB table never has to fit in memory at once."""
+        total = 0
+        batch_no = 0
+        for batch in batches:
+            if batch is None or batch.empty:
+                continue
+            batch_no += 1
+            try:
+                batch = self._flatten_json_column(batch)
+                if 'build_id' in batch.columns and 'original_build_id' not in batch.columns:
+                    batch = batch.rename(columns={'build_id': 'original_build_id'})
+                total += self._store_structured_frame(
+                    dataset_name=name, table_key=name, df=batch, metadata=metadata,
+                    source_type=source_type, source_id=source_id, build_id=build_id,
+                    embed_row_total=total,
+                )
+            except Exception as exc:
+                self.report.record_failures(name, len(batch), f"batch {batch_no} failed: {exc}")
+                logger.exception("Batch %d of %s failed", batch_no, name)
+
+        source_meta = {
+            **metadata,
+            "ingested_data_type": "structured",
+            "parser_strategy": "native-structured-stream",
+            "parser_confidence": 1.0,
+            "parsed_rows": total,
+            "batches": batch_no,
+        }
+        self._record_source(source_id, source_type, name, total, source_meta, build_id)
+        self.report.dataset_completed(
+            name, rows_stored=total, tables=[f"structured_{name}"],
+            parser_strategy="native-structured-stream", parser_confidence=1.0,
+        )
+        return total
+
+    def _store_structured_frame(self, dataset_name: str, table_key: str, df: pd.DataFrame,
+                                metadata: dict, source_type: str, source_id: str, build_id: str,
+                                embed_row_total: int = 0) -> int:
+        """Shared structured path: schema detection, storage, profiling,
+        conditional embedding."""
+        if df is None or df.empty:
+            return 0
+
+        # Runtime schema discovery (deterministic heuristics, AI only for
+        # low-confidence fields — handled inside the detector).
+        cache_key = (build_id, dataset_name)
+        if cache_key not in self.detected_schemas:
+            try:
+                records = df.head(20).to_dict('records')
+                schema_info = self.schema_detector.detect(
+                    records=records, data_context=f"{source_type} {dataset_name}"
+                )
+                self.detected_schemas[cache_key] = schema_info
+                logger.info(
+                    f"Detected schema for {dataset_name}: "
+                    f"{len(schema_info.get('fields', {}))} fields, confidence={schema_info.get('confidence', 0)}"
+                )
+            except Exception as exc:
+                self.report.warn(dataset_name, f"Schema detection failed: {exc}")
+                self.detected_schemas[cache_key] = None
+
+        table_name = f"structured_{table_key}"
+        stored = self.storage.write_structured(
+            table_name, df, build_id=build_id, source_id=source_id, dataset_name=dataset_name
+        )
+        if stored:
+            self._add_schema_profile(dataset_name, table_name, df, source_type, build_id)
+
+        if stored and self._should_embed_structured(embed_row_total + stored):
+            docs = self._df_to_documents(df, dataset_name, source_id, metadata, build_id)
+            embedded = self._embed_and_store(docs, build_id)
+            self.report.dataset_completed(dataset_name, documents_stored=embedded)
+        elif stored:
+            self.report.warn(
+                dataset_name,
+                f"Skipped embeddings ({embed_row_total + stored} rows > {EMBED_MAX_ROWS} cap or mode={EMBED_STRUCTURED_MODE}); "
+                "structured data remains fully SQL-queryable",
+            )
+        return stored
+
+    def _should_embed_structured(self, row_count: int) -> bool:
+        if EMBED_STRUCTURED_MODE == "never":
+            return False
+        if EMBED_STRUCTURED_MODE == "always":
+            return True
+        return row_count <= EMBED_MAX_ROWS
+
+    # ------------------------------------------------------------------
+    # unstructured documents
+    # ------------------------------------------------------------------
+    def _ingest_unstructured(self, name: str, data: List[Dict[str, Any]], metadata: dict,
+                             source_type: str, source_id: str, build_id: str) -> int:
+        docs = []
+        for i, item in enumerate(data):
+            text = str(item.get('text', '') or '')
+            if not text.strip():
+                continue
+            parent_id = f"{name}_{i}_{uuid.uuid4().hex[:8]}"
+            item_meta = {k: v for k, v in item.items() if k != 'text'}
+            for chunk in chunk_text(text):
+                docs.append({
+                    'id': f"{parent_id}_c{chunk['chunk_index']}",
+                    'text': chunk['text'],
+                    'metadata': json.dumps({**metadata, **item_meta, 'index': i}),
+                    'source_id': source_id,
+                    'build_id': build_id,
+                    'timestamp': datetime.now(timezone.utc),
+                    'parent_id': parent_id,
+                    'chunk_index': chunk['chunk_index'],
+                    'chunk_count': chunk['chunk_count'],
+                    'doc_type': str(metadata.get('doc_type', source_type or 'document')),
+                    'content_hash': compute_text_hash(chunk['text']),
+                })
+
+        embedded = self._embed_and_store(docs, build_id)
+
+        # Python-first structured extraction; AI only if heuristics fail.
+        heuristic_df = self._infer_structured_rows_from_unstructured(data)
+        parse_strategy = "none"
+        parser_confidence = 0.15
+        parsed_rows = 0
+        if heuristic_df.empty:
+            heuristic_df = self._ai_structured_parse(name, data, source_type=source_type, metadata=metadata)
+            if not heuristic_df.empty:
+                parse_strategy = "ai-structured-fallback"
+                parser_confidence = 0.86
+        else:
+            parse_strategy = "heuristic-kv"
+            parser_confidence = 0.72
+
+        ai_tables = []
+        if not heuristic_df.empty:
+            table_key = f"{name}_ai_parsed"
+            parsed_rows = self.storage.write_structured(
+                f"structured_{table_key}", heuristic_df,
+                build_id=build_id, source_id=source_id, dataset_name=name,
+            )
+            if parsed_rows:
+                ai_tables.append(f"structured_{table_key}")
+                self._add_schema_profile(name, f"structured_{table_key}", heuristic_df, source_type, build_id)
+                logger.info(f"{parse_strategy} parsed {parsed_rows} structured rows for {name}")
+            if parse_strategy == "ai-structured-fallback" and len(data) > parsed_rows:
+                self.report.warn(
+                    name,
+                    f"AI fallback parsed a sample of {parsed_rows}/{len(data)} items into structured rows; "
+                    "full text remains searchable via documents",
+                )
+
+        source_meta = {
+            **metadata,
+            "ingested_data_type": "unstructured",
+            "parser_strategy": parse_strategy,
+            "parser_confidence": parser_confidence,
+            "parsed_rows": parsed_rows,
+            "chunk_count": len(docs),
+        }
+        self._record_source(source_id, source_type, name, len(docs), source_meta, build_id)
+        self.report.dataset_completed(
+            name, documents_stored=embedded, rows_stored=parsed_rows,
+            tables=["documents"] + ai_tables,
+            parser_strategy=parse_strategy, parser_confidence=parser_confidence,
+        )
+        return len(docs)
+
+    def _embed_and_store(self, docs: List[Dict], build_id: str) -> int:
+        if not docs:
+            return 0
+        texts = [doc['text'] for doc in docs]
+        embeddings = self.embedder.embed(texts)
+        for doc, emb in zip(docs, embeddings):
+            doc['embedding'] = emb
+        return self.storage.write_documents(docs, build_id)
+
+    # ------------------------------------------------------------------
+    # parsing helpers (deterministic first, AI fallback)
+    # ------------------------------------------------------------------
     def _flatten_json_column(self, df: pd.DataFrame) -> pd.DataFrame:
         """Expand dict-like columns when values are JSON strings/dicts.
-        Keeps original columns unless overwritten by flattened fields.
-        """
+        Keeps original columns unless overwritten by flattened fields."""
         if df is None or df.empty:
             return df
 
@@ -120,7 +488,6 @@ class UniversalIngester:
             if sample.empty:
                 continue
 
-            parsed_values = []
             parsed_count = 0
             for val in sample:
                 parsed = None
@@ -135,7 +502,6 @@ class UniversalIngester:
                             parsed = None
                 if isinstance(parsed, dict):
                     parsed_count += 1
-                    parsed_values.append(parsed)
 
             if parsed_count < max(3, int(len(sample) * 0.5)):
                 continue
@@ -160,58 +526,49 @@ class UniversalIngester:
             if flat.empty:
                 continue
             flat.columns = [f"{col}.{c}" for c in flat.columns]
+            flat.index = out.index
             out = pd.concat([out, flat], axis=1)
 
         return out
 
-    def _sanitize_column_names(self, df: pd.DataFrame) -> pd.DataFrame:
-        """Sanitize column names for LanceDB compatibility.
-        Replace dots and special chars with underscores."""
-        if df is None or df.empty:
-            return df
-
-        # Replace dots, hyphens, spaces with underscores
-        # LanceDB doesn't allow dots in top-level field names
-        rename_map = {}
-        for col in df.columns:
-            new_col = str(col)
-            # Replace problematic characters
-            new_col = new_col.replace('.', '_')
-            new_col = new_col.replace('-', '_')
-            new_col = new_col.replace(' ', '_')
-            new_col = new_col.replace('(', '_')
-            new_col = new_col.replace(')', '_')
-            # Remove consecutive underscores
-            while '__' in new_col:
-                new_col = new_col.replace('__', '_')
-            new_col = new_col.strip('_')
-
-            if new_col != col:
-                rename_map[col] = new_col
-                logger.debug(f"Renamed column: {col} → {new_col}")
-
-        if rename_map:
-            df = df.rename(columns=rename_map)
-
-        return df
-
-    def _normalize_structured_df(self, df: pd.DataFrame) -> pd.DataFrame:
-        if df is None:
+    def _infer_structured_rows_from_unstructured(self, data: List[Dict[str, Any]]) -> pd.DataFrame:
+        """Heuristic parser that extracts JSON objects embedded in text payloads."""
+        if not data:
             return pd.DataFrame()
-        out = df.copy()
-        if out.empty:
-            return out
 
-        # Flatten nested JSON-like columns to improve queryability for arbitrary schemas.
-        out = self._flatten_json_column(out)
+        rows = []
+        for item in data:
+            text = str(item.get("text", "") or "").strip()
+            if not text:
+                continue
+            # Try full-text JSON object.
+            if text.startswith("{") and text.endswith("}"):
+                try:
+                    obj = json.loads(text)
+                    if isinstance(obj, dict):
+                        rows.append(obj)
+                        continue
+                except Exception:
+                    pass
 
-        # Sanitize column names for LanceDB (remove dots and special chars)
-        out = self._sanitize_column_names(out)
+            # Try line-based key:value extraction. Require at least two
+            # extracted pairs so prose with an incidental colon doesn't
+            # produce garbage single-column rows.
+            kv = {}
+            for ln in text.splitlines():
+                if ":" not in ln:
+                    continue
+                k, v = ln.split(":", 1)
+                key = re.sub(r"\s+", "_", k.strip().lower())
+                val = v.strip()
+                if key and val and len(key) <= 64:
+                    kv[key] = val
+            if len(kv) >= 2:
+                rows.append(kv)
 
-        # Replace NaN/Inf with None-safe values for storage and downstream parsing.
-        out = out.replace({np.nan: None})
-        out = out.replace({np.inf: None, -np.inf: None})
-        return out
+        if not rows:
+            return pd.DataFrame()
+        return pd.DataFrame(rows)
 
     def _ai_structured_parse(
         self,
@@ -224,9 +581,7 @@ class UniversalIngester:
         of unstructured content. Grounds the LLM in what's actually known
         about the data's origin (source connector type, original file
         extension, a raw text excerpt showing real structure/formatting)
-        rather than asking it to guess blind from a bare JSON dump — this
-        materially improves parsing accuracy for varied inputs (PDF text
-        extracts, log files, freeform notes, CSV-like text, etc.).
+        rather than asking it to guess blind from a bare JSON dump.
         Returns empty DataFrame if AI parsing is unavailable or fails.
         """
         if not items or litellm is None:
@@ -298,192 +653,28 @@ class UniversalIngester:
             cleaned = re.sub(r"```json\s*|```", "", str(content or ""), flags=re.IGNORECASE).strip()
             parsed = json.loads(cleaned)
             if isinstance(parsed, list) and parsed:
-                norm = []
-                for row in parsed:
-                    if isinstance(row, dict):
-                        norm.append(row)
+                norm = [row for row in parsed if isinstance(row, dict)]
                 return pd.DataFrame(norm)
         except Exception as exc:
             logger.warning(f"AI structured parsing failed for {dataset_name}: {exc}")
 
         return pd.DataFrame()
 
-    def _infer_structured_rows_from_unstructured(self, data: List[Dict[str, Any]]) -> pd.DataFrame:
-        """Heuristic parser that extracts JSON objects embedded in text payloads."""
-        if not data:
-            return pd.DataFrame()
-
-        rows = []
-        for item in data:
-            text = str(item.get("text", "") or "").strip()
-            if not text:
-                continue
-            # Try full-text JSON object.
-            if text.startswith("{") and text.endswith("}"):
-                try:
-                    obj = json.loads(text)
-                    if isinstance(obj, dict):
-                        rows.append(obj)
-                        continue
-                except Exception:
-                    pass
-
-            # Try line-based key:value extraction.
-            kv = {}
-            for ln in text.splitlines():
-                if ":" not in ln:
-                    continue
-                k, v = ln.split(":", 1)
-                key = re.sub(r"\s+", "_", k.strip().lower())
-                val = v.strip()
-                if key and val:
-                    kv[key] = val
-            if kv:
-                rows.append(kv)
-
-        if not rows:
-            return pd.DataFrame()
-        return pd.DataFrame(rows)
-
-    def _ingest_dataset(self, dataset: Dict[str, Any], source_type: str, build_id: str) -> int:
-        name = dataset['name']
-        data = dataset['data']
-        data_type = dataset['type']
-        metadata = dataset.get('metadata', {})
-        source_metadata = dict(metadata or {})
-
-        source_id = f"{name}_{build_id}"
-        logger.info(f"Ingesting dataset {name} as {data_type} (build {build_id})")
-
-        # Runtime schema detection (NEW)
-        schema_info = None
-        if data_type == 'structured' and isinstance(data, pd.DataFrame):
-            if name not in self.detected_schemas:
-                records = data.to_dict('records')[:20]  # Sample for detection
-                schema_info = self.schema_detector.detect(
-                    records=records,
-                    data_context=f"{source_type} {name}"
-                )
-                self.detected_schemas[name] = schema_info
-                logger.info(f"Detected schema for {name}: {len(schema_info.get('fields', {}))} fields, confidence={schema_info.get('confidence', 0)}")
-            else:
-                schema_info = self.detected_schemas[name]
-
-            if schema_info:
-                source_metadata.update({
-                    "detected_schema": schema_info,
-                    "runtime_detection": True
-                })
-
-        if data_type == 'structured':
-            df = data.copy()
-            df = self._normalize_structured_df(df)
-            source_metadata.update({
-                "ingested_data_type": "structured",
-                "parser_strategy": "native-structured",
-                "parser_confidence": 1.0,
-                "parsed_rows": int(len(df)),
-            })
-            if 'build_id' not in df.columns:
-                df['build_id'] = build_id
-            else:
-                if 'original_build_id' not in df.columns:
-                    df = df.rename(columns={'build_id': 'original_build_id'})
-                df['build_id'] = build_id
-
-            table_name = f"structured_{name}"
-            if table_name in self.lance_db.table_names():
-                table = self.lance_db.open_table(table_name)
-                table.add(df)
-                logger.info(f"Appended {len(df)} rows to {table_name} (build {build_id})")
-            else:
-                self.lance_db.create_table(table_name, df)
-                logger.info(f"Created new table {table_name} with {len(df)} rows")
-
-            self._add_schema_profile(name, table_name, df, source_type, build_id)
-
-            docs = self._df_to_documents(df, name, source_id, source_metadata, build_id)
-            if docs:
-                texts = [doc['text'] for doc in docs]
-                embeddings = self.embedder.embed(texts)
-                for doc, emb in zip(docs, embeddings):
-                    doc['embedding'] = emb
-                self._add_documents(docs)
-
-            self._add_source(source_id, source_type, name, len(df), source_metadata, build_id)
-            return len(df)
-
-        elif data_type == 'unstructured':
-            docs = []
-            for i, item in enumerate(data):
-                text = item.get('text', '')
-                if not text:
-                    continue
-                doc = {
-                    'id': f"{name}_{i}_{uuid.uuid4().hex[:8]}",
-                    'text': text,
-                    'metadata': json.dumps({**source_metadata, 'index': i}),
-                    'source_id': source_id,
-                    'build_id': build_id,
-                    'timestamp': datetime.now(timezone.utc)
-                }
-                docs.append(doc)
-
-            if docs:
-                texts = [doc['text'] for doc in docs]
-                embeddings = self.embedder.embed(texts)
-                for doc, emb in zip(docs, embeddings):
-                    doc['embedding'] = emb
-                self._add_documents(docs)
-
-            # Attempt general-purpose structured parsing from unstructured content.
-            heuristic_df = self._infer_structured_rows_from_unstructured(data)
-            parse_strategy = "none"
-            parser_confidence = 0.15
-            if heuristic_df.empty:
-                heuristic_df = self._ai_structured_parse(
-                    name, data, source_type=source_type, metadata=source_metadata
-                )
-                if not heuristic_df.empty:
-                    parse_strategy = "ai-structured-fallback"
-                    parser_confidence = 0.86
-            else:
-                parse_strategy = "heuristic-kv"
-                parser_confidence = 0.72
-
-            if not heuristic_df.empty:
-                heuristic_df = self._normalize_structured_df(heuristic_df)
-                if 'build_id' not in heuristic_df.columns:
-                    heuristic_df['build_id'] = build_id
-                ai_table_name = f"structured_{name}_ai_parsed"
-                if ai_table_name in self.lance_db.table_names():
-                    self.lance_db.open_table(ai_table_name).add(heuristic_df)
-                else:
-                    self.lance_db.create_table(ai_table_name, heuristic_df)
-                logger.info(f"AI/heuristic parsed {len(heuristic_df)} structured rows for {name}")
-                self._add_schema_profile(name, ai_table_name, heuristic_df, source_type, build_id)
-
-            source_metadata.update({
-                "ingested_data_type": "unstructured",
-                "parser_strategy": parse_strategy,
-                "parser_confidence": parser_confidence,
-                "parsed_rows": int(len(heuristic_df)) if not heuristic_df.empty else 0,
-            })
-
-            self._add_source(source_id, source_type, name, len(docs), source_metadata, build_id)
-            return len(docs)
-
-        else:
-            raise ValueError(f"Unknown data type: {data_type}")
-
-    def _df_to_documents(self, df: pd.DataFrame, dataset_name: str, source_id: str, metadata: dict, build_id: str) -> List[Dict]:
+    # ------------------------------------------------------------------
+    # documents from structured rows (for semantic search)
+    # ------------------------------------------------------------------
+    def _df_to_documents(self, df: pd.DataFrame, dataset_name: str, source_id: str,
+                         metadata: dict, build_id: str) -> List[Dict]:
         docs = []
-        for idx, row in df.iterrows():
+        columns = [c for c in df.columns if not c.startswith('_')]
+        meta_json = json.dumps({**metadata, 'columns': columns})
+        now = datetime.now(timezone.utc)
+        # to_dict is dramatically faster than DataFrame.iterrows for wide frames.
+        for idx, row in enumerate(df[columns].to_dict(orient="records")):
             parts = []
-            for col in df.columns:
-                val = row[col]
+            for col, val in row.items():
                 if isinstance(val, (list, dict, tuple)):
-                    val_str = json.dumps(val)
+                    val_str = json.dumps(val, default=str)
                 else:
                     if val is None or (isinstance(val, float) and np.isnan(val)):
                         continue
@@ -492,36 +683,27 @@ class UniversalIngester:
             text = " | ".join(parts)
             if not text:
                 continue
-            doc = {
+            docs.append({
                 'id': f"{dataset_name}_{idx}_{uuid.uuid4().hex[:8]}",
                 'text': text,
-                'metadata': json.dumps({**metadata, 'row_index': idx, 'columns': list(df.columns)}),
+                'metadata': meta_json,
                 'source_id': source_id,
                 'build_id': build_id,
-                'timestamp': datetime.now(timezone.utc)
-            }
-            docs.append(doc)
+                'timestamp': now,
+                'parent_id': source_id,
+                'chunk_index': 0,
+                'chunk_count': 1,
+                'doc_type': 'structured_row',
+                'content_hash': compute_text_hash(text),
+            })
         return docs
 
-    def _add_documents(self, docs: List[Dict]):
-        if not docs:
-            return
-        table_name = "documents"
-        if table_name in self.lance_db.table_names():
-            table = self.lance_db.open_table(table_name)
-            if table.count_rows() == 0:
-                logger.info(f"Dropping empty {table_name} table to recreate with correct schema.")
-                self.lance_db.drop_table(table_name)
-                self.lance_db.create_table(table_name, docs)
-            else:
-                table.add(docs)
-        else:
-            self.lance_db.create_table(table_name, docs)
-        logger.info(f"Added {len(docs)} documents to {table_name}")
-
-    def _add_source(self, source_id: str, source_type: str, source_name: str,
-                    row_count: int, metadata: dict, build_id: str):
-        source_record = {
+    # ------------------------------------------------------------------
+    # bookkeeping
+    # ------------------------------------------------------------------
+    def _record_source(self, source_id: str, source_type: str, source_name: str,
+                       row_count: int, metadata: dict, build_id: str):
+        self.storage.append_records("sources", [{
             'source_id': source_id,
             'source_type': source_type,
             'source_name': source_name,
@@ -529,19 +711,8 @@ class UniversalIngester:
             'ingestion_time': datetime.now(timezone.utc),
             'row_count': row_count,
             'status': 'success',
-            'metadata': json.dumps(metadata)
-        }
-        table_name = "sources"
-        if table_name in self.lance_db.table_names():
-            table = self.lance_db.open_table(table_name)
-            if table.count_rows() == 0:
-                logger.info(f"Dropping empty {table_name} table to recreate with correct schema.")
-                self.lance_db.drop_table(table_name)
-                self.lance_db.create_table(table_name, [source_record])
-            else:
-                table.add([source_record])
-        else:
-            self.lance_db.create_table(table_name, [source_record])
+            'metadata': json.dumps(metadata, ensure_ascii=False, default=str)
+        }])
         logger.info(f"Recorded source {source_id} (build {build_id})")
 
     def _build_dataframe_profile(self, df: pd.DataFrame) -> Dict[str, Any]:
@@ -575,25 +746,27 @@ class UniversalIngester:
             "sample_rows": samples,
         }
 
-    def _add_schema_profile(self, dataset_name: str, table_name: str, df: pd.DataFrame, source_type: str, build_id: str):
-        profile = self._build_dataframe_profile(df)
-        record = {
-            "id": f"schema_{dataset_name}_{uuid.uuid4().hex[:10]}",
-            "build_id": build_id,
-            "dataset_name": dataset_name,
-            "table_name": table_name,
-            "source_type": source_type,
-            "created_at": datetime.now(timezone.utc),
-            "row_count": int(profile.get("row_count", 0)),
-            "column_count": int(profile.get("column_count", 0)),
-            "profile_json": json.dumps(profile, ensure_ascii=False),
-        }
-        table = "ingestion_schema_profiles"
-        if table in self.lance_db.table_names():
-            self.lance_db.open_table(table).add([record])
-        else:
-            self.lance_db.create_table(table, [record])
+    def _add_schema_profile(self, dataset_name: str, table_name: str, df: pd.DataFrame,
+                            source_type: str, build_id: str):
+        try:
+            profile = self._build_dataframe_profile(df)
+            self.storage.append_records("ingestion_schema_profiles", [{
+                "id": f"schema_{dataset_name}_{uuid.uuid4().hex[:10]}",
+                "build_id": build_id,
+                "dataset_name": dataset_name,
+                "table_name": table_name,
+                "source_type": source_type,
+                "created_at": datetime.now(timezone.utc),
+                "row_count": int(profile.get("row_count", 0)),
+                "column_count": int(profile.get("column_count", 0)),
+                "profile_json": json.dumps(profile, ensure_ascii=False, default=str),
+            }])
+        except Exception as exc:
+            self.report.warn(dataset_name, f"Schema profile failed: {exc}")
 
+    # ------------------------------------------------------------------
+    # downstream integration
+    # ------------------------------------------------------------------
     def link_to_duckdb(self):
         tables = self.lance_db.table_names()
         for t in tables:
@@ -601,484 +774,23 @@ class UniversalIngester:
                 df = self.lance_db.open_table(t).to_pandas()
                 self.duck_db.register(t, df)
                 logger.info(f"Registered {t} in DuckDB")
-        if 'documents' in self.lance_db.table_names():
-            df_docs = self.lance_db.open_table('documents').to_pandas()
-            self.duck_db.register('documents', df_docs)
-        if 'sources' in self.lance_db.table_names():
-            df_sources = self.lance_db.open_table('sources').to_pandas()
-            self.duck_db.register('sources', df_sources)
-        if 'ingestion_schema_profiles' in self.lance_db.table_names():
-            df_profiles = self.lance_db.open_table('ingestion_schema_profiles').to_pandas()
-            self.duck_db.register('ingestion_schema_profiles', df_profiles)
+        for t in ('documents', 'sources', 'ingestion_schema_profiles'):
+            if t in tables:
+                self.duck_db.register(t, self.lance_db.open_table(t).to_pandas())
         return self.duck_db
 
-    def _collect_parser_insights(self) -> Dict[str, Any]:
-        insights: Dict[str, Any] = {
-            "total_sources": 0,
-            "strategies": {},
-            "avg_confidence": 0.0,
-            "ai_fallback_used": 0,
-        }
-        if not self.lance_db or "sources" not in self.lance_db.table_names():
-            return insights
-
-        try:
-            df_sources = self.lance_db.open_table("sources").to_pandas()
-            if df_sources.empty:
-                return insights
-
-            df_sources = df_sources.copy()
-            strategies: Dict[str, int] = {}
-            confidences: List[float] = []
-            ai_count = 0
-
-            for _, row in df_sources.iterrows():
-                raw_meta = row.get("metadata", "{}")
-                try:
-                    meta = json.loads(raw_meta) if isinstance(raw_meta, str) else (raw_meta or {})
-                except Exception:
-                    meta = {}
-
-                strategy = str(meta.get("parser_strategy", "unknown"))
-                strategies[strategy] = strategies.get(strategy, 0) + 1
-
-                conf = meta.get("parser_confidence")
-                if isinstance(conf, (int, float)):
-                    confidences.append(float(conf))
-                if strategy == "ai-structured-fallback":
-                    ai_count += 1
-
-            insights["total_sources"] = int(len(df_sources))
-            insights["strategies"] = strategies
-            insights["avg_confidence"] = round(sum(confidences) / len(confidences), 3) if confidences else 0.0
-            insights["ai_fallback_used"] = ai_count
-            return insights
-        except Exception as exc:
-            logger.warning(f"Failed to collect parser insights: {exc}")
-            return insights
-
     def _generate_summary(self, build_id: str, total_rows: int):
-        """Generate summary.md and summary.json from structured_test_results.
-        Handles both old format (JSON 'tests' column) and new normalized format.
-        Pass rate calculated as passed/(passed+failed) to match Allure behavior."""
-        import json
-        import re
-        from datetime import datetime, timezone
-        import pandas as pd
-        import numpy as np
+        report_dict = self.report.to_dict() if self.report else None
+        generate_summary(self.lance_db, self.data_base_path, build_id, total_rows, report_dict)
 
-        summary_md_path = self.data_base_path / build_id / "summary.md"
-        summary_json_path = self.data_base_path / build_id / "summary.json"
 
-        metrics = {
-            "total_tests": 0,
-            "executed_tests": 0,
-            "skipped_tests": 0,
-            "passed": 0,
-            "failed": 0,
-            "pass_rate": 0.0,
-            "module_count": 0,
-            "avg_duration_sec": 0.0,
-            "total_duration_sec": 0.0,
-            "most_common_error": "",
-            "slowest_tests": [],
-            "modules": {},
-            "projects": {}
-        }
-
-        lines = [
-            f"# Ingestion Summary: {build_id}",
-            "",
-            f"**Ingested at:** {datetime.now(timezone.utc).isoformat()}",
-            f"**Total records ingested:** {total_rows}",
-            "",
-        ]
-
-        parser_insights = self._collect_parser_insights()
-
-        tables_in_db = self.lance_db.table_names()
-        logger.info(f"Tables in DB: {tables_in_db}")
-
-        if "structured_test_results" not in tables_in_db:
-            lines.append("## ⚠️ Test Metrics")
-            lines.append("No `structured_test_results` table found.")
-            lines.append("")
-            lines.append("## 🧠 Parser Insights")
-            lines.append(f"- Total sources: {parser_insights.get('total_sources', 0)}")
-            lines.append(f"- Avg parser confidence: {parser_insights.get('avg_confidence', 0.0)}")
-            lines.append(f"- AI fallback used: {parser_insights.get('ai_fallback_used', 0)}")
-            summary_md_path.write_text("\n".join(lines), encoding='utf-8')
-            with open(summary_json_path, 'w', encoding='utf-8') as f:
-                json.dump({
-                    "build_id": build_id,
-                    "ingested_at": datetime.now(timezone.utc).isoformat(),
-                    "total_records_ingested": total_rows,
-                    "metrics": metrics,
-                    "tables": tables_in_db,
-                    "parser_insights": parser_insights,
-                }, f, indent=2, ensure_ascii=False)
-            return
-
-        try:
-            # Read the entire table into a pandas DataFrame
-            df_results = self.lance_db.open_table("structured_test_results").to_pandas()
-            logger.info(f"structured_test_results rows: {len(df_results)}")
-            logger.info(f"Columns: {list(df_results.columns)}")
-
-            all_tests = []
-            
-            # Check which format we have
-            if 'tests' in df_results.columns:
-                # OLD FORMAT: JSON blob in 'tests' column
-                logger.info("Using old format: extracting tests from 'tests' JSON column")
-                for tests_raw in df_results['tests'].dropna():
-                    if isinstance(tests_raw, str):
-                        try:
-                            tests_data = json.loads(tests_raw)
-                        except Exception as e:
-                            logger.warning(f"Failed to parse tests JSON: {e}")
-                            continue
-                    elif isinstance(tests_raw, np.ndarray):
-                        tests_data = tests_raw.tolist()
-                    else:
-                        tests_data = tests_raw
-
-                    if isinstance(tests_data, list):
-                        all_tests.extend(tests_data)
-                    elif isinstance(tests_data, dict):
-                        found = False
-                        for key in ['test_cases', 'tests', 'cases', 'results', 'items', 'data']:
-                            if key in tests_data and isinstance(tests_data[key], list):
-                                all_tests.extend(tests_data[key])
-                                found = True
-                                break
-                        if not found:
-                            all_tests.append(tests_data)
-            else:
-                # NEW FORMAT: normalized columns (one row per test)
-                logger.info("Using new normalized format: converting rows to test objects")
-                for _, row in df_results.iterrows():
-                    test_obj = {}
-                    
-                    # Map common fields
-                    test_obj['full_title'] = row.get('test_name') or row.get('full_name') or row.get('name') or ''
-                    test_obj['name'] = row.get('test_name') or row.get('name') or ''
-                    test_obj['status'] = row.get('status', '')
-                    test_obj['duration'] = row.get('duration', '0ms')
-                    test_obj['error'] = row.get('error_message', '')
-                    test_obj['spec_file'] = row.get('spec_file', '')
-                    test_obj['description'] = row.get('description', '')
-                    test_obj['project_name'] = row.get('project_name', 'unknown')
-                    test_obj['module_name'] = row.get('module_name', 'unknown')
-                    test_obj['platform_type'] = row.get('platform_type', 'desktop')
-                    
-                    # Handle labels (might be JSON string or dict)
-                    labels_val = row.get('labels', {})
-                    if isinstance(labels_val, str):
-                        try:
-                            test_obj['labels'] = json.loads(labels_val)
-                        except:
-                            test_obj['labels'] = {}
-                    else:
-                        test_obj['labels'] = labels_val
-                    
-                    # Handle tags
-                    tags_val = row.get('tags', [])
-                    if isinstance(tags_val, str):
-                        try:
-                            test_obj['tags'] = json.loads(tags_val)
-                        except:
-                            test_obj['tags'] = []
-                    else:
-                        test_obj['tags'] = tags_val
-                    
-                    test_obj['uuid'] = row.get('id', '')
-                    test_obj['history_id'] = row.get('history_id', '')
-                    test_obj['duration_seconds'] = row.get('duration_seconds', 0)
-                    
-                    all_tests.append(test_obj)
-
-            logger.info(f"Extracted {len(all_tests)} individual test records")
-
-            if not all_tests:
-                lines.append("## ⚠️ Test Metrics")
-                lines.append("No test records found in table.")
-                summary_md_path.write_text("\n".join(lines), encoding='utf-8')
-                json_data = {
-                    "build_id": build_id,
-                    "ingested_at": datetime.now(timezone.utc).isoformat(),
-                    "total_records_ingested": total_rows,
-                    "metrics": metrics,
-                    "tables": tables_in_db
-                }
-                with open(summary_json_path, 'w', encoding='utf-8') as f:
-                    json.dump(json_data, f, indent=2, ensure_ascii=False)
-                logger.info(f"JSON summary written to {summary_json_path}")
-                return
-
-            df_tests = pd.DataFrame(all_tests)
-            logger.info(f"Test DataFrame columns: {list(df_tests.columns)}")
-
-            # --- Flexible column detection ---
-            test_name_col = None
-            for col in ['full_title', 'title', 'test_name', 'name']:
-                if col in df_tests.columns:
-                    test_name_col = col
-                    break
-
-            status_col = None
-            for col in ['status', 'state', 'outcome', 'result']:
-                if col in df_tests.columns:
-                    status_col = col
-                    break
-
-            duration_col = None
-            for col in ['duration', 'duration_ms', 'time']:
-                if col in df_tests.columns:
-                    duration_col = col
-                    break
-
-            error_col = None
-            for col in ['error', 'error_message', 'message']:
-                if col in df_tests.columns:
-                    error_col = col
-                    break
-
-            logger.info(f"Detected columns: name={test_name_col}, status={status_col}, duration={duration_col}, error={error_col}")
-
-            if not (status_col and test_name_col and duration_col):
-                lines.append("## ⚠️ Test Metrics")
-                lines.append(f"Missing required columns. Found: name={test_name_col}, status={status_col}, duration={duration_col}")
-                summary_md_path.write_text("\n".join(lines), encoding='utf-8')
-                return
-
-            # --- Robust duration parser (handles '43758ms', '88ms', '1.5s', numeric ms/seconds) ---
-            def parse_duration(val):
-                if pd.isna(val):
-                    return None
-                # If it's already numeric (seconds)
-                if isinstance(val, (int, float)):
-                    return float(val)
-                if isinstance(val, str):
-                    val = val.strip().lower()
-                    # If it ends with 'ms'
-                    if val.endswith('ms'):
-                        try:
-                            return float(val[:-2]) / 1000.0
-                        except:
-                            pass
-                    # General number with optional unit
-                    match = re.match(r'^([\d.]+)\s*(ms|s|m|h)?$', val)
-                    if match:
-                        num = float(match.group(1))
-                        unit = match.group(2) or 's'
-                        if unit == 'ms':
-                            return num / 1000.0
-                        elif unit == 'm':
-                            return num * 60.0
-                        elif unit == 'h':
-                            return num * 3600.0
-                        else:
-                            return num
-                return None
-
-            # Check if duration_seconds already exists (normalized format)
-            if 'duration_seconds' in df_tests.columns:
-                df_tests['duration_seconds'] = pd.to_numeric(df_tests['duration_seconds'], errors='coerce')
-                valid_durations = df_tests['duration_seconds'].dropna()
-            else:
-                df_tests['duration_seconds'] = df_tests[duration_col].apply(parse_duration)
-                valid_durations = df_tests['duration_seconds'].dropna()
-            
-            logger.info(f"Valid durations: {len(valid_durations)} / {len(df_tests)}")
-
-            # --- Calculate metrics (Allure-style pass rate) ---
-            total_tests = len(df_tests)
-            status_series = df_tests[status_col].astype(str).str.lower()
-            passed = status_series.eq('passed').sum()
-            failed = status_series.isin(['failed', 'broken', 'error']).sum()
-            skipped = status_series.isin(['skipped', 'pending', 'unknown']).sum()
-            executed_tests = passed + failed
-            
-            # Pass rate based on executed tests only (ignores skipped/pending)
-            pass_rate = (passed / executed_tests * 100) if executed_tests > 0 else 0.0
-
-            avg_duration = valid_durations.mean() if len(valid_durations) > 0 else 0.0
-            total_duration = valid_durations.sum() if len(valid_durations) > 0 else 0.0
-
-            # Top 15 slowest tests
-            slowest = []
-            if not df_tests.empty and len(valid_durations) > 0:
-                df_valid = df_tests[df_tests['duration_seconds'].notna()].copy()
-                if not df_valid.empty:
-                    df_top = df_valid.nlargest(15, 'duration_seconds')
-                    slowest = [
-                        {"name": str(row[test_name_col]), "duration_sec": round(row['duration_seconds'], 2)}
-                        for _, row in df_top.iterrows()
-                    ]
-
-            # Most common error message (only from failed tests)
-            common_error = ""
-            if error_col and error_col in df_tests.columns:
-                failed_mask = status_series.isin(['failed', 'broken', 'error'])
-                errors = df_tests.loc[failed_mask, error_col].dropna()
-                error_strings = []
-                for err in errors:
-                    if isinstance(err, dict):
-                        msg = err.get('message', '') or str(err)
-                    else:
-                        msg = str(err)
-                    if msg and msg.strip() and msg != '{}' and msg != 'nan':
-                        error_strings.append(msg.strip())
-                if error_strings:
-                    # Get most common error (truncate for display)
-                    common_error = pd.Series(error_strings).mode().iloc[0][:200]
-
-            metrics = {
-                "total_tests": int(total_tests),
-                "executed_tests": int(executed_tests),
-                "skipped_tests": int(skipped),
-                "passed": int(passed),
-                "failed": int(failed),
-                "pass_rate": round(pass_rate, 2),
-                "module_count": 0,
-                "avg_duration_sec": round(avg_duration, 2),
-                "total_duration_sec": round(total_duration, 2),
-                "most_common_error": common_error,
-                "slowest_tests": slowest,
-                "modules": {},
-                "projects": {}
-            }
-
-            module_metrics = {}
-            if "structured_test_module_metrics" in tables_in_db:
-                df_module = self.lance_db.open_table("structured_test_module_metrics").to_pandas()
-                for _, row in df_module.iterrows():
-                    module_name = str(row.get("module_name", "unknown"))
-                    if not module_name:
-                        module_name = "unknown"
-                    module_metrics[module_name] = {
-                        "project_name": str(row.get("project_name", "unknown")),
-                        "platform_type": str(row.get("platform_type", "desktop")),
-                        "tests_per_module": int(row.get("total_tests", 0) or 0),
-                        "passed": int(row.get("passed", 0) or 0),
-                        "failed": int(row.get("failed", 0) or 0),
-                        "skipped": int(row.get("skipped", 0) or 0),
-                        "pending": int(row.get("pending", 0) or 0),
-                        "unknown": int(row.get("unknown", 0) or 0),
-                        "pass_rate": float(row.get("pass_rate", 0.0) or 0.0),
-                        "total_execution_time_sec": float(row.get("total_duration_seconds", 0.0) or 0.0),
-                        "avg_execution_time_sec": float(row.get("avg_duration_seconds", 0.0) or 0.0),
-                    }
-            else:
-                # Fallback: compute from test-level table if module table is unavailable.
-                if "module_name" in df_tests.columns:
-                    if "project_name" not in df_tests.columns:
-                        df_tests["project_name"] = "unknown"
-                    if "platform_type" not in df_tests.columns:
-                        df_tests["platform_type"] = "desktop"
-                    df_module = df_tests.copy()
-                    df_module["normalized_status"] = status_series
-                    grouped_module = df_module.groupby(["module_name", "project_name", "platform_type"], dropna=False)
-                    for (module_name, project_name, platform_type), grp in grouped_module:
-                        statuses = grp["normalized_status"].astype(str).str.lower()
-                        passed_m = int(statuses.eq("passed").sum())
-                        failed_m = int(statuses.isin(["failed", "broken", "error"]).sum())
-                        skipped_m = int(statuses.isin(["skipped"]).sum())
-                        pending_m = int(statuses.isin(["pending"]).sum())
-                        unknown_m = int(statuses.isin(["unknown"]).sum())
-                        executed_m = passed_m + failed_m
-                        total_m = int(len(grp))
-                        module_metrics[str(module_name)] = {
-                            "project_name": str(project_name),
-                            "platform_type": str(platform_type),
-                            "tests_per_module": total_m,
-                            "passed": passed_m,
-                            "failed": failed_m,
-                            "skipped": skipped_m,
-                            "pending": pending_m,
-                            "unknown": unknown_m,
-                            "pass_rate": round((passed_m / executed_m * 100), 2) if executed_m else 0.0,
-                            "total_execution_time_sec": round(float(grp["duration_seconds"].sum()), 2),
-                            "avg_execution_time_sec": round(float(grp["duration_seconds"].mean()), 2) if total_m else 0.0,
-                        }
-
-            project_metrics = {}
-            if "structured_test_project_metrics" in tables_in_db:
-                df_project = self.lance_db.open_table("structured_test_project_metrics").to_pandas()
-                for _, row in df_project.iterrows():
-                    project_name = str(row.get("project_name", "unknown"))
-                    key = f"{project_name}:{str(row.get('platform_type', 'desktop'))}"
-                    project_metrics[key] = {
-                        "project_name": project_name,
-                        "platform_type": str(row.get("platform_type", "desktop")),
-                        "module_count": int(row.get("module_count", 0) or 0),
-                        "total_tests": int(row.get("total_tests", 0) or 0),
-                        "passed": int(row.get("passed", 0) or 0),
-                        "failed": int(row.get("failed", 0) or 0),
-                        "skipped": int(row.get("skipped", 0) or 0),
-                        "pass_rate": float(row.get("pass_rate", 0.0) or 0.0),
-                        "total_execution_time_sec": float(row.get("total_duration_seconds", 0.0) or 0.0),
-                    }
-
-            metrics["modules"] = module_metrics
-            metrics["projects"] = project_metrics
-            metrics["module_count"] = len(module_metrics)
-
-            # Build markdown summary
-            lines.append("## 📊 Test Metrics")
-            lines.append(f"- **Total number of tests:** {total_tests}")
-            lines.append(f"- **Executed tests:** {executed_tests} (passed + failed)")
-            lines.append(f"- **Skipped/Pending tests:** {skipped}")
-            lines.append(f"- **Passed tests:** {passed}")
-            lines.append(f"- **Failed tests:** {failed}")
-            lines.append(f"- **Pass rate (executed only):** {pass_rate:.2f}%")
-            lines.append(f"- **Average duration:** {avg_duration:.2f} seconds")
-            lines.append(f"- **Total duration:** {total_duration:.2f} seconds")
-            lines.append(f"- **Most common failure reason:** {common_error if common_error else '(no error messages captured)'}")
-
-            if slowest:
-                lines.append("\n### 🐢 Top 15 Slowest Tests")
-                lines.append("| Test Name | Duration (seconds) |")
-                lines.append("|-----------|--------------------|")
-                for item in slowest:
-                    name = item["name"]
-                    dur = item["duration_sec"]
-                    display_name = name[:80] + "..." if len(name) > 80 else name
-                    lines.append(f"| {display_name} | {dur:.2f} |")
-            else:
-                lines.append("\n### 🐢 Top 15 Slowest Tests\nNo duration data available.")
-
-        except Exception as e:
-            logger.error(f"Error generating summary: {e}", exc_info=True)
-            lines.append("\n## ⚠️ Test Metrics")
-            lines.append(f"Error computing metrics: {str(e)}")
-
-        lines.append("\n## 📁 Tables in this ingestion")
-        for t in tables_in_db:
-            lines.append(f"- `{t}`")
-
-        # Write markdown
-        summary_md_path.write_text("\n".join(lines), encoding='utf-8')
-        logger.info(f"Markdown summary written to {summary_md_path}")
-
-        # Write JSON summary
-        json_data = {
-            "build_id": build_id,
-            "ingested_at": datetime.now(timezone.utc).isoformat(),
-            "total_records_ingested": total_rows,
-            "metrics": metrics,
-            "tables": tables_in_db,
-            "parser_insights": parser_insights,
-        }
-        with open(summary_json_path, 'w', encoding='utf-8') as f:
-            json.dump(json_data, f, indent=2, ensure_ascii=False)
-        logger.info(f"JSON summary written to {summary_json_path}")
-
-    def run_ingestion_from_config(self, config_path: str, build_id: str = None):
-        if build_id is None:
-            build_id = f"ingestion_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}"
-        with open(config_path, 'r') as f:
-            config = json.load(f)
-        for source in config['sources']:
-            self.ingest_source(source, build_id)
+if __name__ == "__main__":
+    logging.basicConfig(level=logging.INFO)
+    config_file = Path(__file__).parent.parent / "config2.json"
+    if config_file.exists():
+        with open(config_file, 'r') as f:
+            cfg = json.load(f)
+        base_path = cfg.get("output", {}).get("base_path", "../data")
+        UniversalIngester(data_base_path=base_path).run_ingestion_from_config(str(config_file))
+    else:
+        print(f"No config found at {config_file}")

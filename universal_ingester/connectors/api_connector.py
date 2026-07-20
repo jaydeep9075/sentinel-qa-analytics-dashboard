@@ -1,7 +1,15 @@
+import logging
+import time
+
 import requests
-import pandas as pd
 from typing import List, Dict, Any
 from .base import BaseConnector
+
+logger = logging.getLogger(__name__)
+
+REQUEST_TIMEOUT_SECONDS = 30
+MAX_RETRIES = 3
+
 
 class APIConnector(BaseConnector):
     def __init__(self, url: str, method='GET', headers=None, params=None):
@@ -11,26 +19,32 @@ class APIConnector(BaseConnector):
         self.params = params or {}
 
     def fetch(self) -> List[Dict[str, Any]]:
-        response = requests.request(self.method, self.url, headers=self.headers, params=self.params)
-        response.raise_for_status()
-        data = response.json()
-        # Assume data is list of objects or a dict with a key containing list
-        if isinstance(data, list):
-            df = pd.DataFrame(data)
-        elif isinstance(data, dict):
-            # Try to find first list value
-            for v in data.values():
-                if isinstance(v, list):
-                    df = pd.DataFrame(v)
-                    break
-            else:
-                df = pd.DataFrame([data])
-        else:
-            df = pd.DataFrame([{'value': data}])
-
-        return [{
-            'name': 'api_response',
-            'data': df,
-            'type': 'structured',
-            'metadata': {'url': self.url, 'method': self.method}
-        }]
+        """Return the raw JSON payload; the engine's structure normalizer
+        relationalizes it (every nested record array preserved, not just
+        the first list found)."""
+        last_exc = None
+        for attempt in range(1, MAX_RETRIES + 1):
+            try:
+                response = requests.request(
+                    self.method, self.url,
+                    headers=self.headers, params=self.params,
+                    timeout=REQUEST_TIMEOUT_SECONDS,
+                )
+                response.raise_for_status()
+                data = response.json()
+                return [{
+                    'name': 'api_response',
+                    'data': data,
+                    'type': 'raw',
+                    'metadata': {'url': self.url, 'method': self.method},
+                }]
+            except (requests.ConnectionError, requests.Timeout) as exc:
+                last_exc = exc
+                if attempt < MAX_RETRIES:
+                    wait = 2 ** attempt
+                    logger.warning(f"API request failed (attempt {attempt}/{MAX_RETRIES}), retrying in {wait}s: {exc}")
+                    time.sleep(wait)
+            except Exception as exc:
+                # Non-retryable (HTTP 4xx/5xx after raise_for_status, bad JSON).
+                raise
+        raise last_exc
