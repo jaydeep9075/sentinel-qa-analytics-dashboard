@@ -165,13 +165,22 @@ SELECT ROUND(SUM(CASE WHEN status='passed' THEN 1.0 ELSE 0 END)*100.0/COUNT(*), 
        SUM(CASE WHEN status='failed' THEN 1 ELSE 0 END) AS failed_count
 FROM flattened_tests WHERE status IN ('passed','failed')
 
-=== RULES ===
-1. ANY data question → action="sql"
-2. Greetings / meta only → action="answer"
-3. SQL must be valid DuckDB — no trailing semicolon
-4. Always use ILIKE for string matching
-5. For mobile/desktop questions always use platform_type column
-6. Prefer module_metrics / project_metrics for aggregated answers
+=== DECISION RULES ===
+1. Data question (asks about tests, metrics, pass rates, failures, modules, etc.) → action="sql"
+2. Greetings, meta questions, or help requests → action="answer"
+3. SQL must be valid DuckDB — no trailing semicolon, no LIMIT unless asking for top N
+4. Always use ILIKE for case-insensitive string matching on VARCHAR columns
+5. For mobile/desktop questions always use platform_type column, NOT browser name
+6. Prefer aggregated tables (module_metrics, project_metrics) for summarized data
+7. If unsure about status values, use WHERE status IN ('passed','failed','skipped','pending','unknown')
+8. Complex questions may need multiple CTEs or joins — feel free to use them
+9. For questions asking "top N" or "highest/lowest", always ORDER BY and LIMIT explicitly
+
+RESPONSE_QUALITY_HINTS:
+- SQL should return data that DIRECTLY answers the user's question
+- Avoid SELECT * unless necessary; include only relevant columns
+- Use aliases for clarity (e.g., AS total_failures, AS pct_failed)
+- Order results in ways that reveal patterns (DESC for impact metrics)
 
 Return ONLY this JSON (no markdown, no explanation):
 {{"action":"sql","data":"SELECT ..."}} OR {{"action":"answer","data":"plain text"}}"""
@@ -182,6 +191,7 @@ Return ONLY this JSON (no markdown, no explanation):
 # ---------------------------------------------------------------------------
 
 CHAT_ANSWER_PROMPT = """You are a concise QA analytics assistant. Answer directly using the data below.
+Your goal is to provide clear, actionable insights that help the user understand their test data quickly.
 
 USER QUESTION: {user_message}
 
@@ -191,21 +201,28 @@ USER FEEDBACK PREFERENCES:
 DATA ({row_count} rows):
 {data_json}
 
-RULES:
-- Direct and specific — no "based on the data" filler
-- Single number → emoji + bold (e.g. "📊 **347 tests failed**")
-- Lists → numbered, max 30 items, then "… and N more"
-- Include project_name, module_name, platform_type when present in data
-- Pass rate → percentage + one-line verdict
-- Keep under 250 words unless listing many items
-- Never invent data not in the JSON
+RESPONSE GUIDELINES:
+- Start with the most important insight directly (no preamble)
+- Use emojis strategically: 📊 for metrics, ✅ for pass, ❌ for fail, ⚠️ for warnings, 🎯 for targets
+- Numbers: **bold** format with units (e.g., "**347 tests**, **82% pass rate**")
+- Lists: numbered (1, 2, 3...), max 30 items; if more, show top 10 and append "... and 20 more items"
+- Always include context: project_name, module_name, platform_type when available
+- Pass rates: show as "**XX%**" with brief verdict (e.g., "strong", "concerning", "critical")
+- Key stats: highlight outliers or unexpected patterns (e.g., "unusually slow test: 45s")
+- Keep response under 250 words unless the user asks for extensive detail
+- Be specific: avoid vague phrases like "seems to", "appears to" - use data-backed language
+- Never invent or extrapolate data not in the provided JSON
+- If data has obvious gaps or limitations, briefly note them (e.g., "skipped tests not shown in data")
+
+ANSWER FORMAT EXAMPLES:
+- Single metric: "📊 **347 failed tests** across 12 modules. Highest impact: Checkout module with 89 failures."
+- Comparison: "Mobile has **15% lower pass rate** (78% vs 93% on desktop). Key issue: Login flow on iOS."
+- Trend: "**12 slowest tests** average 28 seconds each. Test setup_user_session_with_analytics dominates at 45s."
 
 Answer:"""
 
 
-CHAT_VALIDATION_PROMPT = """You are a strict QA answer validator.
-
-Validate whether DRAFT_ANSWER is fully supported by the DATA rows.
+CHAT_VALIDATION_PROMPT = """You are a strict QA answer validator. Your job is to ensure responses are accurate, grounded, and useful.
 
 USER_QUESTION: {user_message}
 DRAFT_ANSWER: {draft_answer}
@@ -213,16 +230,26 @@ DRAFT_ANSWER: {draft_answer}
 DATA ({row_count} rows):
 {data_json}
 
-RULES:
-1. Mark is_valid=true only if every claim in DRAFT_ANSWER is supported by DATA.
-2. If any claim is unsupported, set is_valid=false and provide corrected_answer grounded only in DATA.
-3. Never invent values or entities not present in DATA.
-4. Keep corrected_answer concise and direct.
+VALIDATION CHECKLIST:
+1. Every quantitative claim (numbers, percentages, counts) is exact and matches the data
+2. Every entity mentioned (project, module, test, platform) exists in the data
+3. Any comparison or ordering (highest, lowest, fastest, slowest) is correct
+4. The response answers the user's actual question (not related questions)
+5. No speculation, extrapolation, or data not in the provided JSON
+6. Percentages are calculated correctly if shown (e.g., failed/total * 100)
+7. The response provides actionable insight, not just facts
+8. Grammar, clarity, and professional tone are maintained
+
+CORRECTION STRATEGY:
+- If is_valid=false, fix ONLY the errors. Keep any correct statements.
+- Simplify vague language to data-backed assertions.
+- Add missing context that would make the answer clearer.
+- Preserve the response's structure and tone; just correct facts.
 
 Return ONLY valid JSON:
 {{"is_valid": true, "corrected_answer": ""}}
 or
-{{"is_valid": false, "corrected_answer": "..."}}"""
+{{"is_valid": false, "corrected_answer": "...", "issues": ["issue 1", "issue 2"]}}"""
 
 
 SUGGESTION_PROMPT = """You are an analytics copilot generating prompt suggestions for whatever

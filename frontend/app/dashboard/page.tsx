@@ -21,6 +21,7 @@ export default function Dashboard() {
     status_summary?: {
       passed?: number;
       failed?: number;
+      skipped?: number;
     };
   } | null>(null);
   const [backendConnected, setBackendConnected] = useState(false);
@@ -67,7 +68,7 @@ export default function Dashboard() {
       status?: {
         has_data?: boolean;
         total_rows?: number;
-        status_summary?: { passed?: number; failed?: number };
+        status_summary?: { passed?: number; failed?: number; skipped?: number };
       };
       quality?: {
         score?: number;
@@ -364,7 +365,7 @@ export default function Dashboard() {
       <div className="relative z-10 max-w-[1600px] mx-auto px-6 py-8">
         {/* Data Summary Cards */}
         {(dataStatus?.has_data && dataStatus.total_rows) || isHeaderLoading ? (
-          <div className="grid grid-cols-1 md:grid-cols-5 gap-4 mb-4">
+          <div className="grid grid-cols-1 md:grid-cols-6 gap-4 mb-4">
             {/* Total Tests */}
             <div className="group relative rounded-2xl p-5 border border-slate-200 bg-white hover:border-cyan-500/20 hover:bg-cyan-500/[0.03] transition-all overflow-hidden dark:border-white/[0.06] dark:bg-white/[0.02]">
               <div className="absolute -top-12 -right-12 w-24 h-24 bg-cyan-500/[0.06] blur-2xl rounded-full opacity-0 group-hover:opacity-100 transition-opacity" />
@@ -402,6 +403,15 @@ export default function Dashboard() {
                   : `${Math.round(
                       (((dataStatus?.status_summary?.passed || 0) / Math.max(1, dataStatus?.total_rows || 0)) * 100),
                     )}%`}
+              </p>
+            </div>
+
+            {/* Skipped */}
+            <div className="group relative rounded-2xl p-5 border border-amber-500/10 bg-amber-500/[0.03] hover:border-amber-500/25 hover:bg-amber-500/[0.06] transition-all overflow-hidden">
+              <div className="absolute -top-12 -right-12 w-24 h-24 bg-amber-500/[0.08] blur-2xl rounded-full opacity-0 group-hover:opacity-100 transition-opacity" />
+              <p className="text-[10px] uppercase tracking-widest font-semibold mb-1 text-slate-500 dark:text-white/30">Skipped</p>
+              <p className="text-3xl font-bold text-amber-500 dark:text-amber-400">
+                {isHeaderLoading ? "..." : (dataStatus?.status_summary?.skipped?.toLocaleString() || 0)}
               </p>
             </div>
 

@@ -49,6 +49,58 @@ logger = logging.getLogger(__name__)
 _sql_cache: dict = {}
 
 
+def _enhance_response_formatting(response: str) -> str:
+    """Improve response readability and quality through post-processing."""
+    if not response or not isinstance(response, str):
+        return response
+
+    # Ensure proper spacing around key formatting
+    response = re.sub(r'\*\*(\d+%)\*\*', r'**\1**', response)
+
+    # Fix broken bullet lists
+    response = re.sub(r'(?<!-)\n(\d+\.)', r'\n\1', response)
+
+    # Ensure newlines around numbered lists for readability
+    response = re.sub(r'(\w)\n(\d+\.)', r'\1\n\n\2', response)
+
+    # Add spacing after emojis for clarity
+    response = re.sub(r'(📊|✅|❌|⚠️|🎯|📭|💡|🔥|⏱️)([A-Z])', r'\1 \2', response)
+
+    # Remove excessive whitespace while preserving intentional line breaks
+    lines = response.split('\n')
+    lines = [line.strip() for line in lines]
+    response = '\n'.join(lines)
+
+    # Ensure no more than 2 consecutive blank lines
+    response = re.sub(r'\n\n\n+', r'\n\n', response)
+
+    return response.strip()
+
+
+def _improve_numeric_formatting(response: str, df: pd.DataFrame) -> str:
+    """Enhance response by adding better numeric formatting when data is available."""
+    if df.empty or response.count("**") < 2:
+        return response
+
+    # Add summary statistics if multiple numeric columns exist
+    numeric_cols = df.select_dtypes(include=[np.number]).columns
+    if len(numeric_cols) > 1 and "pass_rate" in df.columns:
+        try:
+            pass_rate = float(df.iloc[0].get("pass_rate", 0))
+            if "READY" not in response and "RELEASE" not in response:
+                if pass_rate >= 95:
+                    summary = "\n\n✅ **Quality is excellent** — ready for confidence decisions."
+                elif pass_rate >= 80:
+                    summary = "\n\n⚠️ **Quality is acceptable** but review critical failures before release."
+                else:
+                    summary = "\n\n❌ **Quality needs attention** — fix failures before proceeding."
+                response += summary
+        except Exception:
+            pass
+
+    return response
+
+
 # ---------------------------------------------------------------------------
 # Layout
 # ---------------------------------------------------------------------------
@@ -506,6 +558,7 @@ async def handle_chat(user_message: str, session_id: str, ingestion_id: str,
                       role: str = None, project_id: str = None,
                       user_id: str = "anonymous", workspace_id: str = "default"):
     nid = str(ingestion_id or "").strip()
+    response_df = pd.DataFrame()
     if state.current_ingestion_id != nid or not state.duck_conn or not state.lance_db:
         if not data_loader.init_data(nid):
             return f"❌ Ingestion '{ingestion_id}' not found or data unavailable."
@@ -628,6 +681,7 @@ async def handle_chat(user_message: str, session_id: str, ingestion_id: str,
                 elif not _is_df_usable(df):
                     response = "📭 I couldn't find data matching exactly what you asked. Try rephrasing or broadening the request."
                 else:
+                    response_df = df
                     is_release = any(kw in user_message.lower()
                                      for kw in ("release", "good to go", "ready for", "ship", "deploy"))
                     if is_release and "pass_rate" in df.columns:
@@ -707,6 +761,10 @@ async def handle_chat(user_message: str, session_id: str, ingestion_id: str,
 
     else:
         response = str(data) if data else "I'm not sure how to answer that. Try rephrasing."
+
+    response = _enhance_response_formatting(response)
+    if not response_df.empty:
+        response = _improve_numeric_formatting(response, response_df)
 
     memory.store_chat_message(
         session_id, "user", user_message,

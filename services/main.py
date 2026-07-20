@@ -466,7 +466,7 @@ def _get_status_payload(normalized_ingestion_id: str) -> dict:
         return cached
 
     if not state.duck_conn:
-        payload = {"has_data": False, "total_rows": 0, "status_summary": {"passed": 0, "failed": 0}}
+        payload = {"has_data": False, "total_rows": 0, "status_summary": {"passed": 0, "failed": 0, "skipped": 0}}
         return _cache_set(_status_cache, normalized_ingestion_id, payload)
 
     test_table = _get_test_results_table()
@@ -475,13 +475,15 @@ def _get_status_payload(normalized_ingestion_id: str) -> dict:
         SELECT
           COUNT(*) AS total_rows,
           SUM(CASE WHEN status='passed' THEN 1 ELSE 0 END) AS passed,
-          SUM(CASE WHEN status='failed' THEN 1 ELSE 0 END) AS failed
+          SUM(CASE WHEN status='failed' THEN 1 ELSE 0 END) AS failed,
+          SUM(CASE WHEN status='skipped' THEN 1 ELSE 0 END) AS skipped
         FROM {test_table}
         """
     ).fetchone()
     total_rows = int(row[0] or 0)
     passed = int(row[1] or 0)
     failed = int(row[2] or 0)
+    skipped = int(row[3] or 0)
 
     payload = {
         "has_data": total_rows > 0,
@@ -489,6 +491,7 @@ def _get_status_payload(normalized_ingestion_id: str) -> dict:
         "status_summary": {
             "passed": passed,
             "failed": failed,
+            "skipped": skipped,
         },
     }
     return _cache_set(_status_cache, normalized_ingestion_id, payload)
@@ -818,7 +821,7 @@ async def data_status(
         return _get_status_payload(normalized_ingestion_id)
     except Exception as e:
         logger.error(f"Error in /data/status: {e}")
-        return {"has_data": False, "total_rows": 0, "status_summary": {"passed": 0, "failed": 0}}
+        return {"has_data": False, "total_rows": 0, "status_summary": {"passed": 0, "failed": 0, "skipped": 0}}
 
 
 @app.get("/data/profile")
@@ -870,7 +873,7 @@ async def dashboard_overview(
 ):
     normalized_ingestion_id = str(x_ingestion_id or "").strip()
 
-    status_payload = {"has_data": False, "total_rows": 0, "status_summary": {"passed": 0, "failed": 0}}
+    status_payload = {"has_data": False, "total_rows": 0, "status_summary": {"passed": 0, "failed": 0, "skipped": 0}}
     quality_payload = {
         "score": 0,
         "quality": "unknown",
@@ -955,6 +958,30 @@ async def list_ingestions(current_user: dict = Depends(get_current_user)):
         item["build_label"] = f"Build {i + 1}"
     
     return {"ingestions": sorted(sorted_ingestions, key=lambda x: x["created"], reverse=True)}
+
+
+@app.delete("/ingestions/{ingestion_id}")
+async def delete_ingestion(
+    ingestion_id: str,
+    current_user: dict = Depends(get_current_user)
+):
+    """Delete an ingestion and all its associated data."""
+    try:
+        ingestion_path = config.DATA_BASE_PATH / ingestion_id
+        if not ingestion_path.exists():
+            return {"error": f"Ingestion {ingestion_id} not found"}
+
+        if state.current_ingestion_id == ingestion_id:
+            state.current_ingestion_id = None
+            state.duck_conn = None
+            state.lance_db = None
+
+        shutil.rmtree(ingestion_path)
+        logger.info(f"Deleted ingestion {ingestion_id}")
+        return {"success": True, "message": f"Ingestion {ingestion_id} deleted successfully"}
+    except Exception as e:
+        logger.error(f"Error deleting ingestion {ingestion_id}: {e}")
+        return {"error": str(e)}
 
 
 @app.get("/suggestions")
