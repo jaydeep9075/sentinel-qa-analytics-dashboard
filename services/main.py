@@ -22,8 +22,15 @@ logger = logging.getLogger(__name__)
 
 _STATUS_CACHE_TTL_SECONDS = 10.0
 _QUALITY_CACHE_TTL_SECONDS = 20.0
+_SUGGESTIONS_CACHE_TTL_SECONDS = 120.0
+_INGESTIONS_CACHE_TTL_SECONDS = 15.0
+_TOKEN_USAGE_CACHE_TTL_SECONDS = 8.0
 _status_cache: dict[str, tuple[float, dict]] = {}
 _quality_cache: dict[str, tuple[float, dict]] = {}
+_suggestions_cache: dict[str, tuple[float, dict]] = {}
+_ingestions_cache: dict[str, tuple[float, dict]] = {}
+_token_usage_cache: dict[str, tuple[float, dict]] = {}
+_INGESTIONS_CACHE_KEY = "global"
 _PERF_PATH_PREFIXES = (
     "/dashboard/overview",
     "/data/status",
@@ -526,6 +533,15 @@ def _get_quality_payload(normalized_ingestion_id: str) -> dict:
     )
 
 
+def _get_cached_token_usage(user_id: Optional[str], workspace_id: Optional[str]) -> dict:
+    key = f"{workspace_id}:{user_id}"
+    cached = _cache_get(_token_usage_cache, key, _TOKEN_USAGE_CACHE_TTL_SECONDS)
+    if cached is not None:
+        return cached
+    payload = token_usage_store.get_usage(user_id=user_id, workspace_id=workspace_id)
+    return _cache_set(_token_usage_cache, key, payload)
+
+
 def _get_cached_quality_payload(normalized_ingestion_id: str) -> dict:
     cached = _cache_get(_quality_cache, normalized_ingestion_id, _QUALITY_CACHE_TTL_SECONDS)
     if cached is not None:
@@ -700,8 +716,7 @@ async def get_chat_history_endpoint(
     current_user: dict = Depends(get_current_user)
 ):
     normalized_ingestion_id = str(x_ingestion_id or "").strip()
-    if state.current_ingestion_id != normalized_ingestion_id or state.duck_conn is None or state.lance_db is None:
-        data_loader.init_data(normalized_ingestion_id)
+    data_loader.ensure_ingestion_loaded(normalized_ingestion_id)
     target = str(target_user or "").strip().lower()
     if target and target != str(current_user["username"]).strip().lower() and not _is_admin_role(current_user.get("role")):
         raise HTTPException(status_code=403, detail="Not allowed to access other users history")
@@ -724,8 +739,7 @@ async def get_chart_history_endpoint(
     current_user: dict = Depends(get_current_user)
 ):
     normalized_ingestion_id = str(x_ingestion_id or "").strip()
-    if state.current_ingestion_id != normalized_ingestion_id or state.duck_conn is None or state.lance_db is None:
-        data_loader.init_data(normalized_ingestion_id)
+    data_loader.ensure_ingestion_loaded(normalized_ingestion_id)
     target = str(target_user or "").strip().lower()
     if target and target != str(current_user["username"]).strip().lower() and not _is_admin_role(current_user.get("role")):
         raise HTTPException(status_code=403, detail="Not allowed to access other users history")
@@ -748,8 +762,7 @@ async def delete_chart(
     current_user: dict = Depends(get_current_user)
 ):
     normalized_ingestion_id = str(x_ingestion_id or "").strip()
-    if state.current_ingestion_id != normalized_ingestion_id or state.duck_conn is None or state.lance_db is None:
-        data_loader.init_data(normalized_ingestion_id)
+    data_loader.ensure_ingestion_loaded(normalized_ingestion_id)
     if not state.lance_db or "chart_history" not in state.lance_db.table_names():
         return {"error": "Chart history not available"}
     try:
@@ -794,8 +807,7 @@ async def debug_data(
     current_user: dict = Depends(get_current_user)
 ):
     normalized_ingestion_id = str(x_ingestion_id or "").strip()
-    if state.current_ingestion_id != normalized_ingestion_id or state.duck_conn is None or state.lance_db is None:
-        data_loader.init_data(normalized_ingestion_id)
+    data_loader.ensure_ingestion_loaded(normalized_ingestion_id)
     data = {}
     if state.duck_conn:
         tables = state.duck_conn.execute("SHOW TABLES").fetchall()
@@ -814,8 +826,7 @@ async def data_status(
     current_user: dict = Depends(get_current_user)
 ):
     normalized_ingestion_id = str(x_ingestion_id or "").strip()
-    if state.current_ingestion_id != normalized_ingestion_id or state.duck_conn is None or state.lance_db is None:
-        data_loader.init_data(normalized_ingestion_id)
+    data_loader.ensure_ingestion_loaded(normalized_ingestion_id)
 
     try:
         return _get_status_payload(normalized_ingestion_id)
@@ -830,8 +841,7 @@ async def data_profile(
     current_user: dict = Depends(get_current_user)
 ):
     normalized_ingestion_id = str(x_ingestion_id or "").strip()
-    if state.current_ingestion_id != normalized_ingestion_id or state.duck_conn is None or state.lance_db is None:
-        data_loader.init_data(normalized_ingestion_id)
+    data_loader.ensure_ingestion_loaded(normalized_ingestion_id)
 
     if not state.duck_conn:
         return {"tables": {}}
@@ -849,8 +859,7 @@ async def data_quality(
     current_user: dict = Depends(get_current_user)
 ):
     normalized_ingestion_id = str(x_ingestion_id or "").strip()
-    if state.current_ingestion_id != normalized_ingestion_id or state.duck_conn is None or state.lance_db is None:
-        data_loader.init_data(normalized_ingestion_id)
+    data_loader.ensure_ingestion_loaded(normalized_ingestion_id)
 
     try:
         return _get_quality_payload(normalized_ingestion_id)
@@ -882,8 +891,7 @@ async def dashboard_overview(
     }
 
     if normalized_ingestion_id:
-        if state.current_ingestion_id != normalized_ingestion_id or state.duck_conn is None or state.lance_db is None:
-            data_loader.init_data(normalized_ingestion_id)
+        data_loader.ensure_ingestion_loaded(normalized_ingestion_id)
         try:
             status_payload = _get_status_payload(normalized_ingestion_id)
         except Exception as e:
@@ -897,7 +905,7 @@ async def dashboard_overview(
         except Exception as e:
             logger.error(f"Error computing overview quality: {e}")
 
-    persistent = token_usage_store.get_usage(
+    persistent = _get_cached_token_usage(
         user_id=current_user.get("username"),
         workspace_id=_normalize_workspace(x_workspace_id, current_user),
     )
@@ -923,6 +931,10 @@ async def dashboard_overview(
 @app.get("/ingestions")
 async def list_ingestions(current_user: dict = Depends(get_current_user)):
     """Return list of available ingestion IDs with metadata (prefer JSON summary)."""
+    cached = _cache_get(_ingestions_cache, _INGESTIONS_CACHE_KEY, _INGESTIONS_CACHE_TTL_SECONDS)
+    if cached is not None:
+        return cached
+
     ingestions = []
     for path in config.DATA_BASE_PATH.iterdir():
         if path.is_dir() and (path / "lancedb").exists():
@@ -956,8 +968,9 @@ async def list_ingestions(current_user: dict = Depends(get_current_user)):
     sorted_ingestions = sorted(ingestions, key=lambda x: x["created"])
     for i, item in enumerate(sorted_ingestions):
         item["build_label"] = f"Build {i + 1}"
-    
-    return {"ingestions": sorted(sorted_ingestions, key=lambda x: x["created"], reverse=True)}
+
+    payload = {"ingestions": sorted(sorted_ingestions, key=lambda x: x["created"], reverse=True)}
+    return _cache_set(_ingestions_cache, _INGESTIONS_CACHE_KEY, payload)
 
 
 @app.delete("/ingestions/{ingestion_id}")
@@ -975,6 +988,8 @@ async def delete_ingestion(
             state.current_ingestion_id = None
             state.duck_conn = None
             state.lance_db = None
+        state._ingestion_pool.pop(ingestion_id, None)
+        _ingestions_cache.pop(_INGESTIONS_CACHE_KEY, None)
 
         shutil.rmtree(ingestion_path)
         logger.info(f"Deleted ingestion {ingestion_id}")
@@ -993,11 +1008,15 @@ async def role_suggestions(
     current_user: dict = Depends(get_current_user),
 ):
     normalized_ingestion_id = str(x_ingestion_id or "").strip()
-    if state.current_ingestion_id != normalized_ingestion_id or state.duck_conn is None or state.lance_db is None:
-        data_loader.init_data(normalized_ingestion_id)
+    data_loader.ensure_ingestion_loaded(normalized_ingestion_id)
 
     role_id = str(x_role or current_user.get("role") or "qa-engineer").strip()
     project_id = str(x_project or "all").strip()
+
+    suggestions_cache_key = f"{normalized_ingestion_id}:{role_id}:{project_id}"
+    cached_suggestions = _cache_get(_suggestions_cache, suggestions_cache_key, _SUGGESTIONS_CACHE_TTL_SECONDS)
+    if cached_suggestions is not None:
+        return cached_suggestions
 
     role_instruction = ""
     try:
@@ -1030,7 +1049,10 @@ async def role_suggestions(
     )
     parsed_primary = _parse_suggestions_payload(raw_primary, role_id, schema_profile)
     if parsed_primary:
-        return {"role": role_id, "project": project_id, "source": "ai", **parsed_primary}
+        return _cache_set(
+            _suggestions_cache, suggestions_cache_key,
+            {"role": role_id, "project": project_id, "source": "ai", **parsed_primary},
+        )
 
     retry_prompt = _build_retry_suggestion_prompt(
         role_id=role_id,
@@ -1048,7 +1070,10 @@ async def role_suggestions(
     )
     parsed_retry = _parse_suggestions_payload(raw_retry, role_id, schema_profile)
     if parsed_retry:
-        return {"role": role_id, "project": project_id, "source": "ai-retry", **parsed_retry}
+        return _cache_set(
+            _suggestions_cache, suggestions_cache_key,
+            {"role": role_id, "project": project_id, "source": "ai-retry", **parsed_retry},
+        )
 
     parsed_partial = _salvage_suggestions_payload(
         f"{raw_primary or ''}\n{raw_retry or ''}",
@@ -1056,10 +1081,16 @@ async def role_suggestions(
         schema_profile,
     )
     if parsed_partial:
-        return {"role": role_id, "project": project_id, "source": "ai-partial", **parsed_partial}
+        return _cache_set(
+            _suggestions_cache, suggestions_cache_key,
+            {"role": role_id, "project": project_id, "source": "ai-partial", **parsed_partial},
+        )
 
     data = _normalize_suggestions({}, role_id, schema_profile)
-    return {"role": role_id, "project": project_id, "source": "fallback", **data}
+    return _cache_set(
+        _suggestions_cache, suggestions_cache_key,
+        {"role": role_id, "project": project_id, "source": "fallback", **data},
+    )
 
 
 @app.post("/feedback")
@@ -1071,8 +1102,7 @@ async def submit_feedback(
     current_user: dict = Depends(get_current_user),
 ):
     normalized_ingestion_id = str(x_ingestion_id or "").strip()
-    if state.current_ingestion_id != normalized_ingestion_id or state.duck_conn is None or state.lance_db is None:
-        data_loader.init_data(normalized_ingestion_id)
+    data_loader.ensure_ingestion_loaded(normalized_ingestion_id)
 
     if not state.lance_db:
         raise HTTPException(status_code=500, detail="Data store not initialized")
@@ -1138,8 +1168,7 @@ async def test_sql(
     current_user: dict = Depends(get_current_user)
 ):
     normalized_ingestion_id = str(x_ingestion_id or "").strip()
-    if state.current_ingestion_id != normalized_ingestion_id or state.duck_conn is None or state.lance_db is None:
-        data_loader.init_data(normalized_ingestion_id)
+    data_loader.ensure_ingestion_loaded(normalized_ingestion_id)
     if state.duck_conn:
         try:
             result = state.duck_conn.execute("SELECT COUNT(*) FROM flattened_tests").fetchone()
@@ -1152,7 +1181,7 @@ async def test_sql(
 
 @app.get("/usage/tokens")
 async def token_usage(current_user: dict = Depends(get_current_user)):
-    persistent = token_usage_store.get_usage(
+    persistent = _get_cached_token_usage(
         user_id=current_user.get("username"),
         workspace_id=_normalize_workspace(None, current_user),
     )

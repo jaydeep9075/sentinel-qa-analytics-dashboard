@@ -64,6 +64,11 @@ INGEST_MAX_FILE_SIZE_BYTES = int(os.getenv("INGEST_MAX_FILE_SIZE_BYTES", str(200
 INGEST_MAX_ROWS = int(os.getenv("INGEST_MAX_ROWS", "500000"))
 INGEST_TIMEOUT_SECONDS = float(os.getenv("INGEST_TIMEOUT_SECONDS", "600"))
 
+# Number of ingestions kept "warm" (loaded LanceDB/DuckDB connections) at once.
+# Switching between more than this many distinct ingestions evicts the least
+# recently used one instead of paying a full reload every time it's revisited.
+INGESTION_POOL_SIZE = int(os.getenv("INGESTION_POOL_SIZE", "3"))
+
 
 def validate_runtime_config() -> None:
     provider = (LLM_PROVIDER or "").strip().lower()

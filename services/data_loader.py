@@ -192,13 +192,60 @@ def init_data(ingestion_id: str) -> bool:
         return False
 
 
+def ensure_ingestion_loaded(ingestion_id: str) -> bool:
+    """Make `ingestion_id` the active ingestion, using a small LRU pool of
+    warm connections (state._ingestion_pool) so repeatedly switching between
+    a handful of recently used ingestions is an O(1) pointer swap instead of
+    a full LanceDB/DuckDB reload."""
+    ingestion_id = str(ingestion_id or "").strip()
+    if not ingestion_id:
+        return False
+
+    entry = state._ingestion_pool.get(ingestion_id)
+    if entry is not None:
+        state._ingestion_pool.move_to_end(ingestion_id)
+        state.lance_db = entry["lance_db"]
+        state.duck_conn = entry["duck_conn"]
+        state.embedder = entry["embedder"]
+        state.current_ingestion_id = ingestion_id
+        return True
+
+    if not init_data(ingestion_id):
+        return False
+
+    state._ingestion_pool[ingestion_id] = {
+        "lance_db": state.lance_db,
+        "duck_conn": state.duck_conn,
+        "embedder": state.embedder,
+    }
+    state._ingestion_pool.move_to_end(ingestion_id)
+    while len(state._ingestion_pool) > config.INGESTION_POOL_SIZE:
+        old_id, old_entry = state._ingestion_pool.popitem(last=False)
+        try:
+            old_entry["duck_conn"].close()
+        except Exception:
+            pass
+        logger.info(f"Evicted ingestion '{old_id}' from warm pool")
+    return True
+
+
 # ── flatten helpers ───────────────────────────────────────────────────────────
 
 def _flatten_legacy(df: pd.DataFrame) -> list:
-    """Old format: JSON blob in 'tests' column."""
+    """Old format: JSON blob in 'tests' column.
+
+    Uses itertuples (namedtuples) instead of iterrows (Series-per-row) since
+    the columns here (tests/id/build_id/executed_at) are fixed by the legacy
+    connector itself, not arbitrary ingested data — safe to rely on attribute
+    access rather than needing dict-like .get() lookups.
+    """
     rows = []
-    for _, row in df.iterrows():
-        tests = row["tests"]
+    row_id_attr = "id" if "id" in df.columns else None
+    build_id_attr = "build_id" if "build_id" in df.columns else None
+    executed_at_attr = "executed_at" if "executed_at" in df.columns else None
+
+    for row in df.itertuples(index=False):
+        tests = row.tests
         if isinstance(tests, np.ndarray):
             tests = tests.tolist()
         elif isinstance(tests, str):
@@ -208,6 +255,11 @@ def _flatten_legacy(df: pd.DataFrame) -> list:
                 continue
         if not isinstance(tests, list):
             continue
+
+        result_id = getattr(row, row_id_attr) if row_id_attr else None
+        build_id = getattr(row, build_id_attr) if build_id_attr else None
+        executed_at = getattr(row, executed_at_attr) if executed_at_attr else None
+
         for t in tests:
             dur_raw = t.get("duration", "0")
             if isinstance(dur_raw, str):
@@ -219,10 +271,10 @@ def _flatten_legacy(df: pd.DataFrame) -> list:
                 err = err.get("message", "")
             browser = t.get("browser", "")
             rows.append({
-                "result_id":     row.get("id"),
+                "result_id":     result_id,
                 "test_name":     t.get("full_title", t.get("name", "")),
-                "build_id":      row.get("build_id"),
-                "executed_at":   row.get("executed_at"),
+                "build_id":      build_id,
+                "executed_at":   executed_at,
                 "status":        normalize_status(
                     t.get("status") or t.get("state") or t.get("outcome") or t.get("result")
                 ),

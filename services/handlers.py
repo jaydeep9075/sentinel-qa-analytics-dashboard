@@ -559,9 +559,8 @@ async def handle_chat(user_message: str, session_id: str, ingestion_id: str,
                       user_id: str = "anonymous", workspace_id: str = "default"):
     nid = str(ingestion_id or "").strip()
     response_df = pd.DataFrame()
-    if state.current_ingestion_id != nid or not state.duck_conn or not state.lance_db:
-        if not data_loader.init_data(nid):
-            return f"❌ Ingestion '{ingestion_id}' not found or data unavailable."
+    if not data_loader.ensure_ingestion_loaded(nid):
+        return f"❌ Ingestion '{ingestion_id}' not found or data unavailable."
 
     # Layer 1: deterministic intent handler for critical analytical prompts.
     structured_intent = _detect_structured_intent(user_message)
@@ -788,9 +787,8 @@ async def handle_chart(user_prompt: str, session_id: str, ingestion_id: str,
                        role: str = None, project_id: str = None,
                        user_id: str = "anonymous", workspace_id: str = "default"):
     nid = str(ingestion_id or "").strip()
-    if state.current_ingestion_id != nid or not state.duck_conn or not state.lance_db:
-        if not data_loader.init_data(nid):
-            return None, f"❌ Ingestion '{ingestion_id}' not found."
+    if not data_loader.ensure_ingestion_loaded(nid):
+        return None, f"❌ Ingestion '{ingestion_id}' not found."
 
     llm = llm_client.LLMClient()
     feedback_hints = memory.get_feedback_prompt_hints(
