@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useRef } from "react";
 import Link from "next/link";
-import { TrendingUp, LogOut, Wifi, WifiOff, Plus, X } from "lucide-react";
+import { TrendingUp, LogOut, Wifi, WifiOff, Plus, X, Radio } from "lucide-react";
 import ChartGallery from "@/components/ChartGallery";
 import IngestionSelector from "@/components/IngestionSelector";
 import ProjectSelector from "@/components/ProjectSelector";
@@ -339,6 +339,15 @@ export default function Dashboard() {
                 <span className="text-[10px] text-red-400 uppercase tracking-wider font-semibold">Offline</span>
               </div>
             )}
+
+            {/* live runs link */}
+            <Link
+              href="/runs/live"
+              className="flex items-center gap-1.5 text-xs text-emerald-400 hover:text-emerald-300 font-semibold border border-emerald-500/20 px-3 py-1.5 rounded-lg bg-emerald-500/[0.06] hover:bg-emerald-500/[0.12] hover:border-emerald-500/30 hover:shadow-[0_0_15px_rgba(16,240,150,0.08)] transition-all"
+            >
+              <Radio className="w-3.5 h-3.5" />
+              Live Runs
+            </Link>
 
             {/* build trends link */}
             <Link

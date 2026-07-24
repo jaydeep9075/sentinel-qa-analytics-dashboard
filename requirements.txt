@@ -30,6 +30,11 @@ python-dotenv==1.0.1
 pymysql==1.1.1
 sqlalchemy==2.0.36
 
+# Optional: only used if REDIS_URL is set (multi-instance live-execution
+# deployments). Code falls back to in-process behavior when unset/uninstalled
+# - safe to skip this line for single-instance/local dev.
+redis==5.2.1
+
 # Utilities
 typing-extensions==4.12.2
 openpyxl==3.1.5

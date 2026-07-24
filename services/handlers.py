@@ -480,6 +480,113 @@ def _format_structured_response(intent: dict, df: pd.DataFrame) -> str:
     )
 
 
+# ---------------------------------------------------------------------------
+# Cross-build (historical/trend) questions
+#
+# Two tiers, matched to two different costs:
+# - "How are we trending" / "vs the previous build" -> answered entirely
+#   from each build's cached summary.json (data_loader.list_builds). A few
+#   KB per build, so this is fast no matter how much ingestion history
+#   exists - it's not something that needs bounding.
+# - "Which tests failed in the last N builds" -> genuinely needs row-level
+#   data from more than one build's full dataset. That's real per-build
+#   query cost, so it's routed through data_loader.execute_sql_across_builds,
+#   which is hard-capped at config.MAX_CROSS_BUILD_QUERY_BUILDS regardless
+#   of how many builds actually exist.
+# ---------------------------------------------------------------------------
+
+_HISTORICAL_PHRASES = (
+    "previous build", "prior build", "last build", "past build", "past builds",
+    "earlier build", "build history", "compare build", "compare builds",
+    "build over build", "build-over-build", "across builds", "over builds",
+    "over time", "historical trend", "trend over time", "week over week",
+    "since last release", "since the last build", "regressed", "regression over",
+    "improving over", "getting better", "getting worse", "how are we trending",
+    "trending over", "last few builds", "last several builds", "recent builds",
+)
+
+_ROW_LEVEL_HISTORICAL_CUES = (
+    "which tests", "which test", "list the tests", "what tests", "show tests",
+    "show the tests", "same test", "same tests", "still failing", "newly failing",
+    "newly broken", "flaky", "error message", "errors in", "failed in both",
+    "failed in all", "failed in each",
+)
+
+
+def _detect_historical_intent(prompt: str) -> bool:
+    p = (prompt or "").lower()
+    return any(phrase in p for phrase in _HISTORICAL_PHRASES)
+
+
+def _needs_row_level_history(prompt: str) -> bool:
+    p = (prompt or "").lower()
+    return any(cue in p for cue in _ROW_LEVEL_HISTORICAL_CUES)
+
+
+def _build_history_trend_answer(nid: str, limit: int = None) -> str:
+    """Deterministic (no LLM call) trend/comparison answer built purely from
+    list_builds()'s cached summaries. Returns "" if there's fewer than 2
+    builds to compare - callers should fall through to the normal flow in
+    that case rather than treating it as an error."""
+    builds = data_loader.list_builds(limit=limit or config.MAX_TREND_BUILDS)
+    if len(builds) < 2:
+        return ""
+
+    current_idx = next((i for i, b in enumerate(builds) if b.get("build_id") == nid), 0)
+    current = builds[current_idx]
+    previous = builds[current_idx + 1] if current_idx + 1 < len(builds) else None
+
+    lines = ["📊 **Build trend (most recent first)**"]
+    for b in builds:
+        marker = " ← current" if b.get("build_id") == current.get("build_id") else ""
+        pr = b.get("pass_rate")
+        pr_str = f"{pr}%" if pr is not None else "n/a"
+        date = (b.get("ingested_at") or "")[:10]
+        executed = b.get("executed_tests", b.get("total_tests", "?"))
+        lines.append(
+            f"- {date} · **{pr_str}** pass rate · {b.get('passed', '?')}/{executed} passed{marker}"
+        )
+
+    if previous is not None:
+        cur_pr, prev_pr = current.get("pass_rate"), previous.get("pass_rate")
+        if cur_pr is not None and prev_pr is not None:
+            delta = round(cur_pr - prev_pr, 2)
+            if delta > 0.5:
+                verdict = f"📈 **Improving** — pass rate is up **{delta} points** vs the previous build."
+            elif delta < -0.5:
+                verdict = f"📉 **Regressing** — pass rate is down **{abs(delta)} points** vs the previous build."
+            else:
+                verdict = "➡️ **Stable** — pass rate is essentially unchanged from the previous build."
+            lines.append(f"\n{verdict}")
+
+    lines.append(
+        f"\n*(Showing the {len(builds)} most recent builds. Ask about specific failing "
+        "tests to see row-level detail across builds.)*"
+    )
+    return "\n".join(lines)
+
+
+def _build_trend_dataframe(limit: int = None) -> pd.DataFrame:
+    """Real cross-build trend data for chart requests (pass rate/test count
+    over time), from the same cached summaries as _build_history_trend_answer
+    - replaces the old single-build proxy (module name order standing in
+    for time) with an actual time series."""
+    builds = data_loader.list_builds(limit=limit or config.MAX_TREND_BUILDS)
+    if len(builds) < 2:
+        return pd.DataFrame()
+    chronological = list(reversed(builds))  # oldest -> newest, left-to-right on a line chart
+    return pd.DataFrame([
+        {
+            "build_date": (b.get("ingested_at") or "")[:10],
+            "build_id": b.get("build_id"),
+            "pass_rate": b.get("pass_rate"),
+            "total_tests": b.get("total_tests"),
+            "failed": b.get("failed"),
+        }
+        for b in chronological
+    ])
+
+
 def _build_history(session_id: str, user_id: str, ingestion_id: str, limit: int = 20) -> str:
     history = memory.get_chat_history(
         session_id,
@@ -582,6 +689,33 @@ async def handle_chat(user_message: str, session_id: str, ingestion_id: str,
             )
             return response
 
+    # Layer 1b: "how are we trending" / "vs the previous build" - answered
+    # from cached per-build summaries only (see _build_history_trend_answer),
+    # never touching another build's full dataset. Skipped when the question
+    # actually needs row-level detail (e.g. "which tests failed") - that
+    # goes through the bounded cross-build SQL path further below instead.
+    wants_cross_build_rows = False
+    if _detect_historical_intent(user_message):
+        if _needs_row_level_history(user_message):
+            wants_cross_build_rows = True
+        else:
+            trend_response = _build_history_trend_answer(nid)
+            if trend_response:
+                memory.store_chat_message(
+                    session_id, "user", user_message,
+                    user_id=user_id, ingestion_id=nid, workspace_id=workspace_id,
+                )
+                memory.store_chat_message(
+                    session_id, "assistant", trend_response,
+                    user_id=user_id, ingestion_id=nid, workspace_id=workspace_id,
+                )
+                memory.learn_from_interaction(
+                    user_id, nid, session_id, workspace_id, user_message, trend_response, kind="chat"
+                )
+                return trend_response
+            # Fewer than 2 builds exist yet - nothing to compare, fall
+            # through to the normal single-build flow below.
+
     llm = llm_client.LLMClient()
 
     learning_context = memory.get_learning_context(user_id, nid, workspace_id, user_message, limit=6)
@@ -610,6 +744,13 @@ async def handle_chat(user_message: str, session_id: str, ingestion_id: str,
     schema_context_block = _build_schema_context()
     if schema_context_block:
         augmented_message += f"\n\n{schema_context_block}"
+    if wants_cross_build_rows:
+        augmented_message += (
+            f"\n\n[NOTE] This question needs row-level data from multiple builds. Write SQL "
+            f"against the tables below exactly as if for a single build - it will automatically "
+            f"be run against each of the last {config.MAX_CROSS_BUILD_QUERY_BUILDS} builds and "
+            f"combined, with a build_id column added to identify which build each row came from."
+        )
 
     schema_summary = schema_context.build_schema_summary()
 
@@ -657,7 +798,13 @@ async def handle_chat(user_message: str, session_id: str, ingestion_id: str,
                 + "). Could you clarify which status you meant?"
             )
         else:
-            df, err = data_loader.execute_sql(sql) if sql else (pd.DataFrame(), "empty")
+            if not sql:
+                df, err = pd.DataFrame(), "empty"
+            elif wants_cross_build_rows:
+                recent_build_ids = [b["build_id"] for b in data_loader.list_builds(limit=config.MAX_CROSS_BUILD_QUERY_BUILDS)]
+                df, err = data_loader.execute_sql_across_builds(sql, recent_build_ids)
+            else:
+                df, err = data_loader.execute_sql(sql)
             unknown_ref = _find_unknown_entity_reference(user_message, schema_summary)
 
             if (err or not _is_df_usable(df)) and unknown_ref:
@@ -726,8 +873,16 @@ async def handle_chat(user_message: str, session_id: str, ingestion_id: str,
                         response = f"{response}{scope_note}"
                     else:
                         df_safe = _prepare_df_for_prompt(df)
+                        answer_message = augmented_message
+                        if wants_cross_build_rows and "build_id" in df_safe.columns:
+                            answer_message += (
+                                "\n\n[NOTE] Each row's build_id column identifies which build it came "
+                                "from - this data spans multiple builds, not just the current one. "
+                                "Explicitly say which build(s) each fact applies to (e.g. call out "
+                                "tests that recur across every build vs ones unique to one build)."
+                            )
                         answer_prompt = CHAT_ANSWER_PROMPT.format(
-                            user_message=augmented_message,
+                            user_message=answer_message,
                             feedback_hints=feedback_hints or "None",
                             row_count=len(df),
                             data_json=df_safe.head(50).to_json(orient="records", force_ascii=False),
@@ -809,6 +964,28 @@ async def handle_chart(user_prompt: str, session_id: str, ingestion_id: str,
     chart_type = detect_chart_type(user_prompt)
     logger.info(f"Chart type='{chart_type}' for: '{user_prompt[:60]}'")
 
+    wants_cross_build_rows = _detect_historical_intent(user_prompt) and _needs_row_level_history(user_prompt)
+
+    # A genuine "pass rate over builds" trend chart has real cross-build
+    # data available for free (list_builds()'s cached summaries) - use it
+    # directly instead of asking the LLM to write SQL against a single
+    # build's schema and calling that a "trend" (the old fallback used
+    # module-name alphabetical order as a fake time axis).
+    if (
+        chart_type == "line"
+        and _detect_historical_intent(user_prompt)
+        and not wants_cross_build_rows
+    ):
+        trend_df = _build_trend_dataframe()
+        if not trend_df.empty:
+            return await _generate_chart(
+                trend_df, user_prompt, prompt_for_llm, feedback_hints, session_id,
+                "-- cross-build trend from each build's summary.json, not a live query --",
+                chart_type, llm, user_id, nid, workspace_id,
+            )
+        # Fewer than 2 builds exist yet - fall through to the normal
+        # single-build chart flow below.
+
     # STEP 2: SQL
     structured_intent = _detect_structured_intent(user_prompt)
     chart_schema_summary = schema_context.build_schema_summary()
@@ -841,7 +1018,11 @@ async def handle_chart(user_prompt: str, session_id: str, ingestion_id: str,
             return None, "Could not determine what data to chart."
 
     # STEP 3: Execute with retries
-    df, err = data_loader.execute_sql(sql)
+    if wants_cross_build_rows:
+        recent_build_ids = [b["build_id"] for b in data_loader.list_builds(limit=config.MAX_CROSS_BUILD_QUERY_BUILDS)]
+        df, err = data_loader.execute_sql_across_builds(sql, recent_build_ids)
+    else:
+        df, err = data_loader.execute_sql(sql)
     for attempt in range(2):
         if err or not _is_df_usable(df):
             fb = _fallback_sql(user_prompt, CHART_FALLBACK_SQL_MAP)

@@ -4,6 +4,8 @@ One malformed dataset must never abort a whole run — instead every outcome
 (success, partial, failure) is collected here and written to
 `ingestion_report.json` inside the build folder so failures are debuggable
 after the fact.
+
+
 """
 
 import json

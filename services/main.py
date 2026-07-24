@@ -16,6 +16,8 @@ from . import config, state, data_loader, handlers, memory, llm_client, ingestio
 from . import token_usage_store
 from .prompts import SUGGESTION_PROMPT
 from .auth import authenticate_user, create_access_token, get_current_user, initialize_auth_store
+from .live_exec import store as live_store
+from .live_exec.router import router as live_router
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -558,6 +560,7 @@ async def lifespan(app: FastAPI):
     logger.info("Starting up...")
     config.validate_runtime_config()
     initialize_auth_store()
+    live_store.init_db()
     yield
     logger.info("Shutting down...")
     if state.duck_conn:
@@ -571,6 +574,7 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+app.include_router(live_router)
 
 
 @app.middleware("http")

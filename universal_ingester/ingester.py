@@ -181,6 +181,15 @@ class UniversalIngester:
             if not allure_path:
                 raise ValueError("Allure source requires 'path' or 'directory' in config")
             connector = AllureConnector(allure_path)
+        elif source_type == 'live_run':
+            try:
+                from .connectors.live_run_connector import LiveRunConnector
+            except ImportError:
+                from connectors.live_run_connector import LiveRunConnector
+            live_run_path = params.get('path')
+            if not live_run_path:
+                raise ValueError("live_run source requires 'path' in config")
+            connector = LiveRunConnector(live_run_path)
         else:
             raise ValueError(f"Unsupported source type: {source_type}")
         return connector, source_type

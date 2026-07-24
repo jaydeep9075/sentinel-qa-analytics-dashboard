@@ -1,3 +1,4 @@
+
 import os
 from pathlib import Path
 from dotenv import load_dotenv
@@ -54,6 +55,21 @@ AUTH_SEED_FILE = os.getenv("AUTH_SEED_FILE", str(BASE_DIR / "auth_seed_users.jso
 MAX_HISTORY_TURNS = 10
 DEFAULT_WORKSPACE_ID = os.getenv("DEFAULT_WORKSPACE_ID", "default").strip().lower() or "default"
 
+# Live test execution (reporter -> backend ingestion)
+# Shared secret the @sentinel/playwright reporter sends as `x-api-key`.
+# Left empty in local/dev by default so `playwright test` works with zero
+# setup; set it before exposing the backend beyond your own machine.
+LIVE_INGEST_API_KEY = os.getenv("LIVE_INGEST_API_KEY", "")
+LIVE_RUNS_DIR = DATA_BASE_PATH / "runs"
+# Optional. Unset (default) = single-instance mode: the live SSE bus and
+# live-frame cache stay in-process, which is correct and free as long as
+# there's exactly one backend process. Set this only once you actually run
+# more than one backend instance behind a load balancer - it makes the SSE
+# push and live-frame cache work correctly across instances instead of only
+# within whichever one instance happened to receive a given request. See
+# services/live_exec/bus.py and screencast.py.
+REDIS_URL = os.getenv("REDIS_URL", "")
+
 # RBA: Projects and roles root directories
 PROJECTS_ROOT = os.getenv("PROJECTS_ROOT", str(BASE_DIR / "projects"))
 ROLES_ROOT = os.getenv("ROLES_ROOT", str(BASE_DIR / "roles"))
@@ -68,6 +84,18 @@ INGEST_TIMEOUT_SECONDS = float(os.getenv("INGEST_TIMEOUT_SECONDS", "600"))
 # Switching between more than this many distinct ingestions evicts the least
 # recently used one instead of paying a full reload every time it's revisited.
 INGESTION_POOL_SIZE = int(os.getenv("INGESTION_POOL_SIZE", "3"))
+
+# Cross-build chat/chart questions ("how are we trending", "compare to the
+# last build"). Two different costs, two different caps:
+# - Trend/comparison answers read only each build's small pre-aggregated
+#   summary.json (a few KB each) - cheap regardless of history size, so this
+#   just bounds how far back "recent builds" means, not a performance guard.
+MAX_TREND_BUILDS = int(os.getenv("MAX_TREND_BUILDS", "12"))
+# - Row-level cross-build SQL (e.g. "which tests failed in the last 3
+#   builds") re-runs a real query against each build's full dataset - this
+#   one IS a real latency guard, so it's deliberately small and independent
+#   of how much ingestion history actually exists.
+MAX_CROSS_BUILD_QUERY_BUILDS = int(os.getenv("MAX_CROSS_BUILD_QUERY_BUILDS", "5"))
 
 
 def validate_runtime_config() -> None:

@@ -190,11 +190,17 @@ def generate_summary(lance_db, data_base_path, build_id: str, total_rows: int, i
             records = df_results.to_dict(orient="records")
             for row in records:
                 test_obj = {}
-                test_obj['full_title'] = row.get('test_name') or row.get('full_name') or row.get('name') or ''
-                test_obj['name'] = row.get('test_name') or row.get('name') or ''
+                test_name = row.get('test_name') or row.get('full_name') or row.get('name') or row.get('title') or ''
+                test_obj['full_title'] = test_name
+                test_obj['name'] = test_name
                 test_obj['status'] = row.get('status', '')
-                test_obj['duration'] = row.get('duration', '0ms')
-                test_obj['error'] = row.get('error_message', '')
+                # 'duration' (string, e.g. "950ms") is the legacy Allure-style
+                # field; some sources (e.g. the live-execution connector)
+                # report a plain numeric 'duration_ms' instead - both are
+                # accepted so parse_duration() gets a real value either way.
+                duration_ms = row.get('duration_ms')
+                test_obj['duration'] = row.get('duration') or (f"{duration_ms}ms" if duration_ms is not None else '0ms')
+                test_obj['error'] = row.get('error_message') or row.get('error') or ''
                 test_obj['spec_file'] = row.get('spec_file', '')
                 test_obj['description'] = row.get('description', '')
                 test_obj['project_name'] = row.get('project_name', 'unknown')
@@ -221,7 +227,11 @@ def generate_summary(lance_db, data_base_path, build_id: str, total_rows: int, i
 
                 test_obj['uuid'] = row.get('id', '')
                 test_obj['history_id'] = row.get('history_id', '')
-                test_obj['duration_seconds'] = row.get('duration_seconds', 0)
+                # No default here on purpose: a source without a native
+                # duration_seconds field must fall through to the
+                # duration_col/parse_duration path below, not get silently
+                # zeroed out (see the `.notna().any()` check at its use site).
+                test_obj['duration_seconds'] = row.get('duration_seconds')
                 all_tests.append(test_obj)
 
         logger.info(f"Extracted {len(all_tests)} individual test records")
@@ -250,7 +260,12 @@ def generate_summary(lance_db, data_base_path, build_id: str, total_rows: int, i
             _write_json()
             return
 
-        if 'duration_seconds' in df_tests.columns:
+        # Only trust a pre-existing duration_seconds column if it actually
+        # carries real values - some sources set it natively, but sources
+        # that don't (and leave it null/absent) must fall through to
+        # parsing duration_col instead of silently reporting all-zero
+        # durations.
+        if 'duration_seconds' in df_tests.columns and df_tests['duration_seconds'].notna().any():
             df_tests['duration_seconds'] = pd.to_numeric(df_tests['duration_seconds'], errors='coerce')
         else:
             df_tests['duration_seconds'] = df_tests[duration_col].apply(parse_duration)
@@ -265,8 +280,12 @@ def generate_summary(lance_db, data_base_path, build_id: str, total_rows: int, i
         executed_tests = passed + failed
         pass_rate = (passed / executed_tests * 100) if executed_tests > 0 else 0.0
 
-        avg_duration = valid_durations.mean() if len(valid_durations) > 0 else 0.0
-        total_duration = valid_durations.sum() if len(valid_durations) > 0 else 0.0
+        # float() guards against numpy int64 (e.g. an all-integer duration
+        # column's .sum() stays int64, unlike .mean() which is always
+        # float64) - json.dumps rejects numpy.int64 even though it accepts
+        # numpy.float64, so this isn't just style.
+        avg_duration = float(valid_durations.mean()) if len(valid_durations) > 0 else 0.0
+        total_duration = float(valid_durations.sum()) if len(valid_durations) > 0 else 0.0
 
         slowest = []
         if not df_tests.empty and len(valid_durations) > 0:

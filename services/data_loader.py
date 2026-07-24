@@ -29,6 +29,7 @@ NOT from text-matching on test names.
 import json
 import logging
 import re
+import time
 
 import duckdb
 import lancedb
@@ -84,6 +85,101 @@ def validate_sql(q: str):
         if re.search(pat, clean, re.IGNORECASE):
             return False, "Unsafe SQL pattern detected"
     return True, clean
+
+
+# ── cross-build access (chat/chart trend & comparison questions) ───────────────
+
+_BUILDS_CACHE_TTL_SECONDS = 10
+_builds_cache: tuple[float, list] = (0.0, [])
+
+
+def list_builds(limit: int | None = None) -> list[dict]:
+    """Every ingested build's small pre-aggregated summary.json, newest
+    first - the same file the frontend's Build Trends page already reads
+    (frontend/app/api/builds/route.ts). Deliberately NOT a DuckDB/LanceDB
+    query: each file is a few KB, so listing all of them costs nothing
+    regardless of how many builds exist - it's what makes "how are we
+    trending" answerable instantly instead of needing to open every build's
+    full dataset just to answer a comparison question."""
+    global _builds_cache
+    now = time.monotonic()
+    cached_at, cached = _builds_cache
+    if now - cached_at < _BUILDS_CACHE_TTL_SECONDS:
+        builds = cached
+    else:
+        builds = []
+        if config.DATA_BASE_PATH.exists():
+            for entry in config.DATA_BASE_PATH.iterdir():
+                if not entry.is_dir() or not entry.name.startswith("ingestion_"):
+                    continue
+                summary_path = entry / "summary.json"
+                if not summary_path.exists():
+                    continue
+                try:
+                    raw = json.loads(summary_path.read_text(encoding="utf-8"))
+                except Exception:
+                    continue
+                metrics = raw.get("metrics") or {}
+                builds.append({
+                    "build_id": raw.get("build_id") or entry.name,
+                    "ingested_at": raw.get("ingested_at"),
+                    "total_tests": metrics.get("total_tests"),
+                    # pass_rate is computed against executed tests (skipped
+                    # tests excluded), not total_tests - keep both so
+                    # callers can show a passed/executed fraction that
+                    # actually agrees with the pass_rate percentage.
+                    "executed_tests": metrics.get("executed_tests") or metrics.get("total_tests"),
+                    "passed": metrics.get("passed"),
+                    "failed": metrics.get("failed"),
+                    "pass_rate": metrics.get("pass_rate"),
+                    "avg_duration_sec": metrics.get("avg_duration_sec"),
+                })
+        builds.sort(key=lambda b: b.get("ingested_at") or "", reverse=True)
+        _builds_cache = (now, builds)
+    return builds[:limit] if limit else builds
+
+
+def execute_sql_across_builds(sql: str, build_ids: list[str]) -> tuple[pd.DataFrame, str | None]:
+    """Run the same validated SQL against several builds and stack the
+    results with a build_id column, for questions that genuinely need
+    row-level data from more than one build (e.g. "which tests failed in
+    both of the last two builds") - list_builds()'s cached summaries can't
+    answer that, only full per-build queries can.
+
+    Capped at config.MAX_CROSS_BUILD_QUERY_BUILDS regardless of how many
+    build_ids are passed in: unlike list_builds (cheap JSON reads), this
+    reopens each build's full DuckDB/LanceDB dataset, so latency scales
+    with build count - bounding it keeps worst case predictable no matter
+    how much ingestion history has accumulated."""
+    build_ids = [b for b in (build_ids or []) if b][: config.MAX_CROSS_BUILD_QUERY_BUILDS]
+    if not build_ids:
+        return pd.DataFrame(), "No builds specified"
+
+    original_id = state.current_ingestion_id
+    frames = []
+    last_err = None
+    for build_id in build_ids:
+        if not ensure_ingestion_loaded(build_id):
+            last_err = f"Ingestion '{build_id}' not found or data unavailable"
+            continue
+        df, err = execute_sql(sql)
+        if err:
+            last_err = err
+            continue
+        if df is not None and not df.empty:
+            df = df.copy()
+            df.insert(0, "build_id", build_id)
+            frames.append(df)
+
+    # Always restore whichever build the caller had active before this ran -
+    # this function must not leave global state pointed at the last build
+    # in the loop.
+    if original_id:
+        ensure_ingestion_loaded(original_id)
+
+    if not frames:
+        return pd.DataFrame(), last_err or "No data across the requested builds"
+    return pd.concat(frames, ignore_index=True), None
 
 
 # ── init_data ─────────────────────────────────────────────────────────────────
