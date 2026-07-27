@@ -2,6 +2,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
+import { AnimatePresence, motion } from "framer-motion";
 import { MessageCircle, X, Send, Loader2, Sparkles, Copy, RotateCw, Check, ThumbsUp, ThumbsDown, SlidersHorizontal } from "lucide-react";
 import { useRB } from "@/lib/RBContext";
 import { useIngestion } from "@/lib/IngestionContext";
@@ -224,18 +225,35 @@ export default function FloatingChat() {
   return (
     <>
       {/* ── FAB ── */}
-      <button
+      <motion.button
         onClick={() => setIsOpen(true)}
-        className="fixed bottom-6 right-6 z-50 bg-gradient-to-r from-cyan-500 to-blue-600 text-white p-4 rounded-full shadow-[0_0_30px_rgba(0,240,255,0.25)] hover:shadow-[0_0_50px_rgba(0,240,255,0.4)] hover:scale-110 transition-all duration-200 focus:outline-none group"
+        initial={{ opacity: 0, scale: 0.6 }}
+        animate={{ opacity: 1, scale: 1 }}
+        transition={{ type: "spring", stiffness: 260, damping: 20, delay: 0.15 }}
+        whileHover={{ scale: 1.1, rotate: 6 }}
+        whileTap={{ scale: 0.92 }}
+        className="fixed bottom-6 right-6 z-50 bg-gradient-to-r from-cyan-500 to-blue-600 text-white p-4 rounded-full shadow-[0_0_30px_rgba(0,240,255,0.25)] hover:shadow-[0_0_50px_rgba(0,240,255,0.4)] focus:outline-none group"
         aria-label="Open chat"
       >
-        <MessageCircle className="w-6 h-6 group-hover:rotate-12 transition-transform" />
-      </button>
+        <MessageCircle className="w-6 h-6" />
+      </motion.button>
 
       {/* ── Modal ── */}
+      <AnimatePresence>
       {isOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm">
-          <div className="relative bg-white border border-slate-200 dark:bg-black dark:border-white/[0.08] rounded-2xl w-full max-w-2xl h-[620px] flex flex-col shadow-[0_0_40px_rgba(15,23,42,0.15)] dark:shadow-[0_0_60px_rgba(0,0,0,0.8),0_0_30px_rgba(0,240,255,0.05)] overflow-hidden">
+        <motion.div
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          exit={{ opacity: 0 }}
+          transition={{ duration: 0.2 }}
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm"
+        >
+          <motion.div
+            initial={{ opacity: 0, y: 24, scale: 0.95 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={{ opacity: 0, y: 24, scale: 0.95 }}
+            transition={{ type: "spring", stiffness: 300, damping: 28 }}
+            className="relative bg-white border border-slate-200 dark:bg-black dark:border-white/[0.08] rounded-2xl w-full max-w-2xl h-[620px] flex flex-col shadow-[0_0_40px_rgba(15,23,42,0.15)] dark:shadow-[0_0_60px_rgba(0,0,0,0.8),0_0_30px_rgba(0,240,255,0.05)] overflow-hidden">
             <div className="pointer-events-none absolute -top-20 right-12 h-40 w-40 rounded-full bg-cyan-500/10 blur-3xl" />
             <div className="pointer-events-none absolute bottom-20 -left-16 h-40 w-40 rounded-full bg-blue-500/10 blur-3xl" />
             {/* header */}
@@ -441,9 +459,10 @@ export default function FloatingChat() {
                 </p>
               )}
             </div>
-          </div>
-        </div>
+          </motion.div>
+        </motion.div>
       )}
+      </AnimatePresence>
     </>
   );
 }

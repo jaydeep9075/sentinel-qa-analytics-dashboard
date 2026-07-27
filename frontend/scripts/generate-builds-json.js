@@ -16,12 +16,14 @@ if (!fs.existsSync(publicDir)) {
 
 const builds = [];
 
+const BUILD_FOLDER_PATTERN = /^(ingestion_\d{8}_\d{6}|run_[0-9a-f]{8,})$/;
+
 function getSummaryFiles(rootDir) {
   if (!fs.existsSync(rootDir)) return [];
 
   const entries = fs.readdirSync(rootDir, { withFileTypes: true });
   return entries
-    .filter((entry) => entry.isDirectory() && entry.name.startsWith('ingestion_'))
+    .filter((entry) => entry.isDirectory() && BUILD_FOLDER_PATTERN.test(entry.name))
     .map((folder) => path.join(rootDir, folder.name, 'summary.json'))
     .filter((summaryPath) => fs.existsSync(summaryPath));
 }

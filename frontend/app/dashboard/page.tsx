@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useRef } from "react";
 import Link from "next/link";
+import { AnimatePresence, motion } from "framer-motion";
 import { TrendingUp, LogOut, Wifi, WifiOff, Plus, X, Radio } from "lucide-react";
 import ChartGallery from "@/components/ChartGallery";
 import IngestionSelector from "@/components/IngestionSelector";
@@ -12,6 +13,21 @@ import FloatingChart from "@/components/FloatingChart";  // new
 import BrandLogo from "@/components/BrandLogo";
 import { getDashboardOverview, ingestFromConfigPath, readCachedDashboardOverview } from "@/lib/api";
 import { useIngestion } from "@/lib/IngestionContext";
+
+const statGridVariants = {
+  hidden: {},
+  visible: { transition: { staggerChildren: 0.06, delayChildren: 0.05 } },
+};
+
+const statCardVariants = {
+  hidden: { opacity: 0, y: 18, scale: 0.97 },
+  visible: {
+    opacity: 1,
+    y: 0,
+    scale: 1,
+    transition: { type: "spring" as const, stiffness: 300, damping: 26 },
+  },
+};
 
 export default function Dashboard() {
   const { selectedIngestion, refreshIngestions, setSelectedIngestion } = useIngestion();
@@ -248,7 +264,12 @@ export default function Dashboard() {
       <div className="pointer-events-none absolute bottom-[-80px] left-[28%] h-72 w-72 rounded-full bg-emerald-500/10 blur-3xl motion-blob-fast" />
 
       {/* ══════════ HEADER ══════════ */}
-      <header className="bg-white/90 border-slate-200 shadow-[0_4px_30px_rgba(15,23,42,0.08)] dark:bg-black/80 dark:border-white/[0.06] dark:shadow-[0_4px_30px_rgba(0,0,0,0.5)] backdrop-blur-xl border-b sticky top-0 z-50">
+      <motion.header
+        initial={{ opacity: 0, y: -20 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.45, ease: [0.22, 1, 0.36, 1] }}
+        className="bg-white/90 border-slate-200 shadow-[0_4px_30px_rgba(15,23,42,0.08)] dark:bg-black/80 dark:border-white/[0.06] dark:shadow-[0_4px_30px_rgba(0,0,0,0.5)] backdrop-blur-xl border-b sticky top-0 z-50"
+      >
         <div className="max-w-[1600px] mx-auto px-6 py-3.5 flex flex-col md:flex-row justify-between items-center gap-4">
           {/* left: logo */}
           <div className="flex items-center gap-3">
@@ -270,14 +291,20 @@ export default function Dashboard() {
             <div className="relative">
               <button
                 onClick={() => setIsAddBuildOpen((prev) => !prev)}
-                className="flex items-center gap-1.5 text-xs text-slate-700 dark:text-white/75 font-semibold border border-slate-300 dark:border-white/[0.1] px-3 py-1.5 rounded-lg bg-slate-100 hover:bg-slate-200 dark:bg-white/[0.05] dark:hover:bg-white/[0.1] transition-all"
+                className="flex items-center gap-1.5 text-xs text-slate-700 dark:text-white/75 font-semibold border border-slate-300 dark:border-white/[0.1] px-3 py-1.5 rounded-lg bg-slate-100 hover:bg-slate-200 dark:bg-white/[0.05] dark:hover:bg-white/[0.1] transition-all active:scale-95"
               >
                 <Plus className="w-3.5 h-3.5" />
                 Add New Build
               </button>
 
+              <AnimatePresence>
               {isAddBuildOpen && (
-                <div className="absolute right-0 mt-2 z-50 w-[360px] rounded-xl border border-slate-200 bg-white p-4 shadow-[0_10px_35px_rgba(15,23,42,0.12)] dark:border-white/[0.08] dark:bg-black/95 dark:shadow-[0_10px_40px_rgba(0,0,0,0.7)]">
+                <motion.div
+                  initial={{ opacity: 0, y: -8, scale: 0.96 }}
+                  animate={{ opacity: 1, y: 0, scale: 1 }}
+                  exit={{ opacity: 0, y: -8, scale: 0.96 }}
+                  transition={{ duration: 0.18, ease: [0.22, 1, 0.36, 1] }}
+                  className="absolute right-0 mt-2 z-50 w-[360px] rounded-xl border border-slate-200 bg-white p-4 shadow-[0_10px_35px_rgba(15,23,42,0.12)] dark:border-white/[0.08] dark:bg-black/95 dark:shadow-[0_10px_40px_rgba(0,0,0,0.7)]">
                   <div className="flex items-center justify-between mb-3">
                     <p className="text-xs font-semibold uppercase tracking-widest text-slate-500 dark:text-white/30">
                       Add New Build
@@ -323,8 +350,9 @@ export default function Dashboard() {
                       {pathSaveStatus.message}
                     </p>
                   )}
-                </div>
+                </motion.div>
               )}
+              </AnimatePresence>
             </div>
 
             {/* connection status */}
@@ -343,7 +371,7 @@ export default function Dashboard() {
             {/* live runs link */}
             <Link
               href="/runs/live"
-              className="flex items-center gap-1.5 text-xs text-emerald-400 hover:text-emerald-300 font-semibold border border-emerald-500/20 px-3 py-1.5 rounded-lg bg-emerald-500/[0.06] hover:bg-emerald-500/[0.12] hover:border-emerald-500/30 hover:shadow-[0_0_15px_rgba(16,240,150,0.08)] transition-all"
+              className="flex items-center gap-1.5 text-xs text-emerald-400 hover:text-emerald-300 font-semibold border border-emerald-500/20 px-3 py-1.5 rounded-lg bg-emerald-500/[0.06] hover:bg-emerald-500/[0.12] hover:border-emerald-500/30 hover:shadow-[0_0_15px_rgba(16,240,150,0.08)] hover:-translate-y-0.5 active:scale-95 transition-all"
             >
               <Radio className="w-3.5 h-3.5" />
               Live Runs
@@ -352,7 +380,7 @@ export default function Dashboard() {
             {/* build trends link */}
             <Link
               href="/build-trends"
-              className="flex items-center gap-1.5 text-xs text-cyan-400 hover:text-cyan-300 font-semibold border border-cyan-500/20 px-3 py-1.5 rounded-lg bg-cyan-500/[0.06] hover:bg-cyan-500/[0.12] hover:border-cyan-500/30 hover:shadow-[0_0_15px_rgba(0,240,255,0.08)] transition-all"
+              className="flex items-center gap-1.5 text-xs text-cyan-400 hover:text-cyan-300 font-semibold border border-cyan-500/20 px-3 py-1.5 rounded-lg bg-cyan-500/[0.06] hover:bg-cyan-500/[0.12] hover:border-cyan-500/30 hover:shadow-[0_0_15px_rgba(0,240,255,0.08)] hover:-translate-y-0.5 active:scale-95 transition-all"
             >
               <TrendingUp className="w-3.5 h-3.5" />
               Build Trends
@@ -361,49 +389,70 @@ export default function Dashboard() {
             {/* logout */}
             <button
               onClick={handleLogout}
-              className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg transition-all text-red-600/80 hover:text-red-700 hover:bg-red-100 dark:text-red-400/70 dark:hover:text-red-400 dark:hover:bg-red-500/[0.08]"
+              className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg transition-all active:scale-95 text-red-600/80 hover:text-red-700 hover:bg-red-100 dark:text-red-400/70 dark:hover:text-red-400 dark:hover:bg-red-500/[0.08]"
             >
               <LogOut className="w-3.5 h-3.5" />
               Logout
             </button>
           </div>
         </div>
-      </header>
+      </motion.header>
 
       {/* ══════════ MAIN CONTENT ══════════ */}
       <div className="relative z-10 max-w-[1600px] mx-auto px-6 py-8">
         {/* Data Summary Cards */}
         {(dataStatus?.has_data && dataStatus.total_rows) || isHeaderLoading ? (
-          <div className="grid grid-cols-1 md:grid-cols-6 gap-4 mb-4">
+          <motion.div
+            variants={statGridVariants}
+            initial="hidden"
+            animate="visible"
+            className="grid grid-cols-1 md:grid-cols-6 gap-4 mb-4"
+          >
             {/* Total Tests */}
-            <div className="group relative rounded-2xl p-5 border border-slate-200 bg-white hover:border-cyan-500/20 hover:bg-cyan-500/[0.03] transition-all overflow-hidden dark:border-white/[0.06] dark:bg-white/[0.02]">
+            <motion.div
+              variants={statCardVariants}
+              whileHover={{ y: -6 }}
+              className="group relative rounded-2xl p-5 border border-slate-200 bg-white hover:border-cyan-500/20 hover:bg-cyan-500/[0.03] hover:shadow-[0_16px_35px_rgba(6,182,212,0.1)] transition-all overflow-hidden dark:border-white/[0.06] dark:bg-white/[0.02] dark:hover:shadow-[0_16px_35px_rgba(0,0,0,0.5)]"
+            >
               <div className="absolute -top-12 -right-12 w-24 h-24 bg-cyan-500/[0.06] blur-2xl rounded-full opacity-0 group-hover:opacity-100 transition-opacity" />
               <p className="text-[10px] uppercase tracking-widest font-semibold mb-1 text-slate-500 dark:text-white/30">Total Tests</p>
               <p className="text-3xl font-bold transition-colors text-slate-900 group-hover:text-cyan-600 dark:text-white dark:group-hover:text-cyan-400">
                 {isHeaderLoading ? "..." : (dataStatus?.total_rows || 0).toLocaleString()}
               </p>
-            </div>
+            </motion.div>
 
             {/* Passed */}
-            <div className="group relative rounded-2xl p-5 border border-emerald-500/10 bg-emerald-500/[0.03] hover:border-emerald-500/25 hover:bg-emerald-500/[0.06] transition-all overflow-hidden">
+            <motion.div
+              variants={statCardVariants}
+              whileHover={{ y: -6 }}
+              className="group relative rounded-2xl p-5 border border-emerald-500/10 bg-emerald-500/[0.03] hover:border-emerald-500/25 hover:bg-emerald-500/[0.06] hover:shadow-[0_16px_35px_rgba(16,185,129,0.12)] transition-all overflow-hidden"
+            >
               <div className="absolute -top-12 -right-12 w-24 h-24 bg-emerald-500/[0.08] blur-2xl rounded-full opacity-0 group-hover:opacity-100 transition-opacity" />
               <p className="text-[10px] uppercase tracking-widest font-semibold mb-1 text-slate-500 dark:text-white/30">Passed</p>
               <p className="text-3xl font-bold text-emerald-400">
                 {isHeaderLoading ? "..." : (dataStatus?.status_summary?.passed?.toLocaleString() || 0)}
               </p>
-            </div>
+            </motion.div>
 
             {/* Failed */}
-            <div className="group relative rounded-2xl p-5 border border-red-500/10 bg-red-500/[0.03] hover:border-red-500/25 hover:bg-red-500/[0.06] transition-all overflow-hidden">
+            <motion.div
+              variants={statCardVariants}
+              whileHover={{ y: -6 }}
+              className="group relative rounded-2xl p-5 border border-red-500/10 bg-red-500/[0.03] hover:border-red-500/25 hover:bg-red-500/[0.06] hover:shadow-[0_16px_35px_rgba(239,68,68,0.12)] transition-all overflow-hidden"
+            >
               <div className="absolute -top-12 -right-12 w-24 h-24 bg-red-500/[0.08] blur-2xl rounded-full opacity-0 group-hover:opacity-100 transition-opacity" />
               <p className="text-[10px] uppercase tracking-widest font-semibold mb-1 text-slate-500 dark:text-white/30">Failed</p>
               <p className="text-3xl font-bold text-red-400">
                 {isHeaderLoading ? "..." : (dataStatus?.status_summary?.failed?.toLocaleString() || 0)}
               </p>
-            </div>
+            </motion.div>
 
             {/* Pass Rate */}
-            <div className="group relative rounded-2xl p-5 border border-cyan-500/10 bg-cyan-500/[0.03] hover:border-cyan-500/25 hover:bg-cyan-500/[0.06] transition-all overflow-hidden">
+            <motion.div
+              variants={statCardVariants}
+              whileHover={{ y: -6 }}
+              className="group relative rounded-2xl p-5 border border-cyan-500/10 bg-cyan-500/[0.03] hover:border-cyan-500/25 hover:bg-cyan-500/[0.06] hover:shadow-[0_16px_35px_rgba(6,182,212,0.12)] transition-all overflow-hidden"
+            >
               <div className="absolute -top-12 -right-12 w-24 h-24 bg-cyan-500/[0.08] blur-2xl rounded-full opacity-0 group-hover:opacity-100 transition-opacity" />
               <p className="text-[10px] uppercase tracking-widest font-semibold mb-1 text-slate-500 dark:text-white/30">Pass Rate</p>
               <p className="text-3xl font-bold bg-gradient-to-r from-cyan-400 to-blue-500 bg-clip-text text-transparent">
@@ -413,19 +462,27 @@ export default function Dashboard() {
                       (((dataStatus?.status_summary?.passed || 0) / Math.max(1, dataStatus?.total_rows || 0)) * 100),
                     )}%`}
               </p>
-            </div>
+            </motion.div>
 
             {/* Skipped */}
-            <div className="group relative rounded-2xl p-5 border border-amber-500/10 bg-amber-500/[0.03] hover:border-amber-500/25 hover:bg-amber-500/[0.06] transition-all overflow-hidden">
+            <motion.div
+              variants={statCardVariants}
+              whileHover={{ y: -6 }}
+              className="group relative rounded-2xl p-5 border border-amber-500/10 bg-amber-500/[0.03] hover:border-amber-500/25 hover:bg-amber-500/[0.06] hover:shadow-[0_16px_35px_rgba(245,158,11,0.12)] transition-all overflow-hidden"
+            >
               <div className="absolute -top-12 -right-12 w-24 h-24 bg-amber-500/[0.08] blur-2xl rounded-full opacity-0 group-hover:opacity-100 transition-opacity" />
               <p className="text-[10px] uppercase tracking-widest font-semibold mb-1 text-slate-500 dark:text-white/30">Skipped</p>
               <p className="text-3xl font-bold text-amber-500 dark:text-amber-400">
                 {isHeaderLoading ? "..." : (dataStatus?.status_summary?.skipped?.toLocaleString() || 0)}
               </p>
-            </div>
+            </motion.div>
 
             {/* LLM Token Usage */}
-            <div className="group relative rounded-2xl p-5 border border-violet-500/15 bg-violet-500/[0.04] hover:border-violet-500/30 hover:bg-violet-500/[0.08] transition-all overflow-hidden">
+            <motion.div
+              variants={statCardVariants}
+              whileHover={{ y: -6 }}
+              className="group relative rounded-2xl p-5 border border-violet-500/15 bg-violet-500/[0.04] hover:border-violet-500/30 hover:bg-violet-500/[0.08] hover:shadow-[0_16px_35px_rgba(139,92,246,0.14)] transition-all overflow-hidden"
+            >
               <div className="absolute -top-12 -right-12 w-24 h-24 bg-violet-500/[0.1] blur-2xl rounded-full opacity-0 group-hover:opacity-100 transition-opacity" />
               <p className="text-[10px] uppercase tracking-widest font-semibold mb-1 text-slate-500 dark:text-white/30">LLM Tokens</p>
               <p className="text-3xl font-bold text-violet-500 dark:text-violet-300">
@@ -434,8 +491,8 @@ export default function Dashboard() {
               <p className="mt-1 text-[10px] text-slate-500 dark:text-white/30 uppercase tracking-wider">
                 Prompt: {(tokenUsage?.totals?.prompt_tokens || 0).toLocaleString()} | Completion: {(tokenUsage?.totals?.completion_tokens || 0).toLocaleString()} | Calls: {(tokenUsage?.totals?.calls || 0).toLocaleString()}
               </p>
-            </div>
-          </div>
+            </motion.div>
+          </motion.div>
         ) : null}
 
         {dataQuality && (

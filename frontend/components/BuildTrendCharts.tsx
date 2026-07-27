@@ -2,10 +2,26 @@
 
 import React from "react";
 import dynamic from "next/dynamic";
+import { motion } from "framer-motion";
 import type { ApexOptions } from "apexcharts";
 import { useTheme } from "@/lib/theme";
 
 const Chart = dynamic(() => import("react-apexcharts"), { ssr: false });
+
+const gridVariants = {
+  hidden: {},
+  visible: { transition: { staggerChildren: 0.08 } },
+};
+
+const cardVariants = {
+  hidden: { opacity: 0, y: 24, scale: 0.97 },
+  visible: {
+    opacity: 1,
+    y: 0,
+    scale: 1,
+    transition: { type: "spring" as const, stiffness: 260, damping: 24 },
+  },
+};
 
 interface Props {
   chartData: {
@@ -128,25 +144,54 @@ export default function BuildTrendCharts({ chartData }: Props) {
   const deltaSeries = [{ name: "Quality Delta", data: qualityDelta }];
 
   return (
-    <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-      <div className="bg-white border border-slate-200 dark:bg-white/[0.02] dark:border-white/[0.06] backdrop-blur-sm p-5 rounded-2xl hover:border-cyan-500/15 transition-all">
+    <motion.div
+      variants={gridVariants}
+      initial="hidden"
+      animate="visible"
+      className="grid grid-cols-1 lg:grid-cols-2 gap-6"
+    >
+      <motion.div
+        variants={cardVariants}
+        whileHover={{ y: -6, boxShadow: "0 20px 40px rgba(6,182,212,0.12)" }}
+        className="bg-white border border-slate-200 dark:bg-white/[0.02] dark:border-white/[0.06] backdrop-blur-sm p-5 rounded-2xl hover:border-cyan-500/15 transition-colors"
+      >
         <Chart options={passRateOptions} series={passRateSeries} type="line" height={350} />
-      </div>
-      <div className="bg-white border border-slate-200 dark:bg-white/[0.02] dark:border-white/[0.06] backdrop-blur-sm p-5 rounded-2xl hover:border-emerald-500/15 transition-all">
+      </motion.div>
+      <motion.div
+        variants={cardVariants}
+        whileHover={{ y: -6, boxShadow: "0 20px 40px rgba(16,185,129,0.12)" }}
+        className="bg-white border border-slate-200 dark:bg-white/[0.02] dark:border-white/[0.06] backdrop-blur-sm p-5 rounded-2xl hover:border-emerald-500/15 transition-colors"
+      >
         <Chart options={stackedOptions} series={stackedSeries} type="bar" height={350} />
-      </div>
-      <div className="bg-white border border-slate-200 dark:bg-white/[0.02] dark:border-white/[0.06] backdrop-blur-sm p-5 rounded-2xl hover:border-purple-500/15 transition-all">
+      </motion.div>
+      <motion.div
+        variants={cardVariants}
+        whileHover={{ y: -6, boxShadow: "0 20px 40px rgba(168,85,247,0.12)" }}
+        className="bg-white border border-slate-200 dark:bg-white/[0.02] dark:border-white/[0.06] backdrop-blur-sm p-5 rounded-2xl hover:border-purple-500/15 transition-colors"
+      >
         <Chart options={totalDurationOptions} series={totalDurationSeries} type="line" height={350} />
-      </div>
-      <div className="bg-white border border-slate-200 dark:bg-white/[0.02] dark:border-white/[0.06] backdrop-blur-sm p-5 rounded-2xl hover:border-amber-500/15 transition-all">
+      </motion.div>
+      <motion.div
+        variants={cardVariants}
+        whileHover={{ y: -6, boxShadow: "0 20px 40px rgba(245,158,11,0.12)" }}
+        className="bg-white border border-slate-200 dark:bg-white/[0.02] dark:border-white/[0.06] backdrop-blur-sm p-5 rounded-2xl hover:border-amber-500/15 transition-colors"
+      >
         <Chart options={avgDurationOptions} series={avgDurationSeries} type="bar" height={350} />
-      </div>
-      <div className="bg-white border border-slate-200 dark:bg-white/[0.02] dark:border-white/[0.06] backdrop-blur-sm p-5 rounded-2xl hover:border-red-500/15 transition-all">
+      </motion.div>
+      <motion.div
+        variants={cardVariants}
+        whileHover={{ y: -6, boxShadow: "0 20px 40px rgba(239,68,68,0.12)" }}
+        className="bg-white border border-slate-200 dark:bg-white/[0.02] dark:border-white/[0.06] backdrop-blur-sm p-5 rounded-2xl hover:border-red-500/15 transition-colors"
+      >
         <Chart options={failureRateOptions} series={failureRateSeries} type="area" height={350} />
-      </div>
-      <div className="bg-white border border-slate-200 dark:bg-white/[0.02] dark:border-white/[0.06] backdrop-blur-sm p-5 rounded-2xl hover:border-cyan-500/15 transition-all">
+      </motion.div>
+      <motion.div
+        variants={cardVariants}
+        whileHover={{ y: -6, boxShadow: "0 20px 40px rgba(6,182,212,0.12)" }}
+        className="bg-white border border-slate-200 dark:bg-white/[0.02] dark:border-white/[0.06] backdrop-blur-sm p-5 rounded-2xl hover:border-cyan-500/15 transition-colors"
+      >
         <Chart options={deltaOptions} series={deltaSeries} type="bar" height={350} />
-      </div>
-    </div>
+      </motion.div>
+    </motion.div>
   );
 }

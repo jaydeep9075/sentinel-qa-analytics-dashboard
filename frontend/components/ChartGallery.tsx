@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect, useMemo } from "react";
+import { motion } from "framer-motion";
 import useSWR from "swr";
 import { getChartHistory, deleteChart, submitFeedback } from "@/lib/api";
 import { useIngestion } from "@/lib/IngestionContext";
@@ -174,10 +175,15 @@ function SortableItem({
   };
 
   return (
+    // Opacity-only entrance wrapper: dnd-kit writes its own inline
+    // `transform` on the node below for drag positioning, so animating
+    // transform/scale here (even on a parent) risks visibly fighting it
+    // mid-drag. Opacity is safe because dnd-kit never touches it.
+    <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ duration: 0.35 }}>
     <div
       ref={setNodeRef}
       style={style}
-      className="group bg-white border border-slate-200 dark:bg-white/[0.02] dark:border-white/[0.06] rounded-2xl overflow-hidden hover:border-cyan-500/15 transition-all"
+      className="group bg-white border border-slate-200 dark:bg-white/[0.02] dark:border-white/[0.06] rounded-2xl overflow-hidden hover:border-cyan-500/15 hover:shadow-[0_16px_35px_rgba(6,182,212,0.1)] dark:hover:shadow-[0_16px_35px_rgba(0,0,0,0.5)] hover:-translate-y-1 transition-all"
     >
       {/* card header */}
       <div className="px-5 py-3.5 border-b border-slate-200 dark:border-white/[0.05] bg-slate-50 dark:bg-white/[0.01] flex justify-between items-start">
@@ -247,6 +253,7 @@ function SortableItem({
         )}
       </div>
     </div>
+    </motion.div>
   );
 }
 
@@ -566,19 +573,24 @@ export default function ChartGallery() {
 
   return (
     <div>
-      <div className="flex justify-between items-center mb-6">
+      <motion.div
+        initial={{ opacity: 0, y: -10 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.4 }}
+        className="flex justify-between items-center mb-6"
+      >
         <h2 className="text-xl font-bold text-slate-900 dark:text-white">
           Chart Gallery{" "}
           <span className="text-sm font-normal text-slate-500 dark:text-white/25">
             ({chartList.length})
           </span>
         </h2>
-        <div className="flex bg-slate-100 dark:bg-white/[0.03] p-1 rounded-xl border border-slate-200 dark:border-white/[0.06]">
+        <div className="relative flex bg-slate-100 dark:bg-white/[0.03] p-1 rounded-xl border border-slate-200 dark:border-white/[0.06]">
           <button
             onClick={() => setLayout("grid")}
-            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-all ${
+            className={`relative z-10 flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${
               layout === "grid"
-                ? "bg-gradient-to-r from-cyan-500 to-blue-600 text-white shadow-[0_0_12px_rgba(0,240,255,0.15)]"
+                ? "text-white"
                 : "text-slate-500 hover:text-slate-700 dark:text-white/30 dark:hover:text-white/50"
             }`}
           >
@@ -587,17 +599,30 @@ export default function ChartGallery() {
           </button>
           <button
             onClick={() => setLayout("list")}
-            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-all ${
+            className={`relative z-10 flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${
               layout === "list"
-                ? "bg-gradient-to-r from-cyan-500 to-blue-600 text-white shadow-[0_0_12px_rgba(0,240,255,0.15)]"
+                ? "text-white"
                 : "text-slate-500 hover:text-slate-700 dark:text-white/30 dark:hover:text-white/50"
             }`}
           >
             <List className="w-3.5 h-3.5" />
             List
           </button>
+          {/* sliding active-pill indicator, shared layoutId animates the
+              swap between grid/list instead of the color just snapping */}
+          <motion.div
+            layout
+            layoutId="chart-gallery-layout-pill"
+            transition={{ type: "spring", stiffness: 400, damping: 32 }}
+            className="absolute top-1 bottom-1 rounded-lg bg-gradient-to-r from-cyan-500 to-blue-600 shadow-[0_0_12px_rgba(0,240,255,0.15)]"
+            style={
+              layout === "grid"
+                ? { left: 4, width: "calc(50% - 6px)" }
+                : { left: "calc(50% + 2px)", width: "calc(50% - 6px)" }
+            }
+          />
         </div>
-      </div>
+      </motion.div>
 
       <DndContext
         sensors={sensors}

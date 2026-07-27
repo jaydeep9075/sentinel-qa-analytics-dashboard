@@ -110,7 +110,11 @@ def list_builds(limit: int | None = None) -> list[dict]:
         builds = []
         if config.DATA_BASE_PATH.exists():
             for entry in config.DATA_BASE_PATH.iterdir():
-                if not entry.is_dir() or not entry.name.startswith("ingestion_"):
+                # Only real timestamped ingestion folders (ingestion_YYYYMMDD_HHMMSS)
+                # - excludes leftover/manual debug folders like
+                # "ingestion_refactor_test" that would otherwise pollute the
+                # trend list and cross-build queries with non-build data.
+                if not entry.is_dir() or not re.match(r"^ingestion_\d{8}_\d{6}$", entry.name):
                     continue
                 summary_path = entry / "summary.json"
                 if not summary_path.exists():
@@ -159,17 +163,30 @@ def execute_sql_across_builds(sql: str, build_ids: list[str]) -> tuple[pd.DataFr
     frames = []
     last_err = None
     for build_id in build_ids:
-        if not ensure_ingestion_loaded(build_id):
-            last_err = f"Ingestion '{build_id}' not found or data unavailable"
+        try:
+            if not ensure_ingestion_loaded(build_id):
+                last_err = f"Ingestion '{build_id}' not found or data unavailable"
+                continue
+            df, err = execute_sql(sql)
+            if err:
+                last_err = err
+                continue
+            if df is not None and not df.empty:
+                df = df.copy()
+                # flattened_tests already has its own per-row build_id column;
+                # overwrite it with the build this query loop iteration is
+                # actually tagging rather than inserting a duplicate (which
+                # raises ValueError and would otherwise abort the whole
+                # cross-build request for one bad query).
+                if "build_id" in df.columns:
+                    df["build_id"] = build_id
+                    df.insert(0, "build_id", df.pop("build_id"))
+                else:
+                    df.insert(0, "build_id", build_id)
+                frames.append(df)
+        except Exception as exc:
+            last_err = str(exc)
             continue
-        df, err = execute_sql(sql)
-        if err:
-            last_err = err
-            continue
-        if df is not None and not df.empty:
-            df = df.copy()
-            df.insert(0, "build_id", build_id)
-            frames.append(df)
 
     # Always restore whichever build the caller had active before this ran -
     # this function must not leave global state pointed at the last build

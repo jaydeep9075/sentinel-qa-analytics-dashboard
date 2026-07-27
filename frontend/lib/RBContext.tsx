@@ -1,5 +1,6 @@
 "use client";
 import { createContext, useContext, useState, useEffect } from "react";
+import { useRouter } from "next/navigation";
 
 interface RBContextType {
   selectedRole: string | null;
@@ -50,6 +51,7 @@ function getAuthHeaders(): Record<string, string> {
 }
 
 export function RBProvider({ children }: { children: React.ReactNode }) {
+  const router = useRouter();
   const [selectedRole, setSelectedRole] = useState<string | null>(null);
   const [selectedProject, setSelectedProject] = useState<string | null>(null);
   const [roles, setRoles] = useState<string[]>([]);
@@ -85,6 +87,15 @@ export function RBProvider({ children }: { children: React.ReactNode }) {
           fetch(`${apiBase}/roles`, { headers }),
           fetch(`${apiBase}/projects`, { headers }),
         ]);
+
+        if (rolesRes.status === 401 || projectsRes.status === 401) {
+          // Stale/expired token - same recovery path as the dashboard layout's
+          // own auth guard, so the user lands back on /login instead of
+          // silently sitting on a dashboard with no roles/projects.
+          localStorage.removeItem("token");
+          router.replace("/login");
+          return;
+        }
 
         if (!rolesRes.ok || !projectsRes.ok) {
           throw new Error("Failed to fetch roles/projects");

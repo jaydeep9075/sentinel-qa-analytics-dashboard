@@ -13,8 +13,17 @@ export async function GET() {
     }
 
     const entries = fs.readdirSync(dataDir, { withFileTypes: true });
+    // Two kinds of build folders end up here:
+    //  - ingestion_YYYYMMDD_HHMMSS  (Allure ingestion via universal_ingester)
+    //  - run_<hex>                  (finalized live-execution run, see
+    //                                services/finalize/job.py - it deliberately
+    //                                writes into the same data/ layout so it
+    //                                shows up as just another build here)
+    // Match strictly (not a bare prefix check) so stray/manual debug folders
+    // like "ingestion_refactor_test" don't get picked up as real builds.
+    const buildFolderPattern = /^(ingestion_\d{8}_\d{6}|run_[0-9a-f]{8,})$/;
     const ingestionFolders = entries.filter(
-      (entry) => entry.isDirectory() && entry.name.startsWith('ingestion_')
+      (entry) => entry.isDirectory() && buildFolderPattern.test(entry.name)
     );
 
     const builds = [];

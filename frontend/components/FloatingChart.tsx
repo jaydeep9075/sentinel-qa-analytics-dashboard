@@ -2,6 +2,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
+import { AnimatePresence, motion } from "framer-motion";
 import { BarChart3, X, Loader2, Sparkles } from "lucide-react";
 import { useRB } from "@/lib/RBContext";
 import { useIngestion } from "@/lib/IngestionContext";
@@ -101,17 +102,28 @@ export default function FloatingChart() {
   return (
     <div data-floating-chart className="relative inline-block">
       {/* FAB button */}
-      <button
+      <motion.button
         onClick={() => setIsOpen(!isOpen)}
-        className="fixed bottom-24 right-6 z-40 bg-gradient-to-r from-purple-500 to-pink-600 text-white p-4 rounded-full shadow-[0_0_30px_rgba(168,85,247,0.25)] hover:shadow-[0_0_50px_rgba(168,85,247,0.4)] hover:scale-110 transition-all duration-200 focus:outline-none group"
+        initial={{ opacity: 0, scale: 0.6 }}
+        animate={{ opacity: 1, scale: 1 }}
+        transition={{ type: "spring", stiffness: 260, damping: 20, delay: 0.1 }}
+        whileHover={{ scale: 1.1, rotate: -6 }}
+        whileTap={{ scale: 0.92 }}
+        className="fixed bottom-24 right-6 z-40 bg-gradient-to-r from-purple-500 to-pink-600 text-white p-4 rounded-full shadow-[0_0_30px_rgba(168,85,247,0.25)] hover:shadow-[0_0_50px_rgba(168,85,247,0.4)] focus:outline-none group"
         aria-label="Generate chart"
       >
-        <BarChart3 className="w-6 h-6 group-hover:rotate-6 transition-transform" />
-      </button>
+        <BarChart3 className="w-6 h-6" />
+      </motion.button>
 
       {/* Popover panel */}
+      <AnimatePresence>
       {isOpen && (
-        <div className="fixed bottom-36 right-6 z-50 bg-white border border-slate-200 dark:bg-black dark:border-white/[0.08] rounded-2xl w-80 shadow-[0_0_30px_rgba(15,23,42,0.12)] dark:shadow-[0_0_40px_rgba(0,0,0,0.8),0_0_20px_rgba(168,85,247,0.08)] overflow-hidden animate-in slide-in-from-bottom-2">
+        <motion.div
+          initial={{ opacity: 0, y: 16, scale: 0.95 }}
+          animate={{ opacity: 1, y: 0, scale: 1 }}
+          exit={{ opacity: 0, y: 16, scale: 0.95 }}
+          transition={{ type: "spring", stiffness: 320, damping: 26 }}
+          className="fixed bottom-36 right-6 z-50 bg-white border border-slate-200 dark:bg-black dark:border-white/[0.08] rounded-2xl w-80 shadow-[0_0_30px_rgba(15,23,42,0.12)] dark:shadow-[0_0_40px_rgba(0,0,0,0.8),0_0_20px_rgba(168,85,247,0.08)] overflow-hidden">
           {/* Header */}
           <div className="flex items-center justify-between px-4 py-3 border-b border-slate-200 bg-slate-50 dark:border-white/[0.06] dark:bg-white/[0.02]">
             <h3 className="text-sm font-semibold text-slate-900 dark:text-white flex items-center gap-2">
@@ -202,8 +214,9 @@ export default function FloatingChart() {
               </p>
             )}
           </div>
-        </div>
+        </motion.div>
       )}
+      </AnimatePresence>
     </div>
   );
 }
