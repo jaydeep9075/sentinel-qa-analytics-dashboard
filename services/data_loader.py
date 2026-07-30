@@ -110,11 +110,16 @@ def list_builds(limit: int | None = None) -> list[dict]:
         builds = []
         if config.DATA_BASE_PATH.exists():
             for entry in config.DATA_BASE_PATH.iterdir():
-                # Only real timestamped ingestion folders (ingestion_YYYYMMDD_HHMMSS)
-                # - excludes leftover/manual debug folders like
-                # "ingestion_refactor_test" that would otherwise pollute the
-                # trend list and cross-build queries with non-build data.
-                if not entry.is_dir() or not re.match(r"^ingestion_\d{8}_\d{6}$", entry.name):
+                # Two kinds of real build folders: timestamped Allure
+                # ingestions (ingestion_YYYYMMDD_HHMMSS) and finalized live
+                # runs (run_<hex>, see services/finalize/job.py). Matches
+                # BUILD_FOLDER_PATTERN in frontend/app/api/builds/route.ts
+                # and frontend/scripts/generate-builds-json.js - keep in
+                # sync with those. Matched strictly (not a bare prefix
+                # check) so stray/manual debug folders like
+                # "ingestion_refactor_test" don't pollute the trend list and
+                # cross-build queries with non-build data.
+                if not entry.is_dir() or not re.match(r"^(ingestion_\d{8}_\d{6}|run_[0-9a-f]{8,})$", entry.name):
                     continue
                 summary_path = entry / "summary.json"
                 if not summary_path.exists():
@@ -405,7 +410,11 @@ def _flatten_legacy(df: pd.DataFrame) -> list:
 def _flatten_normalized(df: pd.DataFrame) -> list:
     """New format: one column per field, one row per test."""
     rows = []
-    name_col   = next((c for c in ("test_name", "full_name", "name") if c in df.columns), None)
+    # "title" covers the live_run connector (universal_ingester/connectors/
+    # live_run_connector.py), which names this field "title" to match the
+    # Sentinel reporter's own event shape - checked last so it never shadows
+    # an Allure-sourced "test_name" column.
+    name_col   = next((c for c in ("test_name", "full_name", "name", "title") if c in df.columns), None)
     status_col = "status" if "status" in df.columns else None
     err_col    = next((c for c in ("error_message", "error") if c in df.columns), None)
     spec_col   = "spec_file" if "spec_file" in df.columns else None
@@ -418,6 +427,9 @@ def _flatten_normalized(df: pd.DataFrame) -> list:
         # duration
         if "duration_seconds" in df.columns and pd.notna(row.get("duration_seconds")):
             dur = float(row["duration_seconds"])
+        elif "duration_ms" in df.columns and pd.notna(row.get("duration_ms")):
+            # live_run connector reports milliseconds under this name.
+            dur = float(row["duration_ms"]) / 1000
         elif "duration" in df.columns:
             d = row.get("duration", "0")
             if isinstance(d, str):

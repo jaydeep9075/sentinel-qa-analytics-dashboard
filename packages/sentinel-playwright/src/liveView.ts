@@ -12,8 +12,16 @@
  */
 
 const DISCOVERY_TIMEOUT_MS = 2000;
-const DISCOVERY_RETRIES = 6;
-const DISCOVERY_RETRY_DELAY_MS = 500;
+// A refused connection (nothing listening yet) fails near-instantly, so the
+// real wait per attempt is ~DISCOVERY_RETRY_DELAY_MS, not DISCOVERY_TIMEOUT_MS
+// - 6 retries at 500ms only covers ~2.5s of actual cold-start time. A real
+// `channel: "chrome"` launch (vs. bundled Chromium) competing with sibling
+// workers for CPU on `--workers > 1` can easily take longer than that before
+// its CDP port is up, which silently disabled live view on some/all workers
+// even though the browser (and its debugging port) came up fine a moment
+// later - the watcher had already given up by then. 20x600ms covers ~12s.
+const DISCOVERY_RETRIES = 20;
+const DISCOVERY_RETRY_DELAY_MS = 600;
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));

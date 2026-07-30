@@ -895,19 +895,34 @@ async def dashboard_overview(
     }
 
     if normalized_ingestion_id:
-        data_loader.ensure_ingestion_loaded(normalized_ingestion_id)
-        try:
-            status_payload = _get_status_payload(normalized_ingestion_id)
-        except Exception as e:
-            logger.error(f"Error computing overview status: {e}")
-        try:
-            quality_payload = (
-                _get_quality_payload(normalized_ingestion_id)
-                if include_quality
-                else _get_cached_quality_payload(normalized_ingestion_id)
-            )
-        except Exception as e:
-            logger.error(f"Error computing overview quality: {e}")
+        loaded = data_loader.ensure_ingestion_loaded(normalized_ingestion_id)
+        if not loaded:
+            # Don't fall through to computing status/quality against
+            # state.duck_conn - it's a single global pointer (see state.py),
+            # so on failure it's either None or still pointing at whatever
+            # ingestion was loaded last (which can belong to a different
+            # request/tab). Surfacing a clear error beats silently caching
+            # another build's numbers under this ingestion_id's cache key.
+            logger.error(f"Failed to load ingestion '{normalized_ingestion_id}' for overview")
+            quality_payload = {
+                "score": 0,
+                "quality": "unknown",
+                "checks": [],
+                "guidance": [f"Ingestion '{normalized_ingestion_id}' could not be loaded. It may still be finalizing - retry shortly."],
+            }
+        else:
+            try:
+                status_payload = _get_status_payload(normalized_ingestion_id)
+            except Exception as e:
+                logger.error(f"Error computing overview status: {e}")
+            try:
+                quality_payload = (
+                    _get_quality_payload(normalized_ingestion_id)
+                    if include_quality
+                    else _get_cached_quality_payload(normalized_ingestion_id)
+                )
+            except Exception as e:
+                logger.error(f"Error computing overview quality: {e}")
 
     persistent = _get_cached_token_usage(
         user_id=current_user.get("username"),
