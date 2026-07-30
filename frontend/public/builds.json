@@ -1,6 +1,102 @@
 {
   "builds": [
     {
+      "build_id": "run_7cf9de9379d3",
+      "ingested_at": "2026-07-29T11:19:35.232996+00:00",
+      "total_records_ingested": 4,
+      "metrics": {
+        "total_tests": 4,
+        "executed_tests": 4,
+        "skipped_tests": 0,
+        "passed": 4,
+        "failed": 0,
+        "pass_rate": 100,
+        "module_count": 1,
+        "avg_duration_sec": 153.23,
+        "total_duration_sec": 612.9,
+        "most_common_error": "",
+        "slowest_tests": [
+          {
+            "name": "TS_37.1-AddToCartWithPLP @add-product-plp",
+            "duration_sec": 161.71
+          },
+          {
+            "name": "TS_37.2-AddToCartWithPDP @add-product-from-product-page",
+            "duration_sec": 156.31
+          },
+          {
+            "name": "TS_37.3-AddToCartWithQuickView @add-product-quick-view",
+            "duration_sec": 154.79
+          },
+          {
+            "name": "TS_37.4-AddToCartWithSaveItemForLater @save-item-for-later",
+            "duration_sec": 140.1
+          }
+        ],
+        "modules": {
+          "unknown": {
+            "project_name": "unknown",
+            "platform_type": "desktop",
+            "tests_per_module": 4,
+            "passed": 4,
+            "failed": 0,
+            "skipped": 0,
+            "pending": 0,
+            "unknown": 0,
+            "pass_rate": 100,
+            "total_execution_time_sec": 612.9,
+            "avg_execution_time_sec": 153.23
+          }
+        },
+        "projects": {}
+      },
+      "tables": [
+        "documents",
+        "ingestion_schema_profiles",
+        "sources",
+        "structured_test_results"
+      ],
+      "parser_insights": {
+        "total_sources": 1,
+        "strategies": {
+          "native-structured": 1
+        },
+        "avg_confidence": 1,
+        "ai_fallback_used": 0
+      },
+      "ingestion_report": {
+        "build_id": "run_7cf9de9379d3",
+        "overall_status": "completed",
+        "started_at": "2026-07-29T11:19:25.205997+00:00",
+        "finished_at": "2026-07-29T11:19:35.108517+00:00",
+        "datasets": {
+          "test_results": {
+            "status": "completed",
+            "rows_stored": 4,
+            "documents_stored": 4,
+            "duplicates_skipped": 0,
+            "records_failed": 0,
+            "tables": [
+              "structured_test_results"
+            ],
+            "parser_strategy": "native-structured",
+            "parser_confidence": 1,
+            "schema_changes": [],
+            "error": null,
+            "source_type": "live_run"
+          }
+        },
+        "warnings": [],
+        "totals": {
+          "rows_stored": 4,
+          "documents_stored": 4,
+          "duplicates_skipped": 0,
+          "records_failed": 0,
+          "datasets_failed": 0
+        }
+      }
+    },
+    {
       "build_id": "run_5e01f6934347",
       "ingested_at": "2026-07-28T07:22:26.198173+00:00",
       "total_records_ingested": 3,
@@ -3331,5 +3427,5 @@
       ]
     }
   ],
-  "cache_key": "C:\\Users\\JAIDEEP JOSHI\\Desktop\\ai_dashboard\\sentinel-qa-analytics-dashboard\\data\\ingestion_20260423_111619\\summary.json:1783933236539.8853:4847|C:\\Users\\JAIDEEP JOSHI\\Desktop\\ai_dashboard\\sentinel-qa-analytics-dashboard\\data\\ingestion_20260428_113234\\summary.json:1783951450143.4998:14546|C:\\Users\\JAIDEEP JOSHI\\Desktop\\ai_dashboard\\sentinel-qa-analytics-dashboard\\data\\ingestion_20260506_104014\\summary.json:1783951450455.537:14546|C:\\Users\\JAIDEEP JOSHI\\Desktop\\ai_dashboard\\sentinel-qa-analytics-dashboard\\data\\ingestion_20260506_110116\\summary.json:1783951450575.7954:14546|C:\\Users\\JAIDEEP JOSHI\\Desktop\\ai_dashboard\\sentinel-qa-analytics-dashboard\\data\\ingestion_20260709_110143\\summary.json:1783951450783.6526:14575|C:\\Users\\JAIDEEP JOSHI\\Desktop\\ai_dashboard\\sentinel-qa-analytics-dashboard\\data\\ingestion_20260716_123355\\summary.json:1784205317485.4387:24425|C:\\Users\\JAIDEEP JOSHI\\Desktop\\ai_dashboard\\sentinel-qa-analytics-dashboard\\data\\ingestion_20260720_065915\\summary.json:1784530818540.6035:26201|C:\\Users\\JAIDEEP JOSHI\\Desktop\\ai_dashboard\\sentinel-qa-analytics-dashboard\\data\\run_5e01f6934347\\summary.json:1785223346196.198:2357"
+  "cache_key": "C:\\Users\\JAIDEEP JOSHI\\Desktop\\ai_dashboard\\sentinel-qa-analytics-dashboard\\data\\ingestion_20260423_111619\\summary.json:1783933236539.8853:4847|C:\\Users\\JAIDEEP JOSHI\\Desktop\\ai_dashboard\\sentinel-qa-analytics-dashboard\\data\\ingestion_20260428_113234\\summary.json:1783951450143.4998:14546|C:\\Users\\JAIDEEP JOSHI\\Desktop\\ai_dashboard\\sentinel-qa-analytics-dashboard\\data\\ingestion_20260506_104014\\summary.json:1783951450455.537:14546|C:\\Users\\JAIDEEP JOSHI\\Desktop\\ai_dashboard\\sentinel-qa-analytics-dashboard\\data\\ingestion_20260506_110116\\summary.json:1783951450575.7954:14546|C:\\Users\\JAIDEEP JOSHI\\Desktop\\ai_dashboard\\sentinel-qa-analytics-dashboard\\data\\ingestion_20260709_110143\\summary.json:1783951450783.6526:14575|C:\\Users\\JAIDEEP JOSHI\\Desktop\\ai_dashboard\\sentinel-qa-analytics-dashboard\\data\\ingestion_20260716_123355\\summary.json:1784205317485.4387:24425|C:\\Users\\JAIDEEP JOSHI\\Desktop\\ai_dashboard\\sentinel-qa-analytics-dashboard\\data\\ingestion_20260720_065915\\summary.json:1784530818540.6035:26201|C:\\Users\\JAIDEEP JOSHI\\Desktop\\ai_dashboard\\sentinel-qa-analytics-dashboard\\data\\run_5e01f6934347\\summary.json:1785223346196.198:2357|C:\\Users\\JAIDEEP JOSHI\\Desktop\\ai_dashboard\\sentinel-qa-analytics-dashboard\\data\\run_7cf9de9379d3\\summary.json:1785323975234.371:2488"
 }
