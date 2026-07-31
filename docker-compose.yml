@@ -1,0 +1,85 @@
+name: sentinel-qa
+
+services:
+  backend:
+    build:
+      context: .
+      dockerfile: services/Dockerfile
+    env_file:
+      - .env
+    environment:
+      # Frontend's published port from the host's perspective - keep this
+      # in sync with the frontend service's ports mapping below, and with
+      # NEXT_PUBLIC_API_URL passed to the frontend build.
+      CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS:-http://localhost:3000}
+    ports:
+      - "${BACKEND_PORT:-8000}:8000"
+    volumes:
+      # Ingested test data (LanceDB/DuckDB) - bind-mounted, not a named
+      # volume, so the existing local `cd universal_ingester && python
+      # ingester.py` workflow (run outside Docker) writes to the same place
+      # this container reads from.
+      - ./data:/app/data
+      # SQLite auth DB - a single-file bind mount. Docker creates a
+      # DIRECTORY at this path instead of passing a file through if it
+      # doesn't already exist on the host - run `touch users.db` (or
+      # `python -m services.admin_users init-db` once, outside Docker) before
+      # first `docker compose up` to avoid that.
+      - ./users.db:/app/users.db
+      # Only needed if AUTH_AUTO_SEED_USERS=true - uncomment and create
+      # ./auth_seed_users.json first (see auth_seed_users.json.example), or
+      # this bind mount fails/creates an empty directory on a fresh clone.
+      # - ./auth_seed_users.json:/app/auth_seed_users.json:ro
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/health', timeout=3).status == 200 else 1)"]
+      interval: 30s
+      timeout: 5s
+      start_period: 45s
+      retries: 3
+    restart: unless-stopped
+    mem_limit: 3g
+    cpus: 2.0
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      args:
+        # Baked in at build time (Next.js inlines NEXT_PUBLIC_* into the
+        # client bundle) - this is the URL the BROWSER uses, so it must be
+        # reachable from wherever the user's browser runs, not just from
+        # inside the Docker network. For local docker-compose that's the
+        # backend's published host port (matches BACKEND_PORT above).
+        NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:8000}
+    ports:
+      - "${FRONTEND_PORT:-3000}:3000"
+    depends_on:
+      backend:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://localhost:3000/').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      start_period: 20s
+      retries: 3
+    restart: unless-stopped
+    mem_limit: 1g
+    cpus: 1.0
+
+  # Optional - only needed once you run more than one `backend` instance
+  # behind a load balancer (REDIS_URL wires the live SSE bus + live-frame
+  # cache to work across instances instead of just within one). A single
+  # backend replica (the default above) doesn't need this at all.
+  # Enable with: docker compose --profile multi-instance up
+  redis:
+    image: redis:7-alpine
+    profiles: ["multi-instance"]
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+    restart: unless-stopped
+    mem_limit: 256m

@@ -5,7 +5,11 @@ const nextConfig: NextConfig = {
   turbopack: {
     root: __dirname,
   },
-  /* config options here */
+  // Emits a self-contained .next/standalone server (only the node_modules
+  // it actually traced as used, not the full tree) - the Docker runtime
+  // stage copies just that instead of the whole node_modules, which is
+  // what makes the final image small.
+  output: "standalone",
 };
 
 export default nextConfig;

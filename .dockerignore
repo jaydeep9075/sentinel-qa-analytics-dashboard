@@ -1,0 +1,41 @@
+# Backend build context is the repo root - keep only what services/Dockerfile
+# actually COPYs. Everything else here just slows the build and bloats the
+# context sent to the Docker daemon.
+
+.git
+.gitignore
+
+# Frontend has its own build context/.dockerignore - never needed here
+frontend/node_modules
+frontend/.next
+frontend
+
+# Python
+venv/
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+
+# Secrets / local runtime state - never bake into an image (see services/Dockerfile
+# comment); these are supplied via env_file/volumes at container run time.
+.env
+.env.*
+config.json
+auth_seed_users.json
+users.db
+users.db-journal
+data/
+
+# Everything else not needed to run the FastAPI service
+reports/
+logs/
+audit-results/
+Knowledge/
+terraform/
+vm-data/
+vm-data.zip
+tests/
+*.md
+!README.md
+node_modules/

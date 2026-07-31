@@ -1,34 +1,50 @@
+# Pinned to the versions actually developed/tested against (verified via
+# `pip freeze` against the working dev venv - the previous pins here had
+# drifted so far from what's actually installed that lancedb==0.12.0 would
+# have installed a table.update()-less API the backend now depends on).
+# Regenerate with: pip freeze | matches this file's package set.
+
 # Core Framework
-fastapi==0.115.6
-uvicorn[standard]==0.34.0
-pydantic==2.7.1
-python-multipart==0.0.9
+fastapi==0.139.0
+uvicorn[standard]==0.51.0
+pydantic==2.13.4
+python-multipart==0.0.32
+
+# Auth - was previously a manual "extra install step" documented only in
+# CLAUDE.md (pip install python-jose[cryptography] bcrypt), not tracked
+# here. auth.py/admin_users.py/live_exec/router.py all import these.
+python-jose[cryptography]==3.3.0
+bcrypt==4.2.1
 
 # Data Processing
-pandas==2.2.3
-numpy==1.26.4
-duckdb==1.1.3
-lancedb==0.12.0
-pyarrow==17.0.0
+pandas==3.0.3
+numpy==2.5.1
+duckdb==1.5.4
+lancedb==0.34.0
+pyarrow==25.0.0
 
 # AI & LLM
-google-generativeai==0.8.3
-sentence-transformers==3.0.1
-requests==2.31.0
-openai==1.37.1
-anthropic==0.24.2
+google-generativeai==0.8.6
+sentence-transformers==5.6.0
+requests==2.34.2
+openai==2.45.0
+anthropic==0.116.0
 litellm==1.72.6
 
 # Visualization
-plotly==5.24.1
-kaleido==0.2.1
+plotly==6.9.0
+# kaleido intentionally removed: not imported anywhere in services/ (charts
+# render client-side via Plotly.js/ApexCharts in the frontend). kaleido>=1.0
+# also switched to a "choreographer"-based architecture that needs a
+# separately-fetched headless Chrome binary - real Docker-image weight and
+# build complexity for a dependency nothing actually calls.
 
 # Configuration
-python-dotenv==1.0.1
+python-dotenv==1.2.2
 
 # Database (for universal ingester)
-pymysql==1.1.1
-sqlalchemy==2.0.36
+pymysql==1.2.0
+sqlalchemy==2.0.51
 
 # Optional: only used if REDIS_URL is set (multi-instance live-execution
 # deployments). Code falls back to in-process behavior when unset/uninstalled
@@ -36,18 +52,14 @@ sqlalchemy==2.0.36
 redis==5.2.1
 
 # Utilities
-typing-extensions==4.12.2
+typing-extensions==4.16.0
 openpyxl==3.1.5
 PyPDF2==3.0.1
 Pillow==10.4.0
 
-# Add these at the end for better compatibility
-torch==2.1.0  # Required by sentence-transformers (if not auto-installed)
-transformers==4.36.0  # Optional, for better sentence-transformers performance
-
-
-#version independent installation command 
-#pip install fastapi uvicorn pydantic python-multipart pandas numpy duckdb lancedb pyarrow google-generativeai sentence-transformers requests openai anthropic plotly kaleido python-dotenv pymysql sqlalchemy typing-extensions
-
-# single command with venv
-#python -m venv venv && venv\Scripts\activate && pip install fastapi uvicorn pydantic python-multipart pandas numpy duckdb lancedb pyarrow google-generativeai sentence-transformers requests openai anthropic plotly kaleido python-dotenv pymysql sqlalchemy typing-extensions
+# sentence-transformers' actual runtime dependency, not "if not auto-installed"
+# - always required. Installed from the CPU wheel index in Docker (see
+# services/Dockerfile) to avoid pulling the multi-GB CUDA build for a service
+# that never touches a GPU.
+torch==2.13.0
+transformers==5.13.1
