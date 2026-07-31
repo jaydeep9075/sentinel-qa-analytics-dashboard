@@ -235,7 +235,7 @@ frontend/
 ### Cache & Performance
 - **Status Cache**: 10-second TTL on `/data/status` (see `_STATUS_CACHE_TTL_SECONDS`)
 - **Quality Cache**: 20-second TTL on `/data/quality` (see `_QUALITY_CACHE_TTL_SECONDS`)
-- **Schema Context**: Dynamically computed from table metadata (no caching; can be slow on large datasets)
+- **Schema Context**: Computed from table metadata and cached per ingestion_id for the process lifetime (`schema_context.py`, capped at 50 ingestions); first computation per ingestion can be slow on large datasets, subsequent lookups are free until `invalidate_cache()` or the process restarts
 
 ### Multi-Ingestion Support
 - Each ingestion creates a timestamped folder under `data/`

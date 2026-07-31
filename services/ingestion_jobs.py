@@ -31,6 +31,11 @@ logger = logging.getLogger(__name__)
 
 _jobs: Dict[str, dict] = {}
 _lock = threading.Lock()
+# get_status() falls back to the on-disk job_status.json when a build_id
+# isn't cached here, so this dict is purely a fast-path cache - safe to cap.
+# Without a cap, a long-running backend process grows one entry per
+# ingestion ever run, forever.
+_MAX_TRACKED_JOBS = 200
 
 
 def _status_path(build_id: str) -> Path:
@@ -40,6 +45,9 @@ def _status_path(build_id: str) -> Path:
 def _write_status(build_id: str, status: dict) -> None:
     with _lock:
         _jobs[build_id] = status
+        if len(_jobs) > _MAX_TRACKED_JOBS:
+            for key in list(_jobs.keys())[: len(_jobs) - _MAX_TRACKED_JOBS]:
+                _jobs.pop(key, None)
     try:
         path = _status_path(build_id)
         path.parent.mkdir(parents=True, exist_ok=True)

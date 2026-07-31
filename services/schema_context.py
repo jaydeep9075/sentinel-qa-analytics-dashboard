@@ -24,6 +24,14 @@ _CATEGORICAL_COLUMN_HINTS = ("project", "module", "platform", "status", "browser
 _MAX_DISTINCT_VALUES = 12
 
 _cache: Dict[str, dict] = {}
+# Each ingestion is an immutable snapshot (see module docstring), so a cache
+# entry is valid for the process lifetime and invalidate_cache() is only for
+# explicit cache-busting - there's no TTL here on purpose (a TTL would just
+# re-trigger the DISTINCT queries in _fetch_distinct_values on a timer for no
+# correctness benefit). What's uncapped is entry *count*: a long-running
+# backend that's been pointed at many different ingestions over its life
+# accumulates one entry per ingestion_id forever. Cap that instead.
+_MAX_CACHED_INGESTIONS = 50
 
 
 _NUMERIC_TYPE_HINTS = ("INT", "DOUBLE", "FLOAT", "DECIMAL", "REAL", "NUMERIC", "HUGEINT")
@@ -81,6 +89,9 @@ def build_schema_summary(sample_rows: int = 3, force_refresh: bool = False) -> d
         }
 
     _cache[ingestion_id] = summary
+    if len(_cache) > _MAX_CACHED_INGESTIONS:
+        for key in list(_cache.keys())[: len(_cache) - _MAX_CACHED_INGESTIONS]:
+            _cache.pop(key, None)
     return summary
 
 

@@ -29,8 +29,18 @@ export interface SentinelReporterOptions {
   liveView?: boolean;
   /** Base CDP port; each worker uses liveViewPort + workerIndex. Default 9222. */
   liveViewPort?: number;
-  /** How often to grab a frame, in ms. Default 1000 (~1fps). */
+  /** How often to grab a frame, in ms, for a run at or below liveViewMaxFullRateWorkers. Default 1000 (~1fps). */
   liveViewIntervalMs?: number;
+  /**
+   * Worker count under which live view runs at the full liveViewIntervalMs
+   * rate. Each worker posts a frame independently, so total load on the
+   * Sentinel backend scales with worker count - unbounded on a big CI
+   * matrix. Above this threshold the interval stretches proportionally
+   * (e.g. 2x the workers -> 2x the interval) so aggregate frames/sec across
+   * the whole run stays roughly flat instead of climbing with every worker
+   * added. Default 3.
+   */
+  liveViewMaxFullRateWorkers?: number;
 }
 
 interface SentinelEvent {
@@ -135,6 +145,11 @@ export default class SentinelPlaywrightReporter implements Reporter {
   private inflight: Promise<void>[] = [];
   private liveViewWatchers = new Map<number, LiveViewWatcher>();
   private droppedEventsWarned = false;
+  /** Set from FullConfig.workers in onBegin; drives the live-view throttle
+   * in ensureLiveView. Defaults to 1 so a watcher created before onBegin
+   * somehow ran (shouldn't happen, but cheaper than a null check at every
+   * call site) behaves like a single-worker run. */
+  private workerCount = 1;
 
   /** If the backend is unreachable for a stretch (network blip, backend
    * restart, a long CI run outlasting some deploy), flush() keeps failing
@@ -157,6 +172,7 @@ export default class SentinelPlaywrightReporter implements Reporter {
   }
 
   async onBegin(config: FullConfig, suite: Suite): Promise<void> {
+    this.workerCount = config.workers || 1;
     try {
       const res = await fetch(`${this.baseUrl}/live/runs`, {
         method: "POST",
@@ -216,11 +232,24 @@ export default class SentinelPlaywrightReporter implements Reporter {
     const port = (this.options.liveViewPort ?? 9222) + workerIndex;
     const watcher = new LiveViewWatcher(
       port,
-      this.options.liveViewIntervalMs ?? 1000,
+      this.effectiveLiveViewIntervalMs(),
       (frame) => void this.postFrame(workerIndex, frame)
     );
     this.liveViewWatchers.set(workerIndex, watcher);
     void watcher.start();
+  }
+
+  /** Every worker posts frames independently, so unthrottled load on the
+   * backend scales linearly with worker count. Below liveViewMaxFullRateWorkers
+   * nothing changes (full 1fps, matches today's behavior for local/small
+   * runs); past it, the interval stretches in proportion to worker count so
+   * aggregate frames/sec across the run stays roughly flat instead of
+   * growing with every worker a CI matrix adds. */
+  private effectiveLiveViewIntervalMs(): number {
+    const baseIntervalMs = this.options.liveViewIntervalMs ?? 1000;
+    const fullRateWorkers = this.options.liveViewMaxFullRateWorkers ?? 3;
+    if (this.workerCount <= fullRateWorkers) return baseIntervalMs;
+    return Math.round(baseIntervalMs * (this.workerCount / fullRateWorkers));
   }
 
   private async postFrame(workerIndex: number, frame: string): Promise<void> {

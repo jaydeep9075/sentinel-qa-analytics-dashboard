@@ -67,8 +67,31 @@ def _text_overlap_score(query_terms: Set[str], candidate_terms: Set[str]) -> flo
         return 0.0
     return intersection / max(len(query_terms), 1)
 
+
+def _sql_escape(value: str) -> str:
+    return str(value).replace("'", "''")
+
+
+def _eq_clause(column: str, value: str) -> str:
+    return f"{column} = '{_sql_escape(value)}'"
+
+
+def _filtered_pandas(table, clauses: List[str]) -> pd.DataFrame:
+    """Push row filtering down to LanceDB instead of loading the whole
+    table into pandas and masking client-side. These tables only ever grow
+    (no retention/pruning), so an unfiltered table.to_pandas() was pulling
+    every user's/workspace's/ingestion's rows into memory on every single
+    read - cost climbs with total usage, not with what any one caller
+    actually needs. Sorting/limiting by created_at still happens
+    client-side on the (much smaller) filtered result, since LanceDB's
+    .limit() is a physical row-scan cap, not an ORDER BY pushdown - using
+    it before sorting would silently return the wrong N rows."""
+    if not clauses:
+        return table.to_pandas()
+    return table.search().where(" AND ".join(clauses)).to_pandas()
+
 def _ensure_chat_table():
-    if not state.lance_db:
+    if state.lance_db is None:
         return
     table_name = "chat_history"
     if table_name in state.lance_db.table_names():
@@ -126,7 +149,7 @@ def _ensure_chat_table():
     state.lance_db.create_table(table_name, schema=schema)
 
 def _ensure_learning_signal_table():
-    if not state.lance_db:
+    if state.lance_db is None:
         return
     table_name = "learning_signals"
     if table_name in state.lance_db.table_names():
@@ -178,7 +201,7 @@ def _ensure_learning_signal_table():
 
 
 def _ensure_knowledge_graph_table():
-    if not state.lance_db:
+    if state.lance_db is None:
         return
     table_name = "knowledge_graph_edges"
     if table_name in state.lance_db.table_names():
@@ -233,25 +256,22 @@ def get_chat_history(
     ingestion_id: Optional[str] = None,
     workspace_id: Optional[str] = None,
 ):
-    if not state.lance_db or "chat_history" not in state.lance_db.table_names():
+    if state.lance_db is None or "chat_history" not in state.lance_db.table_names():
         return []
     try:
+        _ensure_chat_table()
         table = state.lance_db.open_table("chat_history")
-        df = table.to_pandas()
-        if df.empty:
-            return []
-
-        if "user_id" in df.columns:
-            df = df[df["user_id"] == _norm_user(user_id)]
-        if "workspace_id" in df.columns:
-            df = df[df["workspace_id"] == _norm_workspace(workspace_id)]
-        if ingestion_id and "ingestion_id" in df.columns:
-            df = df[df["ingestion_id"] == _norm_ingestion(ingestion_id)]
-
+        clauses = [
+            _eq_clause("user_id", _norm_user(user_id)),
+            _eq_clause("workspace_id", _norm_workspace(workspace_id)),
+        ]
+        if ingestion_id:
+            clauses.append(_eq_clause("ingestion_id", _norm_ingestion(ingestion_id)))
         sid = str(session_id or "").strip()
         if sid and sid not in {"all", "__all__", "*"}:
-            df = df[df["session_id"] == sid]
+            clauses.append(_eq_clause("session_id", sid))
 
+        df = _filtered_pandas(table, clauses)
         if df.empty:
             return []
         df = df.sort_values("created_at", ascending=False).head(limit)
@@ -270,7 +290,7 @@ def store_chat_message(
     ingestion_id: Optional[str] = None,
     workspace_id: Optional[str] = None,
 ):
-    if not state.lance_db:
+    if state.lance_db is None:
         return
     _ensure_chat_table()
     try:
@@ -293,7 +313,7 @@ def store_chat_message(
         logger.error(f"Error storing chat message: {e}")
 
 def _ensure_chart_table():
-    if not state.lance_db:
+    if state.lance_db is None:
         return
     table_name = "chart_history"
     if table_name in state.lance_db.table_names():
@@ -358,25 +378,22 @@ def get_chart_history(
     ingestion_id: Optional[str] = None,
     workspace_id: Optional[str] = None,
 ):
-    if not state.lance_db or "chart_history" not in state.lance_db.table_names():
+    if state.lance_db is None or "chart_history" not in state.lance_db.table_names():
         return []
     try:
+        _ensure_chart_table()
         table = state.lance_db.open_table("chart_history")
-        df = table.to_pandas()
-        if df.empty:
-            return []
-
-        if "user_id" in df.columns:
-            df = df[df["user_id"] == _norm_user(user_id)]
-        if "workspace_id" in df.columns:
-            df = df[df["workspace_id"] == _norm_workspace(workspace_id)]
-        if ingestion_id and "ingestion_id" in df.columns:
-            df = df[df["ingestion_id"] == _norm_ingestion(ingestion_id)]
-
+        clauses = [
+            _eq_clause("user_id", _norm_user(user_id)),
+            _eq_clause("workspace_id", _norm_workspace(workspace_id)),
+        ]
+        if ingestion_id:
+            clauses.append(_eq_clause("ingestion_id", _norm_ingestion(ingestion_id)))
         sid = str(session_id or "").strip()
         if sid and sid not in {"all", "__all__", "*"}:
-            df = df[df["session_id"] == sid]
+            clauses.append(_eq_clause("session_id", sid))
 
+        df = _filtered_pandas(table, clauses)
         if df.empty:
             return []
         df = df.sort_values("created_at", ascending=False).head(limit)
@@ -395,7 +412,7 @@ def store_chart(
     ingestion_id: Optional[str] = None,
     workspace_id: Optional[str] = None,
 ):
-    if not state.lance_db:
+    if state.lance_db is None:
         logger.error("store_chart: state.lance_db is None")
         return False
     try:
@@ -431,7 +448,7 @@ def _upsert_learning_signal(
     prompt: str,
     response: str,
 ):
-    if not state.lance_db:
+    if state.lance_db is None:
         return
 
     _ensure_learning_signal_table()
@@ -440,29 +457,36 @@ def _upsert_learning_signal(
     keywords = _extract_keywords(prompt)
 
     table = state.lance_db.open_table("learning_signals")
-    df = table.to_pandas()
-
-    if not df.empty:
-        mask = (
-            (df["workspace_id"] == workspace_id)
-            &
-            (df["user_id"] == user_id)
-            & (df["ingestion_id"] == ingestion_id)
-            & (df["kind"] == kind)
-            & (df["prompt"].fillna("").str.lower() == prompt_norm)
+    # Composite key (workspace, user, ingestion, kind, prompt) is unique, so
+    # at most one row can match - fetch just that row instead of the whole
+    # table to read its current frequency/keywords before merging, then
+    # update it in place. Previously this loaded the ENTIRE table into
+    # pandas *and* rewrote it whole (drop_table + create_table) on every
+    # single chat/chart interaction, regardless of table size - by far the
+    # heaviest cost in this file, not just a read-side one.
+    match_clause = " AND ".join([
+        _eq_clause("workspace_id", workspace_id),
+        _eq_clause("user_id", user_id),
+        _eq_clause("ingestion_id", ingestion_id),
+        _eq_clause("kind", kind),
+        f"LOWER(prompt) = '{_sql_escape(prompt_norm)}'",
+    ])
+    existing = table.search().where(match_clause).limit(1).to_pandas()
+    if not existing.empty:
+        row = existing.iloc[0]
+        prev_freq = int(row.get("frequency") or 0)
+        prev_keywords = set(_safe_json_loads(row.get("keywords") or "[]", []))
+        merged_keywords = sorted(prev_keywords.union(set(keywords)))
+        table.update(
+            where=match_clause,
+            values={
+                "frequency": prev_freq + 1,
+                "response": response,
+                "keywords": json.dumps(merged_keywords),
+                "updated_at": now,
+            },
         )
-        if mask.any():
-            idx = df[mask].index[0]
-            prev_freq = int(df.at[idx, "frequency"] or 0)
-            prev_keywords = set(_safe_json_loads(df.at[idx, "keywords"] or "[]", []))
-            merged_keywords = sorted(prev_keywords.union(set(keywords)))
-            df.at[idx, "frequency"] = prev_freq + 1
-            df.at[idx, "response"] = response
-            df.at[idx, "keywords"] = json.dumps(merged_keywords)
-            df.at[idx, "updated_at"] = now
-            state.lance_db.drop_table("learning_signals")
-            state.lance_db.create_table("learning_signals", df)
-            return
+        return
 
     new_row = {
         "id": str(uuid.uuid4()),
@@ -482,7 +506,7 @@ def _upsert_learning_signal(
 
 
 def _update_knowledge_graph(workspace_id: str, user_id: str, ingestion_id: str, prompt: str):
-    if not state.lance_db:
+    if state.lance_db is None:
         return
 
     _ensure_knowledge_graph_table()
@@ -491,46 +515,42 @@ def _update_knowledge_graph(workspace_id: str, user_id: str, ingestion_id: str, 
         return
 
     table = state.lance_db.open_table("knowledge_graph_edges")
-    df = table.to_pandas()
     now = datetime.now(timezone.utc).isoformat()
+    new_rows = []
 
+    # One targeted update per co-occurring pair (at most C(10,2)=45) instead
+    # of loading the entire edges table into pandas and rewriting it whole
+    # (drop_table + create_table) on every interaction - that was O(table
+    # size) work per chat message no matter how many pairs this call
+    # touches. weight is incremented atomically via values_sql, so there's
+    # no read-modify-write race either.
     for a, b in combinations(sorted(set(keywords)), 2):
-        if df.empty:
-            row = None
-        else:
-            edge_mask = (
-                (df["workspace_id"] == workspace_id)
-                &
-                (df["user_id"] == user_id)
-                & (df["ingestion_id"] == ingestion_id)
-                & (df["source"] == a)
-                & (df["target"] == b)
-            )
-            row = df[edge_mask]
+        match_clause = " AND ".join([
+            _eq_clause("workspace_id", workspace_id),
+            _eq_clause("user_id", user_id),
+            _eq_clause("ingestion_id", ingestion_id),
+            _eq_clause("source", a),
+            _eq_clause("target", b),
+        ])
+        result = table.update(
+            where=match_clause,
+            values_sql={"weight": "weight + 1", "updated_at": f"'{_sql_escape(now)}'"},
+        )
+        if result.rows_updated == 0:
+            new_rows.append({
+                "id": str(uuid.uuid4()),
+                "workspace_id": workspace_id,
+                "user_id": user_id,
+                "ingestion_id": ingestion_id,
+                "source": a,
+                "target": b,
+                "weight": 1,
+                "edge_type": "cooccurrence",
+                "updated_at": now,
+            })
 
-        if row is not None and not row.empty:
-            idx = row.index[0]
-            df.at[idx, "weight"] = int(df.at[idx, "weight"] or 0) + 1
-            df.at[idx, "updated_at"] = now
-        else:
-            new_row = pd.DataFrame([
-                {
-                    "id": str(uuid.uuid4()),
-                    "workspace_id": workspace_id,
-                    "user_id": user_id,
-                    "ingestion_id": ingestion_id,
-                    "source": a,
-                    "target": b,
-                    "weight": 1,
-                    "edge_type": "cooccurrence",
-                    "updated_at": now,
-                }
-            ])
-            df = pd.concat([df, new_row], ignore_index=True)
-
-    if "knowledge_graph_edges" in state.lance_db.table_names():
-        state.lance_db.drop_table("knowledge_graph_edges")
-    state.lance_db.create_table("knowledge_graph_edges", df)
+    if new_rows:
+        table.add(new_rows)
 
 
 def learn_from_interaction(
@@ -542,7 +562,7 @@ def learn_from_interaction(
     response: str,
     kind: str = "chat",
 ):
-    if not state.lance_db:
+    if state.lance_db is None:
         return
     uid = _norm_user(user_id)
     iid = _norm_ingestion(ingestion_id)
@@ -563,7 +583,7 @@ def get_learning_context(
     limit: int = 5,
 ) -> List[Dict]:
     _ensure_learning_signal_table()
-    if not state.lance_db or "learning_signals" not in state.lance_db.table_names():
+    if state.lance_db is None or "learning_signals" not in state.lance_db.table_names():
         return []
     try:
         uid = _norm_user(user_id)
@@ -572,16 +592,12 @@ def get_learning_context(
         query_terms = set(_extract_keywords(query, max_terms=14))
 
         table = state.lance_db.open_table("learning_signals")
-        df = table.to_pandas()
-        if df.empty:
-            return []
-
-        if "workspace_id" in df.columns:
-            df = df[df["workspace_id"] == wid]
-        if "user_id" in df.columns:
-            df = df[df["user_id"] == uid]
-        if "ingestion_id" in df.columns:
-            df = df[df["ingestion_id"] == iid]
+        clauses = [
+            _eq_clause("workspace_id", wid),
+            _eq_clause("user_id", uid),
+            _eq_clause("ingestion_id", iid),
+        ]
+        df = _filtered_pandas(table, clauses)
         if df.empty:
             return []
 
@@ -611,7 +627,7 @@ def get_related_concepts(
     limit: int = 8,
 ) -> List[Dict]:
     _ensure_knowledge_graph_table()
-    if not state.lance_db or "knowledge_graph_edges" not in state.lance_db.table_names():
+    if state.lance_db is None or "knowledge_graph_edges" not in state.lance_db.table_names():
         return []
     try:
         uid = _norm_user(user_id)
@@ -622,15 +638,12 @@ def get_related_concepts(
             return []
 
         table = state.lance_db.open_table("knowledge_graph_edges")
-        df = table.to_pandas()
-        if df.empty:
-            return []
-        if "workspace_id" in df.columns:
-            df = df[df["workspace_id"] == wid]
-        if "user_id" in df.columns:
-            df = df[df["user_id"] == uid]
-        if "ingestion_id" in df.columns:
-            df = df[df["ingestion_id"] == iid]
+        clauses = [
+            _eq_clause("workspace_id", wid),
+            _eq_clause("user_id", uid),
+            _eq_clause("ingestion_id", iid),
+        ]
+        df = _filtered_pandas(table, clauses)
         if df.empty:
             return []
 
@@ -662,7 +675,7 @@ def get_related_concepts(
 
 
 def _ensure_feedback_table():
-    if not state.lance_db:
+    if state.lance_db is None:
         return
     table_name = "feedback_signals"
     if table_name in state.lance_db.table_names():
@@ -726,7 +739,7 @@ def store_feedback(
     notes: Optional[str] = None,
     tags: Optional[List[str]] = None,
 ):
-    if not state.lance_db:
+    if state.lance_db is None:
         return False
     try:
         _ensure_feedback_table()
@@ -762,7 +775,7 @@ def get_feedback_preferences(
     limit: int = 120,
 ) -> Dict:
     _ensure_feedback_table()
-    if not state.lance_db or "feedback_signals" not in state.lance_db.table_names():
+    if state.lance_db is None or "feedback_signals" not in state.lance_db.table_names():
         return {"prefer": [], "avoid": [], "tags": []}
 
     try:
@@ -772,19 +785,13 @@ def get_feedback_preferences(
         tkind = str(target_kind or "chat").strip().lower()
 
         table = state.lance_db.open_table("feedback_signals")
-        df = table.to_pandas()
-        if df.empty:
-            return {"prefer": [], "avoid": [], "tags": []}
-
-        if "workspace_id" in df.columns:
-            df = df[df["workspace_id"] == wid]
-        if "user_id" in df.columns:
-            df = df[df["user_id"] == uid]
-        if "ingestion_id" in df.columns:
-            df = df[df["ingestion_id"] == iid]
-        if "target_kind" in df.columns:
-            df = df[df["target_kind"] == tkind]
-
+        clauses = [
+            _eq_clause("workspace_id", wid),
+            _eq_clause("user_id", uid),
+            _eq_clause("ingestion_id", iid),
+            _eq_clause("target_kind", tkind),
+        ]
+        df = _filtered_pandas(table, clauses)
         if df.empty:
             return {"prefer": [], "avoid": [], "tags": []}
 
@@ -838,70 +845,67 @@ def get_feedback_prompt_hints(
     if prefs.get("tags"):
         lines.append("Style tags: " + ", ".join(prefs["tags"]))
 
-    if state.lance_db and "feedback_signals" in state.lance_db.table_names():
+    if state.lance_db is not None and "feedback_signals" in state.lance_db.table_names():
         try:
-            df = state.lance_db.open_table("feedback_signals").to_pandas()
+            table = state.lance_db.open_table("feedback_signals")
+            clauses = [
+                _eq_clause("workspace_id", wid),
+                _eq_clause("user_id", uid),
+                _eq_clause("ingestion_id", iid),
+                _eq_clause("target_kind", tkind),
+            ]
+            df = _filtered_pandas(table, clauses)
             if not df.empty:
-                if "workspace_id" in df.columns:
-                    df = df[df["workspace_id"] == wid]
-                if "user_id" in df.columns:
-                    df = df[df["user_id"] == uid]
-                if "ingestion_id" in df.columns:
-                    df = df[df["ingestion_id"] == iid]
-                if "target_kind" in df.columns:
-                    df = df[df["target_kind"] == tkind]
+                recent = df.sort_values("created_at", ascending=False).head(80)
+                down_all = int((recent["feedback_type"].astype(str).str.lower().isin(["down", "negative"])).sum())
+                up_all = int((recent["feedback_type"].astype(str).str.lower().isin(["up", "positive"])).sum())
+                improve_all = int((recent["feedback_type"].astype(str).str.lower() == "improve").sum())
+                if down_all or up_all or improve_all:
+                    lines.append(
+                        f"Recent feedback mix: up={up_all}, down={down_all}, improve={improve_all}. "
+                        "Use this to calibrate tone, structure, and depth."
+                    )
 
-                if not df.empty:
-                    recent = df.sort_values("created_at", ascending=False).head(80)
-                    down_all = int((recent["feedback_type"].astype(str).str.lower().isin(["down", "negative"])).sum())
-                    up_all = int((recent["feedback_type"].astype(str).str.lower().isin(["up", "positive"])).sum())
-                    improve_all = int((recent["feedback_type"].astype(str).str.lower() == "improve").sum())
-                    if down_all or up_all or improve_all:
-                        lines.append(
-                            f"Recent feedback mix: up={up_all}, down={down_all}, improve={improve_all}. "
-                            "Use this to calibrate tone, structure, and depth."
-                        )
+                negative_notes = [
+                    str(r.get("notes", "")).strip()
+                    for _, r in recent.iterrows()
+                    if str(r.get("feedback_type", "")).strip().lower() in {"down", "negative", "improve"}
+                    and str(r.get("notes", "")).strip()
+                ]
+                if negative_notes:
+                    lines.append("Latest improvement requests: " + "; ".join(negative_notes[:3]))
 
-                    negative_notes = [
-                        str(r.get("notes", "")).strip()
-                        for _, r in recent.iterrows()
-                        if str(r.get("feedback_type", "")).strip().lower() in {"down", "negative", "improve"}
-                        and str(r.get("notes", "")).strip()
-                    ]
-                    if negative_notes:
-                        lines.append("Latest improvement requests: " + "; ".join(negative_notes[:3]))
+                positive_notes = [
+                    str(r.get("notes", "")).strip()
+                    for _, r in recent.iterrows()
+                    if str(r.get("feedback_type", "")).strip().lower() in {"up", "positive"}
+                    and str(r.get("notes", "")).strip()
+                ]
+                if positive_notes:
+                    lines.append("Keep these approved traits: " + "; ".join(positive_notes[:2]))
 
-                    positive_notes = [
-                        str(r.get("notes", "")).strip()
-                        for _, r in recent.iterrows()
-                        if str(r.get("feedback_type", "")).strip().lower() in {"up", "positive"}
-                        and str(r.get("notes", "")).strip()
-                    ]
-                    if positive_notes:
-                        lines.append("Keep these approved traits: " + "; ".join(positive_notes[:2]))
+                if current_prompt:
+                    prompt_terms = set(_extract_keywords(current_prompt, max_terms=14))
+                    similar_rows = []
+                    for _, row in recent.iterrows():
+                        src = " ".join([
+                            str(row.get("prompt", "")),
+                            str(row.get("notes", "")),
+                        ])
+                        overlap = _text_overlap_score(prompt_terms, set(_extract_keywords(src, max_terms=14)))
+                        if overlap > 0.15:
+                            similar_rows.append(row)
 
-                    if current_prompt:
-                        prompt_terms = set(_extract_keywords(current_prompt, max_terms=14))
-                        similar_rows = []
-                        for _, row in recent.iterrows():
-                            src = " ".join([
-                                str(row.get("prompt", "")),
-                                str(row.get("notes", "")),
-                            ])
-                            overlap = _text_overlap_score(prompt_terms, set(_extract_keywords(src, max_terms=14)))
-                            if overlap > 0.15:
-                                similar_rows.append(row)
-
-                        if similar_rows:
-                            down = sum(1 for r in similar_rows if str(r.get("feedback_type", "")).lower() in {"down", "negative"})
-                            up = sum(1 for r in similar_rows if str(r.get("feedback_type", "")).lower() in {"up", "positive"})
-                            latest_notes = [str(r.get("notes", "")).strip() for r in similar_rows if str(r.get("notes", "")).strip()]
-                            if down > 0:
-                                lines.append("For similar requests, user marked prior outputs as weak. Change structure and provide a clearly improved version.")
-                            if up > down and up > 0:
-                                lines.append("For similar requests, user approved concise structure. Keep that style.")
-                            if latest_notes:
-                                lines.append("Specific feedback notes: " + "; ".join(latest_notes[:2]))
+                    if similar_rows:
+                        down = sum(1 for r in similar_rows if str(r.get("feedback_type", "")).lower() in {"down", "negative"})
+                        up = sum(1 for r in similar_rows if str(r.get("feedback_type", "")).lower() in {"up", "positive"})
+                        latest_notes = [str(r.get("notes", "")).strip() for r in similar_rows if str(r.get("notes", "")).strip()]
+                        if down > 0:
+                            lines.append("For similar requests, user marked prior outputs as weak. Change structure and provide a clearly improved version.")
+                        if up > down and up > 0:
+                            lines.append("For similar requests, user approved concise structure. Keep that style.")
+                        if latest_notes:
+                            lines.append("Specific feedback notes: " + "; ".join(latest_notes[:2]))
         except Exception as exc:
             logger.error(f"Error computing prompt-aware feedback hints: {exc}")
 

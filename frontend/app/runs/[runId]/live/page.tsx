@@ -219,15 +219,22 @@ export default function LiveRunPage() {
 
     source.addEventListener("test.log", (e: MessageEvent) => {
       const data = JSON.parse(e.data);
-      setLogs((prev) => [
-        ...prev,
-        {
-          ts: data.ts,
-          test_id: data.test?.id,
-          level: data.payload?.level,
-          message: data.payload?.message ?? "",
-        },
-      ]);
+      setLogs((prev) => {
+        // A long/chatty run streams indefinitely for as long as the tab
+        // stays open watching it - cap in-memory history to match the
+        // backend's own snapshot limit (LIMIT 200 in store.py) instead of
+        // growing forever.
+        const next = [
+          ...prev,
+          {
+            ts: data.ts,
+            test_id: data.test?.id,
+            level: data.payload?.level,
+            message: data.payload?.message ?? "",
+          },
+        ];
+        return next.length > 200 ? next.slice(next.length - 200) : next;
+      });
     });
 
     source.addEventListener("test.attachment", (e: MessageEvent) => {

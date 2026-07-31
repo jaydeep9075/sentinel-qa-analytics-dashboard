@@ -871,7 +871,7 @@ def execute_sql(query: str):
 
 
 def vector_search(query: str, top_k: int = 5):
-    if not state.lance_db or "documents" not in state.lance_db.table_names():
+    if state.lance_db is None or "documents" not in state.lance_db.table_names():
         return []
     if state.embedder is None:
         state.embedder = EmbeddingGenerator()

@@ -20,6 +20,7 @@ event loop; the in-memory path just doesn't happen to need to await anything.
 from __future__ import annotations
 
 import logging
+import time
 
 from .. import config
 
@@ -35,7 +36,7 @@ except ImportError:  # redis is optional - see requirements.txt
 # mid-run rather than finishing normally).
 _FRAME_TTL_SECONDS = 15
 
-_latest_frames: dict[tuple[str, int], str] = {}
+_latest_frames: dict[tuple[str, int], tuple[float, str]] = {}
 _redis = None
 
 if config.REDIS_URL and aioredis is not None:
@@ -56,13 +57,24 @@ async def set_frame(run_id: str, worker_id: int, frame_b64: str) -> None:
     if _redis is not None:
         await _redis.set(_key(run_id, worker_id), frame_b64, ex=_FRAME_TTL_SECONDS)
         return
-    _latest_frames[(run_id, worker_id)] = frame_b64
+    _latest_frames[(run_id, worker_id)] = (time.monotonic(), frame_b64)
 
 
 async def get_frame(run_id: str, worker_id: int) -> str | None:
     if _redis is not None:
         return await _redis.get(_key(run_id, worker_id))
-    return _latest_frames.get((run_id, worker_id))
+    entry = _latest_frames.get((run_id, worker_id))
+    if entry is None:
+        return None
+    ts, frame_b64 = entry
+    # Mirrors the Redis path's TTL: a process killed mid-run (skipping the
+    # normal clear_run cleanup) would otherwise leak this entry forever.
+    # Lazy expiry on read, not a sweep timer - same pattern as the other
+    # in-process caches in this codebase (see _cache_get in main.py).
+    if time.monotonic() - ts > _FRAME_TTL_SECONDS:
+        _latest_frames.pop((run_id, worker_id), None)
+        return None
+    return frame_b64
 
 
 async def clear_run(run_id: str, worker_count: int = 8) -> None:

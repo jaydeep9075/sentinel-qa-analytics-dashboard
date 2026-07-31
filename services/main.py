@@ -767,7 +767,7 @@ async def delete_chart(
 ):
     normalized_ingestion_id = str(x_ingestion_id or "").strip()
     data_loader.ensure_ingestion_loaded(normalized_ingestion_id)
-    if not state.lance_db or "chart_history" not in state.lance_db.table_names():
+    if state.lance_db is None or "chart_history" not in state.lance_db.table_names():
         return {"error": "Chart history not available"}
     try:
         import pandas as pd
@@ -1123,7 +1123,7 @@ async def submit_feedback(
     normalized_ingestion_id = str(x_ingestion_id or "").strip()
     data_loader.ensure_ingestion_loaded(normalized_ingestion_id)
 
-    if not state.lance_db:
+    if state.lance_db is None:
         raise HTTPException(status_code=500, detail="Data store not initialized")
 
     target_kind = str(request.target_kind or "chat").strip().lower()

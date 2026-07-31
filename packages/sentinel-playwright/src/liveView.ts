@@ -36,7 +36,7 @@ export class LiveViewWatcher {
   private ws: WebSocket | null = null;
   private timer: ReturnType<typeof setInterval> | null = null;
   private msgId = 1;
-  private pending = new Map<number, (result: unknown) => void>();
+  private pending = new Map<number, { resolve: (result: unknown) => void; reject: (err: Error) => void }>();
   private stopped = false;
   private reconnecting = false;
   private currentTargetUrl: string | null = null;
@@ -138,12 +138,21 @@ export class LiveViewWatcher {
           this.ws = null;
           this.currentTargetUrl = null;
         }
+        // Any request already sent to this socket (e.g. a captureScreenshot
+        // in flight when the page navigated away mid-request) will never
+        // get a response now. Without this, its `pending` entry - and the
+        // tick() awaiting it - would hang forever instead of erroring, on
+        // top of the map entry never being cleaned up.
+        for (const { reject } of this.pending.values()) {
+          reject(new Error("CDP socket closed"));
+        }
+        this.pending.clear();
       });
       socket.addEventListener("message", (ev: MessageEvent) => {
         try {
           const msg = JSON.parse(ev.data.toString());
           if (msg.id && this.pending.has(msg.id)) {
-            this.pending.get(msg.id)!(msg.result);
+            this.pending.get(msg.id)!.resolve(msg.result);
             this.pending.delete(msg.id);
           }
         } catch {
@@ -178,7 +187,7 @@ export class LiveViewWatcher {
         reject(new Error("not connected"));
         return;
       }
-      this.pending.set(id, resolve);
+      this.pending.set(id, { resolve, reject });
       this.ws.send(JSON.stringify({ id, method, params }));
     });
   }
