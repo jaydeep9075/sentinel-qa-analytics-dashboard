@@ -25,7 +25,7 @@ from typing import Dict, Optional
 
 import anyio
 
-from . import config
+from . import build_owner, config
 
 logger = logging.getLogger(__name__)
 
@@ -70,6 +70,17 @@ def get_status(build_id: str) -> Optional[dict]:
     return None
 
 
+def forget(build_id: str) -> None:
+    """Drop the cached status for a build that no longer exists.
+
+    get_status() falls back to reading job_status.json from the build folder,
+    so once that folder is deleted the only thing still claiming the build
+    exists is this in-memory cache.
+    """
+    with _lock:
+        _jobs.pop(build_id, None)
+
+
 def is_failed(build_id: str) -> bool:
     status = get_status(build_id)
     return bool(status and status.get("status") == "failed")
@@ -92,12 +103,31 @@ def _check_source_size(source_path: str) -> Optional[str]:
     return None
 
 
-async def start_ingestion(build_id: str, dynamic_cfg: dict, source_path: str) -> None:
+async def start_ingestion(
+    build_id: str,
+    dynamic_cfg: dict,
+    source_path: str,
+    workspace_id: Optional[str] = None,
+    created_by: str = "",
+    source: str = "",
+) -> None:
     """Runs as a FastAPI BackgroundTask: the HTTP response has already been
     sent by the time this executes, so blocking here doesn't delay the
     client — and the actual ingestion work is further offloaded to a
-    worker thread so it doesn't block the event loop for other requests."""
+    worker thread so it doesn't block the event loop for other requests.
+
+    workspace_id/created_by are recorded as owner.json before any work starts,
+    so a build that fails halfway is still attributed — an unowned directory
+    would otherwise fall back to the legacy workspace and become visible to
+    the wrong people."""
     started_at = datetime.now(timezone.utc).isoformat()
+
+    build_owner.write_owner(
+        build_id,
+        workspace_id or config.DEFAULT_WORKSPACE_ID,
+        created_by=created_by,
+        source=source,
+    )
 
     size_error = _check_source_size(source_path)
     if size_error:

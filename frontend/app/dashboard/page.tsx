@@ -1,9 +1,10 @@
 "use client";
 
 import { useState, useEffect, useRef } from "react";
+import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { AnimatePresence, motion } from "framer-motion";
-import { TrendingUp, LogOut, Wifi, WifiOff, Plus, X, Radio } from "lucide-react";
+import { TrendingUp, LogOut, Wifi, WifiOff, Plus, X, Radio, Shield, UserCog } from "lucide-react";
 import ChartGallery from "@/components/ChartGallery";
 import IngestionSelector from "@/components/IngestionSelector";
 import ProjectSelector from "@/components/ProjectSelector";
@@ -13,6 +14,7 @@ import FloatingChart from "@/components/FloatingChart";  // new
 import BrandLogo from "@/components/BrandLogo";
 import { getDashboardOverview, ingestFromConfigPath, readCachedDashboardOverview } from "@/lib/api";
 import { useIngestion } from "@/lib/IngestionContext";
+import { usePermissions } from "@/lib/usePermissions";
 
 const statGridVariants = {
   hidden: {},
@@ -30,7 +32,10 @@ const statCardVariants = {
 };
 
 export default function Dashboard() {
+  const router = useRouter();
   const { selectedIngestion, refreshIngestions, setSelectedIngestion } = useIngestion();
+  const { has: hasPermission } = usePermissions();
+  const canIngest = hasPermission("data.ingest");
   const [dataStatus, setDataStatus] = useState<{
     has_data?: boolean;
     total_rows?: number;
@@ -183,6 +188,40 @@ export default function Dashboard() {
     loadCurrentPath();
   }, []);
 
+  // Only gates whether the nav link is rendered — /admin/* is enforced by
+  // require_admin on the backend, so hiding it is convenience, not security.
+  const [isAdmin, setIsAdmin] = useState(false);
+  useEffect(() => {
+    const role = (localStorage.getItem("role") || "").toLowerCase();
+    setIsAdmin(role === "admin" || role === "cto");
+  }, []);
+
+  // A must-change-password session can't reach anything else on the backend
+  // (see credential_change_middleware) - every panel on this page would 403
+  // and render as a broken dashboard instead of explaining why. Checked here
+  // rather than only relying on login's redirect so a stale token that still
+  // has the flag (e.g. an admin-issued reset) gets caught on a page reload
+  // too, not just at the moment of signing in.
+  useEffect(() => {
+    const token = localStorage.getItem("token");
+    if (!token) return;
+    fetch(`${process.env.NEXT_PUBLIC_API_URL}/auth/me`, {
+      headers: { Authorization: `Bearer ${token}` },
+    })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((me) => {
+        if (me?.must_change_password) {
+          // router.push, not window.location.href: this is a same-app
+          // redirect, and a hard navigation would blank the page to white
+          // for a frame before the browser re-requests and re-parses
+          // everything Next.js already has loaded. The account page and its
+          // "forced" banner mount instantly instead.
+          router.push("/account?forced=1");
+        }
+      })
+      .catch(() => {});
+  }, [router]);
+
   const handleLogout = () => {
     localStorage.clear();
     window.location.href = "/";
@@ -288,6 +327,7 @@ export default function Dashboard() {
             <IngestionSelector />
             <ProjectSelector />
             <RoleSelector />
+            {canIngest && (
             <div className="relative">
               <button
                 onClick={() => setIsAddBuildOpen((prev) => !prev)}
@@ -354,6 +394,7 @@ export default function Dashboard() {
               )}
               </AnimatePresence>
             </div>
+            )}
 
             {/* connection status */}
             {backendConnected ? (
@@ -384,6 +425,26 @@ export default function Dashboard() {
             >
               <TrendingUp className="w-3.5 h-3.5" />
               Build Trends
+            </Link>
+
+            {/* admin console — admins only */}
+            {isAdmin && (
+              <Link
+                href="/admin"
+                className="flex items-center gap-1.5 text-xs text-purple-400 hover:text-purple-300 font-semibold border border-purple-500/20 px-3 py-1.5 rounded-lg bg-purple-500/[0.06] hover:bg-purple-500/[0.12] hover:border-purple-500/30 hover:-translate-y-0.5 active:scale-95 transition-all"
+              >
+                <Shield className="w-3.5 h-3.5" />
+                Admin
+              </Link>
+            )}
+
+            {/* account settings — everyone */}
+            <Link
+              href="/account"
+              className="flex items-center gap-1.5 text-xs text-slate-600 dark:text-white/60 hover:text-cyan-500 font-semibold border border-slate-300 dark:border-white/[0.1] px-3 py-1.5 rounded-lg bg-slate-100 hover:bg-slate-200 dark:bg-white/[0.05] dark:hover:bg-white/[0.1] hover:-translate-y-0.5 active:scale-95 transition-all"
+            >
+              <UserCog className="w-3.5 h-3.5" />
+              Account
             </Link>
 
             {/* logout */}

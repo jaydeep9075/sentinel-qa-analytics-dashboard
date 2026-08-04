@@ -795,7 +795,12 @@ class UniversalIngester:
 
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO)
-    config_file = Path(__file__).parent.parent / "config2.json"
+    # Env first so the container can point at the mounted state directory
+    # (/app/state/config2.json); the repo-relative path stays the default for
+    # a plain `python ingester.py` from a checkout.
+    config_file = Path(
+        os.getenv("SENTINEL_CONFIG2_PATH") or (Path(__file__).parent.parent / "config2.json")
+    )
     if config_file.exists():
         with open(config_file, 'r') as f:
             cfg = json.load(f)

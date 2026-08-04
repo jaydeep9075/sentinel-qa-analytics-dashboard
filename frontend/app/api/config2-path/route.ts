@@ -2,7 +2,11 @@ import { NextResponse } from "next/server";
 import fs from "fs";
 import path from "path";
 
-const CONFIG2_PATH = path.join(process.cwd(), "../config2.json");
+// Repo checkout: frontend/ -> ../config2.json. Docker: the file is bind-
+// mounted into the container and SENTINEL_CONFIG2_PATH points at it, since
+// there is no repo root above the app directory there.
+const CONFIG2_PATH =
+  process.env.SENTINEL_CONFIG2_PATH || path.join(process.cwd(), "../config2.json");
 
 type Config2Shape = {
   sources?: Array<{ type?: string; path?: string; [key: string]: unknown }>;

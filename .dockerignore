@@ -22,10 +22,13 @@ __pycache__/
 .env
 .env.*
 config.json
+config2.json
 auth_seed_users.json
+state/
 users.db
 users.db-journal
 data/
+ingest-source/
 
 # Everything else not needed to run the FastAPI service
 reports/

@@ -37,8 +37,49 @@ def _cmd_create_user(store: UserStore, args: argparse.Namespace) -> int:
         password_hash=password_hash,
         role=args.role,
         is_active=not args.inactive,
+        workspace_id=args.workspace or config.AUTH_DEFAULT_WORKSPACE,
+        email=args.email,
     )
-    print(f"Upserted user: {user['username']} role={user['role']} active={user['is_active']}")
+    print(
+        f"Upserted user: {user['username']} role={user['role']} "
+        f"workspace={user['workspace_id']} status={user['status']}"
+    )
+    return 0
+
+
+def _cmd_set_workspace(store: UserStore, args: argparse.Namespace) -> int:
+    user = store.update_user(args.username, workspace_id=args.workspace)
+    if user is None:
+        print("User not found", file=sys.stderr)
+        return 1
+    print(f"Moved {args.username} to workspace '{user['workspace_id']}'")
+    return 0
+
+
+def _cmd_approve(store: UserStore, args: argparse.Namespace) -> int:
+    """Approve a pending self-service registration."""
+    record = store.get_user_record(args.username)
+    if record is None:
+        print("User not found", file=sys.stderr)
+        return 1
+
+    workspace = args.workspace or record.get("requested_workspace") or config.AUTH_DEFAULT_WORKSPACE
+    role = args.role or config.AUTH_DEFAULT_ROLE
+    user = store.update_user(args.username, role=role, workspace_id=workspace, status="active")
+    print(f"Approved {user['username']} role={user['role']} workspace={user['workspace_id']}")
+    return 0
+
+
+def _cmd_delete_user(store: UserStore, args: argparse.Namespace) -> int:
+    if store.count_admins(exclude=args.username) == 0:
+        record = store.get_user_record(args.username)
+        if record and str(record.get("role", "")).lower() in {"admin", "cto"}:
+            print("Refusing to delete the only active administrator", file=sys.stderr)
+            return 1
+    if not store.delete_user(args.username):
+        print("User not found", file=sys.stderr)
+        return 1
+    print(f"Deleted {args.username}")
     return 0
 
 
@@ -77,9 +118,24 @@ def _cmd_list_users(store: UserStore, args: argparse.Namespace) -> int:
     if not users:
         print("No users found")
         return 0
+    width = max(len(u["username"]) for u in users)
     for u in users:
+        requested = (
+            f"  (requested: {u['requested_workspace']})"
+            if u["status"] == "pending" and u["requested_workspace"]
+            else ""
+        )
         print(
-            f"{u['username']}\trole={u['role']}\tactive={u['is_active']}\tcreated={u['created_at']}"
+            f"{u['username']:<{width}}  status={u['status']:<8} "
+            f"role={u['role'] or '-':<12} workspace={u['workspace_id'] or '-'}{requested}"
+        )
+
+    pending = [u for u in users if u["status"] == "pending"]
+    if pending:
+        print(
+            f"\n{len(pending)} account(s) awaiting approval. Approve with:\n"
+            f"  python -m services.admin_users approve --username <name> "
+            f"--workspace <workspace> --role qa-engineer"
         )
     return 0
 
@@ -96,7 +152,24 @@ def build_parser() -> argparse.ArgumentParser:
     p_create.add_argument("--role", required=True)
     p_create.add_argument("--password", required=False)
     p_create.add_argument("--inactive", action="store_true")
+    p_create.add_argument("--workspace", required=False, help="Workspace the user belongs to")
+    p_create.add_argument("--email", required=False)
     p_create.set_defaults(func=_cmd_create_user)
+
+    p_ws = sub.add_parser("set-workspace", help="Move a user to another workspace")
+    p_ws.add_argument("--username", required=True)
+    p_ws.add_argument("--workspace", required=True)
+    p_ws.set_defaults(func=_cmd_set_workspace)
+
+    p_approve = sub.add_parser("approve", help="Approve a pending registration")
+    p_approve.add_argument("--username", required=True)
+    p_approve.add_argument("--workspace", required=False, help="Defaults to what they requested")
+    p_approve.add_argument("--role", required=False, help=f"Defaults to AUTH_DEFAULT_ROLE")
+    p_approve.set_defaults(func=_cmd_approve)
+
+    p_del = sub.add_parser("delete-user", help="Permanently delete a user")
+    p_del.add_argument("--username", required=True)
+    p_del.set_defaults(func=_cmd_delete_user)
 
     p_role = sub.add_parser("set-role", help="Update user role")
     p_role.add_argument("--username", required=True)
@@ -123,6 +196,10 @@ def main() -> int:
     parser = build_parser()
     args = parser.parse_args()
     store = UserStore(config.AUTH_USER_STORE_URL)
+    # Every subcommand touches columns added after the first release, so the
+    # in-place migration has to have run - otherwise the CLI is the one path
+    # that hits the old schema (the API gets migrated via startup).
+    store.init_db()
     return args.func(store, args)
 
 

@@ -18,7 +18,10 @@ __pycache__/
 config.json
 auth_seed_users.json
 
-# Local auth database (SQLite) — runtime-generated, contains password hashes
+# Mutable runtime state, bind-mounted into the containers: users.db holds
+# password hashes, config2.json is edited from the dashboard. Both are
+# created automatically on first start.
+state/
 users.db
 users.db-journal
 
@@ -26,3 +29,8 @@ users.db-journal
 data/
 vm-data
 vm-data.zip
+
+# Raw data dropped here for the `docker compose run --rm ingest` workflow —
+# see docker-compose.yml's `ingest` service and config2.docker.json.example
+ingest-source/*
+!ingest-source/.gitkeep

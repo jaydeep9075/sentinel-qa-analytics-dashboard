@@ -1,0 +1,32 @@
+{
+  "_comment": "Copy to config2.json (repo root) before running: docker compose run --rm ingest. Paths are CONTAINER paths - the ingest-source/ folder on your host is mounted to /app/ingest-source, so drop your raw data there and reference it as /app/ingest-source/<whatever you dropped>.",
+
+  "ingestion_name": "my_build",
+
+  "_source_type_examples": "universal_ingester/connectors/ handles these `type`s - pick the one matching what you dropped in ingest-source/:",
+
+  "sources": [
+    {
+      "type": "allure",
+      "_example": "an Allure results folder OR a .zip of one - both work, the connector auto-detects and extracts zips",
+      "path": "/app/ingest-source/allure-results.zip"
+    }
+  ],
+
+  "_other_source_types": {
+    "file": {
+      "type": "file",
+      "_example": "any single file universal_ingester/connectors/file_connector.py supports: csv, tsv, xlsx, xls, json, jsonl, ndjson, parquet, xml, txt, log, pdf, png/jpg (OCR'd), yaml",
+      "path": "/app/ingest-source/results.csv"
+    },
+    "db": {
+      "type": "db",
+      "_example": "see config.json.example for the full connection_string/tables/connect_args shape",
+      "params": { "connection_string": "mysql+pymysql://user:pass@host:port/dbname", "tables": ["test_cases"] }
+    }
+  },
+
+  "output": {
+    "base_path": "/app/data"
+  }
+}

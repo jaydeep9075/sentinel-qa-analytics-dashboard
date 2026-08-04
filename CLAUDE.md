@@ -124,15 +124,45 @@ python verify_system.py
 - **JWT + bcrypt**: `python-jose` for token generation, `bcrypt` for password hashing
 - **User Store**: SQLite (default, `users.db`) or in-memory (config via `AUTH_BACKEND`)
 - **Auto-Seeding**: Optional bootstrap from `auth_seed_users.json` via `AUTH_AUTO_SEED_USERS=true`
-- **Secret Key**: Must be ≥32 characters; validate at startup in `config.validate_runtime_config()`
+- **Secret Key**: If `SECRET_KEY` is unset, one is generated into `state/secret_key` on first
+  start and reused after that (env always wins when set) — see `config._resolve_secret_key()`.
+- **Zero-config first run**: `BOOTSTRAP_ADMIN_USERNAME`/`_PASSWORD` default to `admin`/`admin`
+  when unset. That account is created with `must_change_password=true`, and
+  `main.credential_change_middleware` refuses every route except `/auth/me`,
+  `/auth/permissions`, `POST /auth/account/password` and `POST /auth/account/username` until it's
+  cleared — the default password is a one-time door, not a standing credential. An admin
+  password reset (`POST /admin/users/{u}/password`) can set the same flag via `force_change`
+  (default true).
+- **Roles vs. permissions**: `services/permissions.py` is the source of truth for what a role
+  (`admin`/`cto`/`qa-manager`/`qa-engineer`/`developer`/`viewer`) may do — `data.view`,
+  `data.ingest`, `data.delete`, `usage.view_own`/`usage.view_all`, `users.manage`,
+  `settings.manage`, `audit.view`. `admin`/`cto` are wildcard-everything. `require_permission()`
+  is a FastAPI dependency factory; `GET /auth/permissions` is what the frontend gates on instead
+  of hardcoding role-name checks. Not to be confused with `roles/*.md` (`role_manager.py`), which
+  are LLM chat personas selected per-request via `x-role` — a completely different "role".
+- **Token quotas**: `users.token_limit` (0 = unlimited), enforced in `main._enforce_token_quota()`
+  at the top of `/chat` and `/chart`, checked *before* any LLM call. Compared against
+  `token_usage_store.get_lifetime_total()` — account-wide across workspaces, not per-workspace.
+- **Audit log**: `services/audit_log.py`, append-only, `GET /admin/audit`. Records logins,
+  registrations, user/role/settings edits, credential changes, build deletions.
 
 ### LLM Integration
-- **Provider Abstraction**: `llm_client.py` supports Gemini, OpenAI, Anthropic, Ollama
-- **Configuration**:
-  - `LLM_PROVIDER` (gemini | openai | anthropic | ollama)
+- **Provider Abstraction**: `llm_client.py` — any provider litellm supports, not just a fixed list
+- **Three-tier config resolution** (`services/app_settings.py`), decided **per field**:
+  **env > database > built-in default**. A field pinned in `.env` is locked and can't be
+  overridden from the admin UI (`config.LLM_PROVIDER_FROM_ENV` etc. record which fields env
+  claimed at import time); otherwise an admin can set/change it live from **Admin → Settings**
+  (`GET`/`PUT /admin/settings/llm`, `POST /admin/settings/llm/test` for a real one-shot
+  connectivity check) with no restart — `llm_client.LLMClient` reads `app_settings.get_llm_settings()`
+  fresh on every call rather than caching provider/model at construction time.
+  - `LLM_PROVIDER` (gemini | openai | anthropic | ollama | any litellm provider)
   - `LLM_API_KEY` — Universal key; falls back to provider-specific vars (OPENAI_API_KEY, GEMINI_API_KEY, etc.)
   - `LLM_MODEL` — Full model ID (e.g., `models/gemini-2.5-flash`)
   - `OLLAMA_URL` — Local inference endpoint (if using Ollama)
+- **Not a startup requirement**: an unconfigured LLM no longer prevents the backend from starting
+  (`config.validate_runtime_config()` dropped the LLM checks; `config.validate_llm_config()` is
+  the reusable validator called from both the Settings-tab save path and the old startup path
+  used to call). Chat/chart requests fail clearly (`LLMNotConfiguredError`) instead.
 - **Context Management**: Role/project personas injected via `x-role`, `x-project` headers
 
 ### Data Storage
@@ -152,12 +182,15 @@ python verify_system.py
 services/
 ├── main.py                   # FastAPI app, all routes
 ├── auth.py                   # JWT + user store
-├── handlers.py               # Chat/chart logic
+├── permissions.py            # Role → permission matrix, require_permission()
+├── app_settings.py           # Runtime LLM settings (env > DB > default)
+├── audit_log.py              # Append-only admin/auth action log
+├── handlers.py                # Chat/chart logic
 ├── data_loader.py            # Query LanceDB/DuckDB
 ├── ingestion_service.py      # Allure ingestion orchestration
 ├── llm_client.py             # LLM abstraction
 ├── memory.py                 # Session/history storage
-├── role_manager.py           # Persona loading
+├── role_manager.py           # Persona loading (LLM chat personas — NOT user roles)
 ├── project_manager.py        # Project context
 ├── query_executor.py         # SQL execution + error handling
 ├── rag_service.py            # Semantic retrieval
@@ -165,7 +198,7 @@ services/
 ├── adaptive_query_builder.py  # Dynamic SQL construction
 ├── config.py                 # .env parsing + validation
 ├── state.py                  # Global state (DuckDB conn)
-└── token_usage_store.py      # Token usage tracking
+└── token_usage_store.py      # Token usage tracking + quota totals
 
 universal_ingester/
 ├── ingester.py               # Entry point
@@ -265,13 +298,19 @@ Make sure to run `npm install` or `npm run dev` at least once after pulling chan
 
 ## Environment Variable Reference
 
-**Backend (`.env`)**
+**Backend (`.env`)** — nothing here is actually required any more; every
+value below has a working default or is settable later from the admin
+console (see `services/config.py` and `services/app_settings.py`).
 ```
-LLM_PROVIDER         # gemini, openai, anthropic, ollama
-LLM_API_KEY          # API key (or provider-specific: OPENAI_API_KEY, etc.)
+LLM_PROVIDER         # gemini, openai, anthropic, ollama, or any litellm provider
+LLM_API_KEY          # API key (or provider-specific: OPENAI_API_KEY, etc.) — or set later in Admin → Settings
 LLM_MODEL            # Full model ID
 OLLAMA_URL           # http://localhost:11434 (if using Ollama)
-SECRET_KEY           # ≥32 chars, random
+SECRET_KEY           # ≥32 chars, random — auto-generated into state/secret_key if unset
+BOOTSTRAP_ADMIN_USERNAME   # default: admin
+BOOTSTRAP_ADMIN_PASSWORD   # default: admin (forces a password change on first login)
+BOOTSTRAP_ADMIN_FORCE_PASSWORD_CHANGE # default: true
+MIN_PASSWORD_LENGTH  # default: 8
 BCRYPT_ROUNDS        # 10–16 (default 12)
 CORS_ALLOWED_ORIGINS # Comma-separated list
 AUTH_BACKEND         # db or memory
@@ -297,6 +336,8 @@ NEXT_PUBLIC_API_URL  # http://localhost:8000 (backend API URL)
 | Login | http://localhost:3000/login |
 | Dashboard | http://localhost:3000/dashboard |
 | Build Trends | http://localhost:3000/build-trends |
+| Your account (password/username) | http://localhost:3000/account |
+| Admin console (Overview/Users/Usage/Settings/Audit) | http://localhost:3000/admin |
 | Backend API | http://localhost:8000 |
 | API Docs (Swagger) | http://localhost:8000/docs |
 

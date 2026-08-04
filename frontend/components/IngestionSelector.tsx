@@ -2,11 +2,15 @@
 import { useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import { useIngestion } from "@/lib/IngestionContext";
+import { purgeIngestionCache } from "@/lib/api";
+import { usePermissions } from "@/lib/usePermissions";
 import { Database, ChevronDown, Trash2 } from "lucide-react";
 
 export default function IngestionSelector() {
   const { ingestions, selectedIngestion, setSelectedIngestion, loading, refreshIngestions } =
     useIngestion();
+  const { has } = usePermissions();
+  const canDelete = has("data.delete");
   const [showDeleteMenu, setShowDeleteMenu] = useState(false);
   const [deleteConfirm, setDeleteConfirm] = useState<string | null>(null);
   const [isDeleting, setIsDeleting] = useState(false);
@@ -26,10 +30,17 @@ export default function IngestionSelector() {
           ...(token && { "Authorization": `Bearer ${token}` }),
         },
       });
-      const data = await res.json();
+      const data = await res.json().catch(() => ({}));
       if (!res.ok) {
-        throw new Error(data.error || "Failed to delete ingestion");
+        // `detail` is FastAPI's field — this is where a real refusal shows up
+        // ("only an administrator or the user who created this build..."),
+        // and it's far more useful to surface than a generic failure.
+        throw new Error(data.detail || data.error || "Failed to delete ingestion");
       }
+      // The build's charts, chat and metrics went with it server-side; drop
+      // the browser's copies too, or the UI keeps showing them until the
+      // cache TTLs expire.
+      purgeIngestionCache(ingestionId);
       if (selectedIngestion === ingestionId) {
         setSelectedIngestion(ingestions.find(i => i.id !== ingestionId)?.id || "");
       }
@@ -38,7 +49,7 @@ export default function IngestionSelector() {
       setShowDeleteMenu(false);
     } catch (error) {
       console.error("Delete failed:", error);
-      alert("Failed to delete ingestion");
+      alert(error instanceof Error ? error.message : "Failed to delete ingestion");
     } finally {
       setIsDeleting(false);
     }
@@ -63,7 +74,11 @@ export default function IngestionSelector() {
       </select>
       <ChevronDown className="absolute right-2 top-1/2 -translate-y-1/2 w-3 h-3 text-slate-400 dark:text-white/20 pointer-events-none" />
 
-      {/* Delete button */}
+      {/* Delete button — hidden for roles without data.delete; server-side
+          ownership rules (build_owner.can_delete) still apply on top for
+          roles that do have it, this only saves them a click that would
+          otherwise 403. */}
+      {canDelete && (
       <div className="relative">
         <button
           onClick={() => setShowDeleteMenu(!showDeleteMenu)}
@@ -102,6 +117,7 @@ export default function IngestionSelector() {
           )}
         </AnimatePresence>
       </div>
+      )}
 
       {/* Confirmation modal */}
       <AnimatePresence>

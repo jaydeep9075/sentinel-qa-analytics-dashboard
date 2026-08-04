@@ -1,3 +1,26 @@
+# Paths follow one rule: the paths INSIDE the containers are fixed
+# (/app/data, /app/state, /app/ingest-source) and the HOST side of every
+# mount is a variable. To run against storage somewhere else - a second disk,
+# a cloud block volume, an NFS/SMB share - you change the host path in .env
+# and nothing else. The app keeps seeing /app/data either way, so no rebuild
+# and no code change is involved.
+#
+#   DATA_DIR           -> /app/data           (all ingestions + live runs)
+#   STATE_DIR          -> /app/state          (users.db + config2.json)
+#   INGEST_SOURCE_DIR  -> /app/ingest-source  (drop-box, watched if enabled)
+#
+# EVERY mount here is a DIRECTORY, deliberately. Docker bind-mounts a
+# single FILE only if that file already exists on the host; if it doesn't,
+# it silently creates a DIRECTORY at that path and the container fails in a
+# way that reads as a application bug. users.db and config2.json used to be
+# mounted that way, which is why first-run needed a `touch users.db` step and
+# a batch script to do it for you. Mounting the directory that CONTAINS them
+# removes the failure mode entirely: Docker creates a missing directory
+# happily, and the backend seeds the files inside it on startup.
+#
+# The result is that a fresh clone needs exactly one thing - a filled-in
+# .env - and then `docker compose up -d`. See .env.example.
+
 name: sentinel-qa
 
 services:
@@ -12,6 +35,34 @@ services:
       # in sync with the frontend service's ports mapping below, and with
       # NEXT_PUBLIC_API_URL passed to the frontend build.
       CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS:-http://localhost:3000}
+      # Fixed container-side mount points - the same two variable names the
+      # frontend uses, so one concept covers both services. Don't change
+      # these to relocate storage; change DATA_DIR/INGEST_SOURCE_DIR (host
+      # side) in .env instead.
+      SENTINEL_DATA_DIR: /app/data
+      AUTO_INGEST_DIR: /app/ingest-source
+      # Auth DB and ingester config live in the mounted state directory.
+      # Set here rather than left to .env so an old .env carrying
+      # `sqlite:///./users.db` can't quietly point the container at a path
+      # inside its own filesystem, where the database would vanish on the
+      # next `docker compose down`.
+      SENTINEL_STATE_DIR: /app/state
+      AUTH_USER_STORE_URL: ${AUTH_USER_STORE_URL:-sqlite:////app/state/users.db}
+      SENTINEL_CONFIG2_PATH: /app/state/config2.json
+      # Drop-box watcher, off by default. On: anything written into
+      # INGEST_SOURCE_DIR is ingested automatically once its size stops
+      # changing - no "Add Build" click, no `docker compose run ingest`.
+      AUTO_INGEST_ENABLED: ${AUTO_INGEST_ENABLED:-false}
+      AUTO_INGEST_INTERVAL_SECONDS: ${AUTO_INGEST_INTERVAL_SECONDS:-30}
+      AUTO_INGEST_STABLE_SECONDS: ${AUTO_INGEST_STABLE_SECONDS:-20}
+      # A file dropped at the top level of the drop-box belongs to this
+      # workspace; a file under <drop-box>/<team>/ belongs to <team>.
+      AUTO_INGEST_DEFAULT_WORKSPACE: ${AUTO_INGEST_DEFAULT_WORKSPACE:-default}
+      # First-run only: creates one admin when the user table is empty, so a
+      # fresh deployment is reachable without exec-ing into the container.
+      # Ignored once any user exists.
+      BOOTSTRAP_ADMIN_USERNAME: ${BOOTSTRAP_ADMIN_USERNAME:-}
+      BOOTSTRAP_ADMIN_PASSWORD: ${BOOTSTRAP_ADMIN_PASSWORD:-}
     ports:
       - "${BACKEND_PORT:-8000}:8000"
     volumes:
@@ -19,17 +70,31 @@ services:
       # volume, so the existing local `cd universal_ingester && python
       # ingester.py` workflow (run outside Docker) writes to the same place
       # this container reads from.
-      - ./data:/app/data
-      # SQLite auth DB - a single-file bind mount. Docker creates a
-      # DIRECTORY at this path instead of passing a file through if it
-      # doesn't already exist on the host - run `touch users.db` (or
-      # `python -m services.admin_users init-db` once, outside Docker) before
-      # first `docker compose up` to avoid that.
-      - ./users.db:/app/users.db
+      - ${DATA_DIR:-./data}:/app/data
+      # Mutable app state: users.db (auth) and config2.json (ingester
+      # config). A DIRECTORY mount, so Docker creates it if absent and the
+      # backend seeds the files inside on startup - nothing to prepare by
+      # hand. Back this up along with DATA_DIR; it holds your accounts.
+      - ${STATE_DIR:-./state}:/app/state
+      # Raw data drop-box. Needed on the BACKEND (not just the one-shot
+      # `ingest` service below) because the dashboard's "Add Build" button
+      # posts a path to POST /ingest/config2, which the backend then reads
+      # itself - so whatever you type there has to exist inside THIS
+      # container. Drop files in ./ingest-source on the host and reference
+      # them as /app/ingest-source/<file>. Not :ro - the Allure connector
+      # extracts zips in place.
+      - ${INGEST_SOURCE_DIR:-./ingest-source}:/app/ingest-source
       # Only needed if AUTH_AUTO_SEED_USERS=true - uncomment and create
       # ./auth_seed_users.json first (see auth_seed_users.json.example), or
       # this bind mount fails/creates an empty directory on a fresh clone.
       # - ./auth_seed_users.json:/app/auth_seed_users.json:ro
+    # Container logs are unbounded by default and this service logs every
+    # request - cap them so a long-running deployment can't fill the disk.
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/health', timeout=3).status == 200 else 1)"]
       interval: 30s
@@ -51,8 +116,29 @@ services:
         # inside the Docker network. For local docker-compose that's the
         # backend's published host port (matches BACKEND_PORT above).
         NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:8000}
+    environment:
+      # Two route handlers run server-side inside this container and read
+      # files that live at the REPO ROOT when you run from a checkout
+      # (frontend/ -> ../data, ../config2.json). There is no repo root above
+      # /app in the image, so point them at the mounts below instead:
+      #   /api/builds        -> the Build Trends page's build list
+      #   /api/config2-path  -> the dashboard's "Add Build" path box
+      SENTINEL_DATA_DIR: /app/data
+      SENTINEL_CONFIG2_PATH: /app/state/config2.json
+    volumes:
+      # Read-only: the frontend only lists ingestion folders/summary.json,
+      # it never writes here - the backend and the ingester own this dir.
+      - ${DATA_DIR:-./data}:/app/data:ro
+      # Writable: PUT /api/config2-path persists the path you type in the
+      # dashboard back into config2.json inside this directory.
+      - ${STATE_DIR:-./state}:/app/state
     ports:
       - "${FRONTEND_PORT:-3000}:3000"
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
     depends_on:
       backend:
         condition: service_healthy
@@ -65,6 +151,32 @@ services:
     restart: unless-stopped
     mem_limit: 1g
     cpus: 1.0
+
+  # One-shot ingestion trigger - not a long-running server, so it's meant
+  # to be run on demand, not started by a plain `docker compose up`:
+  #   docker compose run --rm ingest
+  # Reuses the backend image (universal_ingester's deps are already in
+  # requirements.txt) with a different command/working_dir. Drop your raw
+  # data (an Allure zip/folder, a DB connection config, anything one of
+  # universal_ingester/connectors/*.py supports) under ./ingest-source/,
+  # point config2.json's source `path` at /app/ingest-source/<whatever you
+  # dropped>, then run the command above. Output lands in ./data - the
+  # same volume `backend` already reads from - and shows up in the running
+  # dashboard immediately (GET /ingestions), no restart needed.
+  ingest:
+    build:
+      context: .
+      dockerfile: services/Dockerfile
+    profiles: ["ingest"]
+    working_dir: /app/universal_ingester
+    entrypoint: ["python", "ingester.py"]
+    environment:
+      SENTINEL_DATA_DIR: /app/data
+      SENTINEL_CONFIG2_PATH: /app/state/config2.json
+    volumes:
+      - ${DATA_DIR:-./data}:/app/data
+      - ${STATE_DIR:-./state}:/app/state
+      - ${INGEST_SOURCE_DIR:-./ingest-source}:/app/ingest-source
 
   # Optional - only needed once you run more than one `backend` instance
   # behind a load balancer (REDIS_URL wires the live SSE bus + live-frame

@@ -4,8 +4,12 @@ import path from 'path';
 
 export async function GET() {
   try {
-    // ✅ Correct path: data directory is outside the Next.js app root
-    const dataDir = path.join(process.cwd(), '../data');
+    // Data directory sits outside the Next.js app root when running from a
+    // checkout (frontend/ -> ../data). In Docker the frontend container has
+    // no repo root above it, so SENTINEL_DATA_DIR points straight at the
+    // mounted data volume - same env var scripts/generate-builds-json.js
+    // already honours.
+    const dataDir = process.env.SENTINEL_DATA_DIR || path.join(process.cwd(), '../data');
     console.log('Looking for data at:', dataDir);
 
     if (!fs.existsSync(dataDir)) {

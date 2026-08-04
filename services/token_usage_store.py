@@ -15,9 +15,9 @@ no second copy of the numbers that can drift out of sync.
 import logging
 import threading
 from datetime import datetime, timezone
-from typing import Dict, Optional
+from typing import Dict, List, Optional
 
-from sqlalchemy import DateTime, Integer, String, create_engine
+from sqlalchemy import DateTime, Integer, String, create_engine, func
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, sessionmaker
 
 from . import config
@@ -151,3 +151,103 @@ def get_usage(user_id: Optional[str], workspace_id: Optional[str]) -> Dict:
             "scope": {"workspace_id": wid, "user_id": uid},
             "updated_at": latest_updated,
         }
+
+
+def get_lifetime_total(user_id: Optional[str]) -> int:
+    """This account's total tokens spent across every workspace and model.
+
+    Quota enforcement is per-ACCOUNT, not per-workspace: a user who moves
+    between workspaces (or whose account predates a workspace change)
+    shouldn't get a fresh budget just by switching. This is the one number
+    compared against users.token_limit - see llm_client._check_quota().
+    """
+    uid = _norm_user(user_id)
+    with _SessionLocal() as session:
+        total = (
+            session.query(func.coalesce(func.sum(TokenUsage.total_tokens), 0))
+            .filter(TokenUsage.user_id == uid)
+            .scalar()
+        )
+        return int(total or 0)
+
+
+def list_usage_by_user() -> List[Dict]:
+    """One row per account, summed across workspaces and models.
+
+    Backs the admin Usage tab - the accounting question there is "how much
+    has this person spent", not "how much did this workspace spend on this
+    model", which is what the per-scope rows in TokenUsage are shaped for.
+    """
+    with _SessionLocal() as session:
+        rows = (
+            session.query(
+                TokenUsage.user_id,
+                func.sum(TokenUsage.prompt_tokens),
+                func.sum(TokenUsage.completion_tokens),
+                func.sum(TokenUsage.total_tokens),
+                func.sum(TokenUsage.calls),
+                func.max(TokenUsage.updated_at),
+            )
+            .group_by(TokenUsage.user_id)
+            .order_by(func.sum(TokenUsage.total_tokens).desc())
+            .all()
+        )
+        return [
+            {
+                "user_id": user_id,
+                "prompt_tokens": int(prompt or 0),
+                "completion_tokens": int(completion or 0),
+                "total_tokens": int(total or 0),
+                "calls": int(calls or 0),
+                "updated_at": updated_at.isoformat() if updated_at else "",
+            }
+            for user_id, prompt, completion, total, calls, updated_at in rows
+        ]
+
+
+def reset_usage(user_id: str) -> int:
+    """Delete every usage row for one account. Returns rows removed.
+
+    Distinct from resetting a *quota* (users.token_limit stays whatever it
+    was) - this clears the spend the quota is measured against, e.g. after
+    raising a user's limit and wanting their counter to start clean.
+    """
+    uid = _norm_user(user_id)
+    with _LOCK:
+        with _SessionLocal() as session:
+            deleted = (
+                session.query(TokenUsage).filter(TokenUsage.user_id == uid).delete()
+            )
+            session.commit()
+            return int(deleted)
+
+
+def rename_user(old_user_id: str, new_user_id: str) -> None:
+    """Re-key every usage row from old_user_id to new_user_id.
+
+    Called by auth.rename_account() when an admin or the account owner
+    changes a username. Merges into any row the new name already owns
+    (workspace_id, model) rather than raising a primary-key conflict, since
+    the new username could in theory already have usage of its own (e.g. it
+    briefly existed before, or the rename is walking two accounts together).
+    """
+    old = _norm_user(old_user_id)
+    new = _norm_user(new_user_id)
+    if not old or not new or old == new:
+        return
+
+    with _LOCK:
+        with _SessionLocal() as session:
+            old_rows = session.query(TokenUsage).filter(TokenUsage.user_id == old).all()
+            for row in old_rows:
+                existing = session.get(TokenUsage, (row.workspace_id, new, row.model))
+                if existing is None:
+                    row.user_id = new
+                else:
+                    existing.prompt_tokens = int(existing.prompt_tokens or 0) + int(row.prompt_tokens or 0)
+                    existing.completion_tokens = int(existing.completion_tokens or 0) + int(row.completion_tokens or 0)
+                    existing.total_tokens = int(existing.total_tokens or 0) + int(row.total_tokens or 0)
+                    existing.calls = int(existing.calls or 0) + int(row.calls or 0)
+                    existing.updated_at = datetime.now(timezone.utc)
+                    session.delete(row)
+            session.commit()

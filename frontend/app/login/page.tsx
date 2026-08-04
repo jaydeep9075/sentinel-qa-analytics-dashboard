@@ -1,6 +1,7 @@
 "use client";
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
+import Link from "next/link";
 import { motion } from "framer-motion";
 import { Eye, EyeOff, ArrowRight, Sparkles } from "lucide-react";
 import BrandLogo from "@/components/BrandLogo";
@@ -42,12 +43,22 @@ export default function LoginPage() {
   const [error, setError] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const [mousePos, setMousePos] = useState({ x: 0, y: 0 });
+  // Whether to offer "Request access". Deployments can disable self-service
+  // registration, and a link to a form that always 403s is worse than no link.
+  const [selfRegistration, setSelfRegistration] = useState(false);
   const router = useRouter();
 
   useEffect(() => {
     const handler = (e: MouseEvent) => setMousePos({ x: e.clientX, y: e.clientY });
     window.addEventListener("mousemove", handler);
     return () => window.removeEventListener("mousemove", handler);
+  }, []);
+
+  useEffect(() => {
+    fetch(`${process.env.NEXT_PUBLIC_API_URL}/auth/registration-policy`)
+      .then((r) => r.json())
+      .then((d) => setSelfRegistration(Boolean(d.self_registration_enabled)))
+      .catch(() => setSelfRegistration(false));
   }, []);
 
   const handleLogin = async (u: string, p: string) => {
@@ -58,14 +69,27 @@ export default function LoginPage() {
         { method: "POST" }
       );
       if (!res.ok) {
-        const text = await res.text();
-        throw new Error(text || "Invalid credentials");
+        // The backend distinguishes "wrong password" (401) from "your
+        // account is pending approval / disabled" (403) and puts the
+        // explanation in `detail`. Showing the raw body instead would print
+        // a JSON blob at someone who just needs to know to wait for an admin.
+        const data = await res.json().catch(() => null);
+        throw new Error(data?.detail || "Invalid credentials");
       }
       const data = await res.json();
       localStorage.setItem("token", data.access_token);
       localStorage.setItem("role", data.role);
+      // The workspace comes from the account; the server ignores anything the
+      // client sends at login. Stored only so the UI can display it.
       localStorage.setItem("workspace_id", data.workspace_id || "default");
-      localStorage.setItem("username", u);
+      localStorage.setItem("username", data.username || u);
+      if (data.must_change_password) {
+        // The backend's credential_change_middleware refuses every other
+        // route for this session until this happens - sending anywhere else
+        // first would just bounce straight back with a 403.
+        router.push("/account?forced=1");
+        return;
+      }
       router.push("/dashboard");
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : "Login failed";
@@ -173,6 +197,15 @@ export default function LoginPage() {
                 <ArrowRight className="relative w-4 h-4 group-hover:translate-x-1 transition-transform" />
               </button>
             </form>
+
+            {selfRegistration && (
+              <p className="mt-6 text-center text-xs text-slate-500 dark:text-white/30">
+                Need an account?{" "}
+                <Link href="/register" className="text-cyan-500 hover:underline">
+                  Request access
+                </Link>
+              </p>
+            )}
 
             {/* subtle footer badge */}
             <div className="mt-8 flex items-center justify-center gap-1.5 text-[10px] text-slate-500 dark:text-white/20 uppercase tracking-widest">

@@ -1,21 +1,44 @@
 import logging
+import os
 import uuid
 import json
 import re
 import shutil
 import tempfile
 import time
-from fastapi import FastAPI, HTTPException, Header, Depends, Query, Request, BackgroundTasks
+from pathlib import Path
+from fastapi import FastAPI, HTTPException, Header, Depends, Query, Request, BackgroundTasks, File, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from contextlib import asynccontextmanager
 from pydantic import BaseModel
 import uvicorn
 from typing import Optional
 from datetime import datetime, timezone
 from . import config, state, data_loader, handlers, memory, llm_client, ingestion_jobs
-from . import token_usage_store
+from . import token_usage_store, auto_ingest, build_owner, app_settings, audit_log
+from jose import JWTError, jwt
+from . import auth as auth_module
 from .prompts import SUGGESTION_PROMPT
-from .auth import authenticate_user, create_access_token, get_current_user, initialize_auth_store
+from .auth import (
+    AuthError,
+    authenticate_user,
+    create_access_token,
+    get_current_user,
+    get_user_store,
+    hash_password,
+    initialize_auth_store,
+    is_admin,
+    register_user,
+    rename_account,
+    require_admin,
+)
+from . import permissions
+from .permissions import (
+    PERM_DATA_DELETE,
+    PERM_DATA_INGEST,
+    require_permission,
+)
 from .live_exec import store as live_store
 from .live_exec.router import router as live_router
 
@@ -32,7 +55,8 @@ _quality_cache: dict[str, tuple[float, dict]] = {}
 _suggestions_cache: dict[str, tuple[float, dict]] = {}
 _ingestions_cache: dict[str, tuple[float, dict]] = {}
 _token_usage_cache: dict[str, tuple[float, dict]] = {}
-_INGESTIONS_CACHE_KEY = "global"
+# The ingestions list is cached per viewer scope ("admin" or "ws:<workspace>")
+# rather than under one global key — see list_ingestions().
 _PERF_PATH_PREFIXES = (
     "/dashboard/overview",
     "/data/status",
@@ -75,6 +99,79 @@ class IngestRequest(BaseModel):
     workspace_id: Optional[str] = None
 
 
+class RegisterRequest(BaseModel):
+    username: str
+    password: str
+    email: Optional[str] = None
+    # Advisory: shown to the approving admin as "this is the team they say
+    # they're on". It does not grant membership - the admin assigns the real
+    # workspace at approval time.
+    requested_workspace: Optional[str] = None
+
+
+class AdminCreateUserRequest(BaseModel):
+    username: str
+    password: str
+    role: Optional[str] = None
+    workspace_id: Optional[str] = None
+    email: Optional[str] = None
+    full_name: Optional[str] = None
+    token_limit: Optional[int] = None
+    # An admin-created account skips the "you must change your password"
+    # gate by default - unlike the bootstrap admin, whoever created it
+    # presumably communicated the password out of band and the account is
+    # usable immediately. Set true to force a change on first login instead
+    # (e.g. handing someone a temporary password over chat).
+    must_change_password: bool = False
+
+
+class AdminUpdateUserRequest(BaseModel):
+    role: Optional[str] = None
+    workspace_id: Optional[str] = None
+    status: Optional[str] = None  # pending | active | disabled
+    email: Optional[str] = None
+    full_name: Optional[str] = None
+    token_limit: Optional[int] = None
+    must_change_password: Optional[bool] = None
+
+
+class AdminPasswordRequest(BaseModel):
+    password: str
+    # Defaults to true: an admin-issued password is, definitionally, known to
+    # someone other than the account owner until they change it. Set false
+    # only when that's an accepted risk (e.g. restoring a break-glass account
+    # you control end-to-end).
+    force_change: bool = True
+
+
+class AccountPasswordRequest(BaseModel):
+    current_password: str
+    new_password: str
+
+
+class AccountUsernameRequest(BaseModel):
+    current_password: str
+    new_username: str
+
+
+class AdminLLMSettingsRequest(BaseModel):
+    provider: Optional[str] = None
+    model: Optional[str] = None
+    api_key: Optional[str] = None
+    api_base: Optional[str] = None
+    clear_api_key: bool = False
+
+
+class AdminLLMTestRequest(BaseModel):
+    # All optional: omitted fields fall back to whatever is currently
+    # effective (env/DB/default), so "Test connection" works both for a
+    # brand-new value not yet saved and for re-checking what's already live.
+    provider: Optional[str] = None
+    model: Optional[str] = None
+    api_key: Optional[str] = None
+    api_base: Optional[str] = None
+
+
 class FeedbackRequest(BaseModel):
     target_kind: str
     feedback_type: str
@@ -87,10 +184,39 @@ class FeedbackRequest(BaseModel):
 
 
 def _normalize_workspace(workspace_id: Optional[str], current_user: Optional[dict] = None) -> str:
-    if workspace_id:
-        return str(workspace_id).strip().lower()
-    if current_user and current_user.get("workspace_id"):
-        return str(current_user["workspace_id"]).strip().lower()
+    """The workspace this request operates in.
+
+    The token wins. The `x-workspace-id` header used to take precedence over
+    it, which meant any authenticated user could read and write another
+    team's chat history, charts and token accounting just by setting a header
+    - the header was effectively an unauthenticated tenant switch.
+
+    It is still honoured for ADMINS, because "look at another workspace" is a
+    real administrative need and an admin can already see everything. For
+    everyone else it is ignored, not rejected: the frontend sends the header
+    on most requests, and 400-ing a stale value from a client that simply
+    hasn't refreshed would break the dashboard for no security gain.
+    """
+    token_workspace = str((current_user or {}).get("workspace_id") or "").strip().lower()
+    requested = str(workspace_id or "").strip().lower()
+
+    if requested and requested != token_workspace:
+        if _is_admin_role((current_user or {}).get("role")):
+            return requested
+        if current_user is not None:
+            logger.warning(
+                "Ignoring x-workspace-id=%r from non-admin '%s' (token workspace=%r)",
+                requested, (current_user or {}).get("username"), token_workspace,
+            )
+        elif requested:
+            # No authenticated user in scope (internal callers). Nothing to
+            # cross-check against, so the explicit value is all there is.
+            return requested
+
+    if token_workspace:
+        return token_workspace
+    if requested and current_user is None:
+        return requested
     return str(getattr(config, "DEFAULT_WORKSPACE_ID", "default") or "default").strip().lower()
 
 
@@ -559,10 +685,36 @@ def _get_cached_quality_payload(normalized_ingestion_id: str) -> dict:
 async def lifespan(app: FastAPI):
     logger.info("Starting up...")
     config.validate_runtime_config()
+    # Seed anything the mounted state directory is missing before the stores
+    # that depend on it are opened.
+    config.ensure_state_files()
     initialize_auth_store()
     live_store.init_db()
+
+    # LLM config is no longer a hard startup failure (see
+    # validate_runtime_config's docstring) - it CAN be finished later from
+    # the Settings tab. But a deployment that's missing it shouldn't have to
+    # discover that from a silent None response the first time someone
+    # chats - say so once, loudly, at boot.
+    try:
+        llm_settings = app_settings.get_llm_settings()
+        if not llm_settings.get("model") or (
+            not llm_settings.get("keyless") and not llm_settings.get("api_key_set")
+        ):
+            logger.warning(
+                "LLM is not fully configured (provider=%s model=%s api_key_set=%s). "
+                "Chat and chart generation will fail until an administrator finishes "
+                "setup in the Settings tab or in .env.",
+                llm_settings.get("provider"), llm_settings.get("model"),
+                llm_settings.get("api_key_set"),
+            )
+    except Exception:
+        logger.warning("Could not check LLM configuration at startup", exc_info=True)
+
+    await auto_ingest.start()
     yield
     logger.info("Shutting down...")
+    await auto_ingest.stop()
     if state.duck_conn:
         state.duck_conn.close()
 
@@ -575,6 +727,148 @@ app.add_middleware(
     allow_headers=["*"],
 )
 app.include_router(live_router)
+
+
+# Build ids minted by every ingestion path (`ingestion_YYYYMMDD_HHMMSS`).
+# Live-execution runs use `run_<hex>` and are deliberately not matched.
+_BUILD_ID_RE = re.compile(r"^ingestion_\d{8}_\d{6}$")
+
+
+def _user_from_request(request: Request) -> Optional[dict]:
+    """Decode the bearer token off a raw Request, or None.
+
+    Middleware runs before FastAPI resolves dependencies, so Depends() isn't
+    available here. Returning None on any problem is safe: the route's own
+    Depends(get_current_user) still rejects an absent or invalid token, so
+    this can only ever be *additional* enforcement, never the only one.
+    """
+    header = request.headers.get("authorization") or ""
+    scheme, _, token = header.partition(" ")
+    if scheme.lower() != "bearer" or not token.strip():
+        return None
+    try:
+        payload = jwt.decode(token.strip(), auth_module.SECRET_KEY, algorithms=[auth_module.ALGORITHM])
+    except JWTError:
+        return None
+    if not payload.get("sub"):
+        return None
+    return {
+        "username": payload.get("sub"),
+        "role": payload.get("role"),
+        "workspace_id": str(payload.get("workspace_id") or "").strip().lower(),
+    }
+
+
+@app.middleware("http")
+async def build_visibility_middleware(request: Request, call_next):
+    """Refuse to serve a build the caller's workspace doesn't own.
+
+    Roughly fourteen endpoints select their dataset with an `x-ingestion-id`
+    header. Filtering only the /ingestions *list* would hide other teams'
+    builds from the dropdown while leaving every one of those endpoints happy
+    to answer for an id typed by hand - so the list would be cosmetic. One
+    middleware covers all of them at once, and covers routes added later
+    without anyone having to remember the check.
+
+    An id that doesn't resolve to a build directory is passed through
+    untouched: live-execution runs use the same header with their own id
+    space, and there is nothing to protect on a path that holds no build.
+    """
+    ingestion_id = (request.headers.get("x-ingestion-id") or "").strip()
+    if ingestion_id:
+        user = _user_from_request(request)
+        if user is not None:
+            build_path = build_owner.resolve_build_path(ingestion_id)
+            if build_path is None:
+                return JSONResponse(
+                    status_code=400, content={"detail": "Invalid ingestion id"}
+                )
+            if build_path.is_dir() and (build_path / "lancedb").exists():
+                if not build_owner.can_view(build_owner.read_owner(build_path), user):
+                    logger.warning(
+                        "Blocked cross-workspace access: user=%s workspace=%s build=%s",
+                        user.get("username"), user.get("workspace_id"), ingestion_id,
+                    )
+                    # 404, not 403: confirming a build exists in another
+                    # workspace is itself a small leak, and the caller has no
+                    # legitimate way to know the id.
+                    return JSONResponse(
+                        status_code=404, content={"detail": "Ingestion not found"}
+                    )
+            elif not build_path.exists() and _BUILD_ID_RE.match(ingestion_id):
+                # A deleted build. Without this the handlers happily answer
+                # with an empty dataset (has_data: false, 0 rows), so the
+                # dashboard renders a blank-but-working build instead of
+                # saying it's gone - which reads as "the delete broke
+                # something" rather than "the delete worked".
+                #
+                # Restricted to the ingestion_* id shape on purpose: live
+                # runs share this header with their own id space and may
+                # legitimately have no directory yet, and a build mid-ingest
+                # has a directory but not yet a lancedb, so neither is caught.
+                return JSONResponse(
+                    status_code=404,
+                    content={"detail": f"Ingestion '{ingestion_id}' no longer exists"},
+                )
+    return await call_next(request)
+
+
+# Reachable with a valid token even while must_change_password is set. Kept
+# short and explicit rather than "everything under /auth" - /auth/register
+# and /auth/registration-policy don't need a token at all and are excluded on
+# purpose so this list only has to reason about the credential-change flow
+# itself, not registration.
+_CREDENTIAL_CHANGE_ALLOWED_PATHS = frozenset({
+    "/health",
+    "/auth/login",
+    "/auth/me",
+    "/auth/permissions",
+    "/auth/account/password",
+    "/auth/account/username",
+})
+
+
+@app.middleware("http")
+async def credential_change_middleware(request: Request, call_next):
+    """Lock a must-change-password session to exactly the change-credential
+    screen.
+
+    This is what makes shipping a well-known default admin password (see
+    config.BOOTSTRAP_ADMIN_PASSWORD) safe: the token issued for that account
+    is valid, but every route except the handful above refuses it until the
+    password (and, if still the default username, the username) has been
+    replaced. Also fires for an admin-issued reset with force_change=true.
+
+    Reads the flag fresh from the store rather than trusting the JWT: the JWT
+    is a snapshot from login time, and an admin can flip this flag for an
+    ALREADY-LOGGED-IN user (a password reset mid-session), which a stale
+    claim in the token would never see until re-login.
+    """
+    path = request.url.path
+    if path not in _CREDENTIAL_CHANGE_ALLOWED_PATHS and not path.startswith("/docs") \
+            and not path.startswith("/openapi") and not path.startswith("/redoc"):
+        user = _user_from_request(request)
+        if user is not None and config.AUTH_BACKEND == "db":
+            try:
+                must_change = auth_module.get_user_store().get_must_change_password(
+                    user.get("username")
+                )
+            except Exception:
+                # Fail open on a store error: this is a UX guardrail, not the
+                # authorization boundary itself (require_admin/require_permission
+                # still gate every sensitive route independently). Refusing
+                # every request because of a transient DB hiccup would be a
+                # worse failure mode than letting one slip through.
+                must_change = False
+            if must_change:
+                return JSONResponse(
+                    status_code=403,
+                    content={
+                        "detail": "You must set a new username and password before continuing.",
+                        "must_change_password": True,
+                    },
+                )
+    return await call_next(request)
 
 
 @app.middleware("http")
@@ -602,10 +896,24 @@ async def health():
 
 @app.post("/auth/login")
 async def login(username: str, password: str, workspace_id: Optional[str] = None):
-    user = authenticate_user(username, password, workspace_id=workspace_id)
+    """Sign in. `workspace_id` is accepted for backwards compatibility and
+    ignored — the workspace comes from the account, not from the client."""
+    uname_for_audit = str(username or "").strip().lower()
+    try:
+        user = authenticate_user(username, password)
+    except AuthError as exc:
+        # AuthError is only raised AFTER the password already matched (see
+        # auth._raise_if_blocked_and_password_matches) - "pending" and
+        # "disabled" are worth a distinct audit trail from a wrong password.
+        audit_log.record("login_blocked", uname_for_audit, success=False, details={"reason": exc.detail})
+        raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
+
     if not user:
+        audit_log.record("login_failed", uname_for_audit, success=False)
         raise HTTPException(status_code=401, detail="Invalid credentials")
-    ws = _normalize_workspace(user.get("workspace_id"), user)
+
+    audit_log.record("login", user["username"], workspace_id=user.get("workspace_id", ""))
+    ws = str(user.get("workspace_id") or config.DEFAULT_WORKSPACE_ID).strip().lower()
     access_token = create_access_token(
         data={"sub": user["username"], "role": user["role"], "workspace_id": ws}
     )
@@ -613,14 +921,349 @@ async def login(username: str, password: str, workspace_id: Optional[str] = None
         "access_token": access_token,
         "token_type": "bearer",
         "role": user["role"],
+        "username": user["username"],
+        "workspace_id": ws,
+        # Read fresh at login rather than trusted from the JWT: the flag can
+        # flip after a token is issued (an admin resets a password with
+        # force_change), and the JWT is not re-decoded on every request just
+        # to check it - see credential_change_middleware, which re-reads it
+        # from the store on each protected request instead of relying on
+        # this snapshot.
+        "must_change_password": bool(user.get("must_change_password")),
+    }
+
+
+@app.post("/auth/register")
+async def register(payload: RegisterRequest):
+    """Request an account. Creates a PENDING user that cannot log in until an
+    admin approves it (unless AUTH_AUTO_APPROVE_REGISTRATION is on)."""
+    try:
+        result = register_user(
+            username=payload.username,
+            password=payload.password,
+            email=payload.email or "",
+            requested_workspace=payload.requested_workspace or "",
+        )
+    except AuthError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
+
+    audit_log.record("register", result["user"]["username"], details={"status": result["status"]})
+    if result["status"] == "active":
+        return {
+            "status": "active",
+            "message": "Account created. You can sign in now.",
+            "username": result["user"]["username"],
+        }
+    return {
+        "status": "pending",
+        "message": "Registration received. An administrator must approve your "
+                   "account before you can sign in.",
+        "username": result["user"]["username"],
+    }
+
+
+@app.get("/auth/registration-policy")
+async def registration_policy():
+    """Lets the login page decide whether to show a "Create account" link
+    instead of hardcoding an assumption the deployment may have turned off."""
+    return {
+        "self_registration_enabled": config.AUTH_ALLOW_SELF_REGISTRATION,
+        "auto_approve": config.AUTH_AUTO_APPROVE_REGISTRATION,
+    }
+
+
+@app.get("/auth/me")
+async def whoami(current_user: dict = Depends(get_current_user)):
+    record = get_user_store().get_user_record(current_user.get("username")) or {}
+    return {
+        "username": current_user.get("username"),
+        "role": current_user.get("role"),
+        "workspace_id": current_user.get("workspace_id"),
+        "is_admin": is_admin(current_user),
+        "must_change_password": bool(record.get("must_change_password")),
+    }
+
+
+@app.get("/auth/permissions")
+async def auth_permissions(current_user: dict = Depends(get_current_user)):
+    """What THIS account's role may do. The frontend gates buttons and nav
+    links on this instead of hardcoding role-name comparisons in components,
+    so a new role only has to be added in permissions.py to work everywhere."""
+    return permissions.permissions_payload(current_user)
+
+
+@app.post("/auth/account/password")
+async def change_own_password(
+    payload: AccountPasswordRequest,
+    current_user: dict = Depends(get_current_user),
+):
+    """Every account's own escape hatch - including a must-change-password
+    session, which credential_change_middleware allows to reach exactly this
+    route and nothing else."""
+    try:
+        auth_module.change_own_password(
+            current_user.get("username"), payload.current_password, payload.new_password
+        )
+    except AuthError as exc:
+        audit_log.record("password_change", current_user.get("username"), success=False)
+        raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
+    logger.info("User '%s' changed their own password", current_user.get("username"))
+    audit_log.record("password_change", current_user.get("username"))
+    return {"success": True}
+
+
+@app.post("/auth/account/username")
+async def change_own_username(
+    payload: AccountUsernameRequest,
+    current_user: dict = Depends(get_current_user),
+):
+    """Renames the account and re-issues a token under the new name.
+
+    A new token is not optional here: get_current_user trusts the JWT's
+    `sub` claim without checking the store, so the OLD token would keep
+    authenticating as a username that no longer has a row - every
+    subsequent request would 401 until the browser somehow obtained a fresh
+    token, which without this response it never would.
+    """
+    old_username = current_user.get("username")
+    try:
+        updated = auth_module.change_own_username(
+            old_username, payload.current_password, payload.new_username
+        )
+    except AuthError as exc:
+        audit_log.record("username_change", old_username, success=False, details={"error": exc.detail})
+        raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
+
+    new_username = str(updated.get("username") or "")
+    ws = str(updated.get("workspace_id") or config.DEFAULT_WORKSPACE_ID).strip().lower()
+    access_token = create_access_token(
+        data={"sub": new_username, "role": updated.get("role"), "workspace_id": ws}
+    )
+    logger.info("User '%s' renamed their account to '%s'", old_username, new_username)
+    audit_log.record("username_change", new_username, target=old_username)
+    return {
+        "success": True,
+        "username": new_username,
+        "access_token": access_token,
+        "token_type": "bearer",
+        "role": updated.get("role"),
         "workspace_id": ws,
     }
+
+
+# -------------------- ADMIN: USER MANAGEMENT --------------------
+# Every route here is gated by require_admin, so the dashboard can offer user
+# administration without anyone needing shell access to the container.
+
+@app.get("/admin/users")
+async def admin_list_users(
+    status_filter: Optional[str] = Query(None, alias="status"),
+    _admin: dict = Depends(require_admin),
+):
+    store = get_user_store()
+    users = store.list_users(status=status_filter)
+    return {
+        "users": users,
+        "workspaces": store.list_workspaces(),
+        "pending_count": sum(1 for u in users if u["status"] == "pending")
+        if not status_filter
+        else len(store.list_users(status="pending")),
+    }
+
+
+def _validate_role(role: Optional[str]) -> Optional[str]:
+    """Normalize and reject anything not in the known-role table.
+
+    Without this, a typo'd role from the admin UI creates an account that
+    silently has NO permissions (permissions.permissions_for_role() fails
+    closed on an unknown role) - which looks like a bug report, not a
+    rejected request.
+    """
+    if role is None:
+        return None
+    normalized = str(role).strip().lower()
+    if normalized not in permissions.KNOWN_ROLES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unknown role '{role}'. Valid roles: {', '.join(permissions.KNOWN_ROLES)}",
+        )
+    return normalized
+
+
+@app.post("/admin/users")
+async def admin_create_user(
+    payload: AdminCreateUserRequest,
+    admin: dict = Depends(require_admin),
+):
+    username = str(payload.username or "").strip().lower()
+    if not username:
+        raise HTTPException(status_code=400, detail="username is required")
+    if len(payload.password or "") < config.MIN_PASSWORD_LENGTH:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Password must be at least {config.MIN_PASSWORD_LENGTH} characters",
+        )
+
+    role = _validate_role(payload.role) or config.AUTH_DEFAULT_ROLE
+
+    store = get_user_store()
+    if store.get_user_record(username) is not None:
+        raise HTTPException(status_code=409, detail="That username already exists")
+
+    record = store.upsert_user(
+        username=username,
+        password_hash=hash_password(payload.password),
+        role=role,
+        workspace_id=(payload.workspace_id or config.AUTH_DEFAULT_WORKSPACE),
+        email=payload.email or "",
+        full_name=payload.full_name or "",
+        status="active",
+        must_change_password=bool(payload.must_change_password),
+        token_limit=payload.token_limit,
+    )
+    logger.info("Admin '%s' created user '%s' (role=%s)", admin.get("username"), username, role)
+    audit_log.record(
+        "user_create", admin.get("username"), target=username,
+        workspace_id=record.get("workspace_id", ""),
+        details={"role": role},
+    )
+    return {"user": record}
+
+
+@app.patch("/admin/users/{username}")
+async def admin_update_user(
+    username: str,
+    payload: AdminUpdateUserRequest,
+    admin: dict = Depends(require_admin),
+):
+    """Change role, workspace or status. Also the approval path: setting
+    status=active on a pending user is what lets them log in."""
+    store = get_user_store()
+    target = str(username or "").strip().lower()
+    record = store.get_user_record(target)
+    if record is None:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    new_role = _validate_role(payload.role)
+    new_status = (payload.status or "").strip().lower() or None
+
+    # Refuse the two edits that can leave the install with no way back in.
+    _guard_last_admin(store, record, target, new_role, new_status)
+
+    # Approving without a workspace would produce an active account with no
+    # tenant, which would then fall through to the default workspace - i.e.
+    # silently grant access to whatever lives there.
+    resolved_workspace = payload.workspace_id
+    if new_status == "active" and not (resolved_workspace or record.get("workspace_id")):
+        resolved_workspace = record.get("requested_workspace") or config.AUTH_DEFAULT_WORKSPACE
+    if new_status == "active" and not (new_role or record.get("role")):
+        new_role = config.AUTH_DEFAULT_ROLE
+
+    try:
+        updated = store.update_user(
+            username=target,
+            role=new_role,
+            workspace_id=resolved_workspace,
+            status=new_status,
+            email=payload.email,
+            full_name=payload.full_name,
+            token_limit=payload.token_limit,
+            must_change_password=payload.must_change_password,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    logger.info(
+        "Admin '%s' updated user '%s': role=%s workspace=%s status=%s",
+        admin.get("username"), target, new_role, resolved_workspace, new_status,
+    )
+    # Approving a pending registration is the same PATCH call as any other
+    # edit (status: "active"), so it's given its own action name here rather
+    # than a generic "user_update" - the admin console's audit tab should be
+    # able to answer "who approved this account" without diffing role/status
+    # out of a details blob.
+    action = "user_approve" if record.get("status") == "pending" and new_status == "active" else "user_update"
+    audit_log.record(
+        action, admin.get("username"), target=target,
+        workspace_id=resolved_workspace or "",
+        details={"role": new_role, "workspace_id": resolved_workspace, "status": new_status},
+    )
+    return {"user": updated}
+
+
+@app.post("/admin/users/{username}/password")
+async def admin_reset_password(
+    username: str,
+    payload: AdminPasswordRequest,
+    admin: dict = Depends(require_admin),
+):
+    if len(payload.password or "") < config.MIN_PASSWORD_LENGTH:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Password must be at least {config.MIN_PASSWORD_LENGTH} characters",
+        )
+    store = get_user_store()
+    if not store.set_password_hash(username, hash_password(payload.password)):
+        raise HTTPException(status_code=404, detail="User not found")
+    if payload.force_change:
+        store.set_must_change_password(username, True)
+    logger.info(
+        "Admin '%s' reset the password for '%s' (force_change=%s)",
+        admin.get("username"), username, payload.force_change,
+    )
+    audit_log.record(
+        "password_reset", admin.get("username"), target=username,
+        details={"force_change": payload.force_change},
+    )
+    return {"success": True}
+
+
+@app.delete("/admin/users/{username}")
+async def admin_delete_user(username: str, admin: dict = Depends(require_admin)):
+    store = get_user_store()
+    target = str(username or "").strip().lower()
+    record = store.get_user_record(target)
+    if record is None:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    if target == str(admin.get("username") or "").strip().lower():
+        raise HTTPException(status_code=400, detail="You cannot delete your own account")
+    _guard_last_admin(store, record, target, new_role=None, new_status="disabled")
+
+    store.delete_user(target)
+    logger.info("Admin '%s' deleted user '%s'", admin.get("username"), target)
+    audit_log.record(
+        "user_delete", admin.get("username"), target=target,
+        workspace_id=record.get("workspace_id", ""),
+    )
+    return {"success": True}
+
+
+def _guard_last_admin(store, record: dict, target: str, new_role, new_status) -> None:
+    """Block an edit that would remove the final active admin.
+
+    Without this, demoting or disabling yourself when you're the only admin
+    leaves the deployment with no one able to reach /admin/users — recoverable
+    only by exec-ing into the container. Cheap to prevent, tedious to undo.
+    """
+    was_admin = str(record.get("role") or "").lower() in {"admin", "cto"} and record.get("status") == "active"
+    if not was_admin:
+        return
+
+    loses_admin = (new_role is not None and new_role not in {"admin", "cto"}) or (
+        new_status is not None and new_status != "active"
+    )
+    if loses_admin and store.count_admins(exclude=target) == 0:
+        raise HTTPException(
+            status_code=400,
+            detail="This is the only active administrator. Promote another user first.",
+        )
 
 @app.post("/ingest/config2")
 async def ingest_from_config2(
     request: IngestRequest,
     background_tasks: BackgroundTasks,
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(require_permission(PERM_DATA_INGEST)),
 ):
     source_path = str(request.source_path or "").strip()
     if not source_path:
@@ -645,7 +1288,16 @@ async def ingest_from_config2(
     # Ingestion runs in the background (thread-offloaded) so the request
     # returns immediately and doesn't block the server for other users
     # while a large import is in progress. Poll GET /ingest/status/{build_id}.
-    background_tasks.add_task(ingestion_jobs.start_ingestion, build_id, dynamic_cfg, source_path)
+    background_tasks.add_task(
+        ingestion_jobs.start_ingestion,
+        build_id,
+        dynamic_cfg,
+        source_path,
+        workspace_id=workspace_id,
+        created_by=str(current_user.get("username") or ""),
+        source="api",
+    )
+    _ingestions_cache.clear()
 
     return {
         "success": True,
@@ -657,14 +1309,180 @@ async def ingest_from_config2(
     }
 
 
+@app.post("/ingest/upload")
+async def ingest_upload(
+    request: Request,
+    file: UploadFile = File(...),
+    x_api_key: Optional[str] = Header(None),
+    x_workspace_id: Optional[str] = Header(None),
+):
+    """Push an artifact over HTTP instead of onto a shared filesystem.
+
+    The drop-box watcher needs the producer to be able to WRITE to the data
+    volume. A GitHub Actions runner, a Lambda, or a build agent in another
+    network usually can't — mounting the analytics volume into every CI
+    environment is exactly the coupling you don't want. This endpoint is the
+    same trigger reached over the network instead.
+
+    Two ways to authenticate, because CI has no interactive login:
+      * a normal bearer token (a human uploading through the dashboard), or
+      * `x-api-key` matched against INGEST_API_KEYS, where the KEY determines
+        the workspace. A pipeline token that leaks can only write into the
+        team it was issued for.
+
+    The upload lands in that workspace's drop-box directory and the watcher
+    ingests it on its next pass, so uploads, mounted buckets and manual copies
+    all converge on one code path rather than three that drift apart.
+    """
+    workspace_id, actor, actor_user = _resolve_ingest_identity(request, x_api_key, x_workspace_id)
+    # A machine key (actor_user is None) is scoped to one workspace by
+    # configuration already - INGEST_API_KEYS itself IS the authorization
+    # decision for that path. A human caller still needs the role permission,
+    # same as the dashboard's "Add Build" button (POST /ingest/config2).
+    if actor_user is not None and not permissions.has_permission(actor_user, PERM_DATA_INGEST):
+        raise HTTPException(status_code=403, detail="Your role does not have the 'data.ingest' permission")
+
+    filename = Path(str(file.filename or "")).name
+    if not filename or filename.startswith("."):
+        raise HTTPException(status_code=400, detail="A named file is required")
+    # The filename becomes a path segment under a directory we control.
+    if any(ch in filename for ch in ("/", "\\")) or filename in {".", ".."}:
+        raise HTTPException(status_code=400, detail="Invalid filename")
+
+    target_dir = config.AUTO_INGEST_DIR / workspace_id
+    try:
+        target_dir.mkdir(parents=True, exist_ok=True)
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Drop-box is not writable: {exc}") from exc
+
+    # Written under a .part suffix and renamed on completion. The watcher
+    # skips in-flight suffixes, so a slow upload can't be picked up half
+    # written even if it spans several scan intervals.
+    final_path = target_dir / filename
+    staging_path = target_dir / f"{filename}.part"
+    written = 0
+    try:
+        with open(staging_path, "wb") as out:
+            while True:
+                chunk = await file.read(1024 * 1024)
+                if not chunk:
+                    break
+                written += len(chunk)
+                if written > config.INGEST_UPLOAD_MAX_BYTES:
+                    raise HTTPException(
+                        status_code=413,
+                        detail=f"Upload exceeds the "
+                               f"{config.INGEST_UPLOAD_MAX_BYTES // (1024 * 1024)}MB limit",
+                    )
+                out.write(chunk)
+        if written == 0:
+            raise HTTPException(status_code=400, detail="Uploaded file is empty")
+        os.replace(staging_path, final_path)
+    except HTTPException:
+        staging_path.unlink(missing_ok=True)
+        raise
+    except Exception as exc:
+        staging_path.unlink(missing_ok=True)
+        logger.exception("Upload failed for %s", filename)
+        raise HTTPException(status_code=500, detail=f"Upload failed: {exc}") from exc
+
+    logger.info(
+        "Accepted upload '%s' (%.1fMB) into workspace '%s' from %s",
+        filename, written / (1024 * 1024), workspace_id, actor,
+    )
+    if not config.AUTO_INGEST_ENABLED:
+        # Say so rather than letting the caller wait for an ingestion that is
+        # never going to start.
+        return {
+            "success": True,
+            "queued": False,
+            "workspace_id": workspace_id,
+            "path": str(final_path),
+            "message": "File stored, but AUTO_INGEST_ENABLED is false so it "
+                       "will not be ingested automatically.",
+        }
+
+    return {
+        "success": True,
+        "queued": True,
+        "workspace_id": workspace_id,
+        "filename": filename,
+        "bytes": written,
+        "message": f"Queued. The watcher ingests it within "
+                   f"~{int(config.AUTO_INGEST_INTERVAL_SECONDS + config.AUTO_INGEST_STABLE_SECONDS)}s.",
+    }
+
+
+def _resolve_ingest_identity(
+    request: Request,
+    x_api_key: Optional[str],
+    x_workspace_id: Optional[str],
+) -> tuple[str, str, Optional[dict]]:
+    """(workspace, actor-description, user-or-None) for an upload, or 401.
+
+    API key first: it is the unambiguous machine path, and its workspace is
+    fixed by configuration rather than by anything the caller sends. The
+    third element is None for that path (there is no role to check) and the
+    decoded user for a bearer-token upload (there is).
+    """
+    key = (x_api_key or "").strip()
+    if key:
+        workspace = config.INGEST_API_KEYS.get(key)
+        if not workspace:
+            raise HTTPException(status_code=401, detail="Invalid ingest API key")
+        return workspace, "api-key", None
+
+    user = _user_from_request(request)
+    if user is None:
+        raise HTTPException(
+            status_code=401,
+            detail="Provide a bearer token or an x-api-key from INGEST_API_KEYS",
+        )
+    return _normalize_workspace(x_workspace_id, user), f"user:{user.get('username')}", user
+
+
 @app.get("/ingest/status/{build_id}")
 async def ingest_status(build_id: str, current_user: dict = Depends(get_current_user)):
+    build_path = build_owner.resolve_build_path(build_id)
+    if build_path is None:
+        raise HTTPException(status_code=400, detail="Invalid build id")
+    # Status is polled while the build directory is still being created, so a
+    # missing owner.json here means "not started yet", not "unowned" — check
+    # visibility only once there is something to check.
+    if (build_path / build_owner.OWNER_FILENAME).exists():
+        if not build_owner.can_view(build_owner.read_owner(build_path), current_user):
+            raise HTTPException(status_code=404, detail=f"No ingestion job found for '{build_id}'")
+
     status = ingestion_jobs.get_status(build_id)
     if not status:
         raise HTTPException(status_code=404, detail=f"No ingestion job found for '{build_id}'")
     return status
 
 # -------------------- PROTECTED ENDPOINTS (all require valid token) --------------------
+def _enforce_token_quota(current_user: dict) -> None:
+    """Refuse a new LLM-backed request once an account has spent its lifetime
+    quota. Raises HTTPException(429).
+
+    Checked here - once, at the top of the two routes that actually spend
+    tokens - rather than inside llm_client, which is called many times per
+    request (a chat turn can retry a SQL fix, regenerate chart code, etc.).
+    Catching it before ANY of those calls also avoids burning further tokens
+    on a request that's going to be refused anyway. 0 means unlimited, which
+    is also what an account with no explicit limit reads as.
+    """
+    username = current_user.get("username")
+    limit = get_user_store().get_token_limit(username)
+    if limit <= 0:
+        return
+    spent = token_usage_store.get_lifetime_total(username)
+    if spent >= limit:
+        raise HTTPException(
+            status_code=429,
+            detail=f"Token quota exhausted ({spent:,}/{limit:,}). "
+                   f"Ask an administrator to raise your limit.",
+        )
+
+
 @app.post("/chat")
 async def chat(
     request: ChatRequest,
@@ -676,6 +1494,7 @@ async def chat(
     current_user: dict = Depends(get_current_user)
 ):
     session_id = x_session_id or request.session_id or str(uuid.uuid4())
+    _enforce_token_quota(current_user)
     try:
         response = await handlers.handle_chat(
             request.message, session_id, x_ingestion_id, 
@@ -700,6 +1519,7 @@ async def chart(
     current_user: dict = Depends(get_current_user)
 ):
     session_id = x_session_id or request.session_id or str(uuid.uuid4())
+    _enforce_token_quota(current_user)
     chart_json, error = await handlers.handle_chart(
         request.message, session_id, x_ingestion_id,
         role=x_role,
@@ -949,8 +1769,19 @@ async def dashboard_overview(
 
 @app.get("/ingestions")
 async def list_ingestions(current_user: dict = Depends(get_current_user)):
-    """Return list of available ingestion IDs with metadata (prefer JSON summary)."""
-    cached = _cache_get(_ingestions_cache, _INGESTIONS_CACHE_KEY, _INGESTIONS_CACHE_TTL_SECONDS)
+    """Available builds, filtered to what this caller is allowed to see.
+
+    Admins get every workspace (each row carries its workspace_id so the UI
+    can label them); everyone else gets only their own. The cache key includes
+    the viewer's scope — a single global key would serve one workspace's build
+    list to the next caller for the whole TTL.
+    """
+    viewer_scope = (
+        "admin"
+        if _is_admin_role(current_user.get("role"))
+        else f"ws:{_normalize_workspace(None, current_user)}"
+    )
+    cached = _cache_get(_ingestions_cache, viewer_scope, _INGESTIONS_CACHE_TTL_SECONDS)
     if cached is not None:
         return cached
 
@@ -960,6 +1791,9 @@ async def list_ingestions(current_user: dict = Depends(get_current_user)):
             if ingestion_jobs.is_failed(path.name):
                 # Ingestion started but failed partway — don't present a
                 # half-written build as a usable one.
+                continue
+            owner = build_owner.read_owner(path)
+            if not build_owner.can_view(owner, current_user):
                 continue
             summary_json = path / "summary.json"
             summary_text = ""
@@ -981,15 +1815,71 @@ async def list_ingestions(current_user: dict = Depends(get_current_user)):
             ingestions.append({
                 "id": path.name,
                 "summary": summary_text,
-                "created": path.stat().st_mtime
+                "created": path.stat().st_mtime,
+                "workspace_id": owner.get("workspace_id", ""),
+                "created_by": owner.get("created_by", ""),
+                "source": owner.get("source", ""),
+                "can_delete": build_owner.can_delete(owner, current_user),
             })
-    
+
     sorted_ingestions = sorted(ingestions, key=lambda x: x["created"])
     for i, item in enumerate(sorted_ingestions):
         item["build_label"] = f"Build {i + 1}"
 
     payload = {"ingestions": sorted(sorted_ingestions, key=lambda x: x["created"], reverse=True)}
-    return _cache_set(_ingestions_cache, _INGESTIONS_CACHE_KEY, payload)
+    return _cache_set(_ingestions_cache, viewer_scope, payload)
+
+
+def _purge_build_state(ingestion_id: str) -> None:
+    """Drop every in-process trace of a build before its folder is removed.
+
+    Deleting a build has to be complete, not just "the directory is gone".
+    Everything that build produced — its chat history, saved charts, feedback,
+    schema profile, summary and job status — lives in
+    data/<build>/{lancedb,duckdb} and goes with the directory. What does NOT
+    go with it, and is what this function handles:
+
+      * The warm connection pool. DuckDB/LanceDB handles held open here keep
+        file locks; on Windows rmtree then fails partway and leaves a
+        half-deleted directory that still shows up in the build list. Closing
+        first is what makes deletion reliable, not just tidy.
+      * Four caches keyed by ingestion id (status, quality, suggestions,
+        ingestions). Without clearing these, a deleted build keeps serving
+        its old dashboard panels for the rest of the TTL.
+      * The ingestion_jobs status cache, which would otherwise report the
+        build as `completed` forever.
+
+    Note on the drop-box: the file that produced this build stays marked as
+    processed in auto_ingest_state.json. That is deliberate — clearing it
+    while the source file is still sitting in the drop-box would have the
+    watcher immediately re-ingest what you just deleted. Re-drop the file to
+    import it again.
+    """
+    entry = state._ingestion_pool.pop(ingestion_id, None)
+    if entry is not None:
+        try:
+            entry["duck_conn"].close()
+        except Exception:
+            logger.debug("Could not close pooled DuckDB connection for %s", ingestion_id, exc_info=True)
+
+    if state.current_ingestion_id == ingestion_id:
+        try:
+            if state.duck_conn is not None:
+                state.duck_conn.close()
+        except Exception:
+            logger.debug("Could not close active DuckDB connection", exc_info=True)
+        state.current_ingestion_id = None
+        state.duck_conn = None
+        state.lance_db = None
+
+    for cache in (_status_cache, _quality_cache, _suggestions_cache):
+        cache.pop(ingestion_id, None)
+    # Cleared wholesale, not by key: the list is cached per viewer scope
+    # ("admin", "ws:platform", ...) and a deleted build has to disappear from
+    # every one of them, not just the caller's.
+    _ingestions_cache.clear()
+
+    ingestion_jobs.forget(ingestion_id)
 
 
 @app.delete("/ingestions/{ingestion_id}")
@@ -997,25 +1887,54 @@ async def delete_ingestion(
     ingestion_id: str,
     current_user: dict = Depends(get_current_user)
 ):
-    """Delete an ingestion and all its associated data."""
+    """Delete an ingestion and all its associated data.
+
+    This calls shutil.rmtree, so it is guarded twice. First the id is
+    validated as a path segment before being joined onto DATA_BASE_PATH —
+    previously `..%2F..%2Fsomething` was concatenated straight in. Second,
+    authorization: any authenticated user could previously delete any build,
+    including another team's.
+    """
+    # The authorization checks sit OUTSIDE the try block on purpose. They
+    # raise HTTPException, and the `except Exception` below would otherwise
+    # catch a 403 and turn it into a 200 carrying {"error": ...} — a refusal
+    # the client would have no reason to treat as one.
+    ingestion_path = build_owner.resolve_build_path(ingestion_id)
+    if ingestion_path is None:
+        raise HTTPException(status_code=400, detail="Invalid ingestion id")
+    if not ingestion_path.exists():
+        raise HTTPException(status_code=404, detail=f"Ingestion {ingestion_id} not found")
+
+    owner = build_owner.read_owner(ingestion_path)
+    if not build_owner.can_view(owner, current_user):
+        # Same reasoning as the middleware: don't confirm it exists.
+        raise HTTPException(status_code=404, detail=f"Ingestion {ingestion_id} not found")
+    # Role gate first, ownership second: a viewer/developer role has no
+    # data.delete permission at all regardless of who created the build, so
+    # this can reject before even asking build_owner who's allowed to.
+    if not permissions.has_permission(current_user, PERM_DATA_DELETE):
+        raise HTTPException(status_code=403, detail="Your role does not have the 'data.delete' permission")
+    if not build_owner.can_delete(owner, current_user):
+        raise HTTPException(
+            status_code=403,
+            detail="Only an administrator or the user who created this build can delete it",
+        )
+
     try:
-        ingestion_path = config.DATA_BASE_PATH / ingestion_id
-        if not ingestion_path.exists():
-            return {"error": f"Ingestion {ingestion_id} not found"}
-
-        if state.current_ingestion_id == ingestion_id:
-            state.current_ingestion_id = None
-            state.duck_conn = None
-            state.lance_db = None
-        state._ingestion_pool.pop(ingestion_id, None)
-        _ingestions_cache.pop(_INGESTIONS_CACHE_KEY, None)
-
+        _purge_build_state(ingestion_id)
         shutil.rmtree(ingestion_path)
-        logger.info(f"Deleted ingestion {ingestion_id}")
+        logger.info(
+            "User '%s' deleted ingestion %s (workspace=%s)",
+            current_user.get("username"), ingestion_id, owner.get("workspace_id"),
+        )
+        audit_log.record(
+            "build_delete", current_user.get("username"), target=ingestion_id,
+            workspace_id=owner.get("workspace_id", ""),
+        )
         return {"success": True, "message": f"Ingestion {ingestion_id} deleted successfully"}
     except Exception as e:
         logger.error(f"Error deleting ingestion {ingestion_id}: {e}")
-        return {"error": str(e)}
+        raise HTTPException(status_code=500, detail=f"Could not delete ingestion: {e}") from e
 
 
 @app.get("/suggestions")
@@ -1204,6 +2123,14 @@ async def token_usage(current_user: dict = Depends(get_current_user)):
         user_id=current_user.get("username"),
         workspace_id=_normalize_workspace(None, current_user),
     )
+    # Lifetime total (all workspaces) and the account's quota, not just this
+    # workspace's totals above - what _enforce_token_quota() actually
+    # compares, so the dashboard's usage meter matches the number that will
+    # eventually 429 it instead of a workspace-scoped figure that could
+    # under-represent it.
+    username = current_user.get("username")
+    limit = get_user_store().get_token_limit(username)
+    lifetime_total = token_usage_store.get_lifetime_total(username)
     return {
         "totals": persistent.get("totals", {}),
         "by_model": persistent.get("by_model", {}),
@@ -1211,6 +2138,184 @@ async def token_usage(current_user: dict = Depends(get_current_user)):
         "updated_at": persistent.get("updated_at", ""),
         "runtime_totals": state.token_usage,
         "runtime_by_model": state.token_usage_by_model,
+        "quota": {
+            "limit": limit,
+            "unlimited": limit <= 0,
+            "lifetime_total": lifetime_total,
+            "remaining": max(0, limit - lifetime_total) if limit > 0 else None,
+        },
+    }
+
+
+@app.get("/admin/usage")
+async def admin_usage(_admin: dict = Depends(require_permission(permissions.PERM_USAGE_VIEW_ALL))):
+    """Per-account lifetime spend and quota for the admin Usage tab.
+
+    Joins token_usage_store's per-account totals with each account's
+    configured limit from the user store - the two live in different tables
+    (see token_usage_store.py's module docstring for why usage isn't a column
+    on `users`), so an admin view of "who's spending what against what limit"
+    has to bring them together at read time rather than at write time.
+    """
+    store = get_user_store()
+    usage_by_user = {row["user_id"]: row for row in token_usage_store.list_usage_by_user()}
+    limits_by_user = {u["username"]: u for u in store.list_users()}
+
+    rows = []
+    for username in sorted(set(usage_by_user) | set(limits_by_user)):
+        usage = usage_by_user.get(username, {})
+        account = limits_by_user.get(username, {})
+        limit = int(account.get("token_limit") or 0)
+        total = int(usage.get("total_tokens") or 0)
+        rows.append({
+            "username": username,
+            "role": account.get("role", ""),
+            "status": account.get("status", ""),
+            "prompt_tokens": int(usage.get("prompt_tokens") or 0),
+            "completion_tokens": int(usage.get("completion_tokens") or 0),
+            "total_tokens": total,
+            "calls": int(usage.get("calls") or 0),
+            "updated_at": usage.get("updated_at", ""),
+            "token_limit": limit,
+            "unlimited": limit <= 0,
+            "remaining": max(0, limit - total) if limit > 0 else None,
+            "over_limit": limit > 0 and total >= limit,
+        })
+
+    return {
+        "users": rows,
+        "totals": {
+            "prompt_tokens": sum(r["prompt_tokens"] for r in rows),
+            "completion_tokens": sum(r["completion_tokens"] for r in rows),
+            "total_tokens": sum(r["total_tokens"] for r in rows),
+            "calls": sum(r["calls"] for r in rows),
+        },
+    }
+
+
+@app.get("/admin/settings/llm")
+async def admin_get_llm_settings(
+    _admin: dict = Depends(require_permission(permissions.PERM_SETTINGS_MANAGE)),
+):
+    """Effective provider/model/key/base plus which fields env locks. The
+    real api_key never leaves the process - only api_key_masked does."""
+    return app_settings.get_llm_settings(include_secret=False)
+
+
+@app.put("/admin/settings/llm")
+async def admin_update_llm_settings(
+    payload: AdminLLMSettingsRequest,
+    admin: dict = Depends(require_permission(permissions.PERM_SETTINGS_MANAGE)),
+):
+    try:
+        updated = app_settings.update_llm_settings(
+            provider=payload.provider,
+            model=payload.model,
+            api_key=payload.api_key,
+            api_base=payload.api_base,
+            clear_api_key=payload.clear_api_key,
+            updated_by=str(admin.get("username") or ""),
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    audit_log.record(
+        "llm_settings_update", admin.get("username"),
+        details={"provider": updated.get("provider"), "model": updated.get("model")},
+    )
+    return updated
+
+
+@app.post("/admin/settings/llm/test")
+async def admin_test_llm_settings(
+    payload: AdminLLMTestRequest,
+    _admin: dict = Depends(require_permission(permissions.PERM_SETTINGS_MANAGE)),
+):
+    """Fires one real, minimal completion against the given (or currently
+    effective) config. Does not persist anything - see app_settings.py's
+    test_llm_settings() docstring for why validate_llm_config() alone isn't
+    enough to catch a wrong-but-well-formed key."""
+    current = app_settings.get_llm_settings(include_secret=True)
+    provider = (payload.provider or current["provider"]).strip().lower()
+    model = (payload.model or current["model"]).strip()
+    api_key = payload.api_key if payload.api_key is not None else current.get("api_key", "")
+    api_base = payload.api_base if payload.api_base is not None else current.get("api_base", "")
+
+    try:
+        result = app_settings.test_llm_settings(
+            provider=provider, model=model, api_key=api_key, api_base=api_base,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return result
+
+
+@app.post("/admin/usage/{username}/reset")
+async def admin_reset_usage(
+    username: str,
+    admin: dict = Depends(require_permission(permissions.PERM_USAGE_VIEW_ALL)),
+):
+    """Zero out an account's recorded spend (not its limit - see
+    admin_update_user for changing token_limit). Used after raising someone's
+    quota and wanting their counter to start clean, or to clear test/noise
+    usage recorded before a limit was configured."""
+    deleted = token_usage_store.reset_usage(username)
+    _token_usage_cache.clear()
+    logger.info("Admin '%s' reset token usage for '%s' (%d rows)", admin.get("username"), username, deleted)
+    audit_log.record("usage_reset", admin.get("username"), target=username, details={"rows_cleared": deleted})
+    return {"success": True, "rows_cleared": deleted}
+
+
+@app.get("/admin/audit")
+async def admin_audit_log(
+    limit: int = Query(200, ge=1, le=1000),
+    action: Optional[str] = Query(None),
+    actor: Optional[str] = Query(None),
+    _admin: dict = Depends(require_permission(permissions.PERM_AUDIT_VIEW)),
+):
+    return {"events": audit_log.list_events(limit=limit, action=action, actor=actor)}
+
+
+@app.get("/admin/overview")
+async def admin_overview(_admin: dict = Depends(require_permission(permissions.PERM_USERS_MANAGE))):
+    """One screen answering "what does this deployment look like right now" -
+    population by status, workspaces, build counts, token spend, and whether
+    the LLM is actually configured. Composes existing per-domain reads rather
+    than introducing a new aggregate table, so it can never drift from
+    the numbers each dedicated tab (Users/Usage/Settings) shows on its own.
+    """
+    store = get_user_store()
+    status_counts = store.count_by_status()
+    workspaces = store.list_workspaces()
+
+    build_count = 0
+    if config.DATA_BASE_PATH.exists():
+        build_count = sum(
+            1 for entry in config.DATA_BASE_PATH.iterdir()
+            if entry.is_dir() and (entry / "lancedb").exists()
+        )
+
+    usage_rows = token_usage_store.list_usage_by_user()
+    total_tokens = sum(int(r.get("total_tokens") or 0) for r in usage_rows)
+
+    llm_settings = app_settings.get_llm_settings(include_secret=False)
+    llm_ready = bool(llm_settings.get("model")) and (
+        llm_settings.get("keyless") or llm_settings.get("api_key_set")
+    )
+
+    return {
+        "users": {
+            "total": sum(status_counts.values()),
+            "by_status": status_counts,
+        },
+        "workspaces": {"count": len(workspaces), "names": workspaces},
+        "builds": {"count": build_count},
+        "token_usage": {"lifetime_total": total_tokens, "accounts_with_usage": len(usage_rows)},
+        "llm": {
+            "ready": llm_ready,
+            "provider": llm_settings.get("provider"),
+            "model": llm_settings.get("model"),
+        },
+        "server_time": datetime.now(timezone.utc).isoformat(),
     }
 
 if __name__ == "__main__":

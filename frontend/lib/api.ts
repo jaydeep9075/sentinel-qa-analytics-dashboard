@@ -85,6 +85,42 @@ function withCacheKey(base: string, scope: string): string {
   return `qa_cache:${base}:${scope}`;
 }
 
+/**
+ * Forget everything cached about one build, plus the build list.
+ *
+ * Deleting a build server-side doesn't reach the browser's caches. Without
+ * this, the dashboard keeps rendering the deleted build's overview, charts
+ * and quality panel from sessionStorage until each entry's TTL expires — the
+ * data is gone but the UI still shows it, which looks like the delete
+ * silently failed.
+ *
+ * Matches by key suffix rather than listing every cache name, so a cache
+ * added later is covered without anyone having to remember to update this.
+ */
+export function purgeIngestionCache(ingestionId: string): void {
+  const scope = String(ingestionId || "").trim();
+
+  for (const key of Array.from(memoryCache.keys())) {
+    if (!key.startsWith("qa_cache:")) continue;
+    if ((scope && key.endsWith(`:${scope}`)) || key.endsWith(":global")) {
+      memoryCache.delete(key);
+    }
+  }
+
+  if (typeof window === "undefined") return;
+  try {
+    for (const key of Object.keys(sessionStorage)) {
+      if (!key.startsWith("qa_cache:")) continue;
+      if ((scope && key.endsWith(`:${scope}`)) || key.endsWith(":global")) {
+        sessionStorage.removeItem(key);
+      }
+    }
+  } catch {
+    // Storage may be unavailable (private mode, quota); the memory cache is
+    // already cleared, which is the part that affects the current page.
+  }
+}
+
 function getAuthHeaders(): Record<string, string> {
   const token = typeof window !== "undefined" ? localStorage.getItem("token") : null;
   const workspaceId = typeof window !== "undefined" ? localStorage.getItem("workspace_id") : null;
