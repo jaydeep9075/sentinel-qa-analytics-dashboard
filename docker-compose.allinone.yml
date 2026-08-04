@@ -1,0 +1,59 @@
+# Maintainer-side: builds and publishes the single combined image
+# (Dockerfile.allinone). To just RUN the stack from an already-published
+# image with no build, use docker-compose.pull.allinone.yml instead - that's
+# the file teammates want.
+#
+#   docker compose -f docker-compose.allinone.yml build
+#   docker compose -f docker-compose.allinone.yml push
+#
+# See Dockerfile.allinone's header comment for the tradeoff this makes
+# against the split backend+frontend images (docker-compose.yml): one image,
+# one container, one restart unit - simpler to distribute, less isolated to
+# operate.
+
+name: sentinel-qa-allinone
+
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile.allinone
+      args:
+        NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:8000}
+    image: ${IMAGE_NAMESPACE:-jaydeepjoshi9403}/sentinel-qa:${IMAGE_TAG:-latest}
+    env_file:
+      - .env
+    environment:
+      CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS:-http://localhost:3000}
+      SENTINEL_DATA_DIR: /app/data
+      SENTINEL_STATE_DIR: /app/state
+      SENTINEL_CONFIG2_PATH: /app/state/config2.json
+      AUTO_INGEST_DIR: /app/ingest-source
+      AUTH_USER_STORE_URL: ${AUTH_USER_STORE_URL:-sqlite:////app/state/users.db}
+      AUTO_INGEST_ENABLED: ${AUTO_INGEST_ENABLED:-false}
+      AUTO_INGEST_INTERVAL_SECONDS: ${AUTO_INGEST_INTERVAL_SECONDS:-30}
+      AUTO_INGEST_STABLE_SECONDS: ${AUTO_INGEST_STABLE_SECONDS:-20}
+      AUTO_INGEST_DEFAULT_WORKSPACE: ${AUTO_INGEST_DEFAULT_WORKSPACE:-default}
+      BOOTSTRAP_ADMIN_USERNAME: ${BOOTSTRAP_ADMIN_USERNAME:-}
+      BOOTSTRAP_ADMIN_PASSWORD: ${BOOTSTRAP_ADMIN_PASSWORD:-}
+    ports:
+      - "${BACKEND_PORT:-8000}:8000"
+      - "${FRONTEND_PORT:-3000}:3000"
+    volumes:
+      - ${DATA_DIR:-./data}:/app/data
+      - ${STATE_DIR:-./state}:/app/state
+      - ${INGEST_SOURCE_DIR:-./ingest-source}:/app/ingest-source
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys; urllib.request.urlopen('http://localhost:8000/health', timeout=3); urllib.request.urlopen('http://localhost:3000/', timeout=3); sys.exit(0)"]
+      interval: 30s
+      timeout: 5s
+      start_period: 45s
+      retries: 3
+    restart: unless-stopped
+    mem_limit: 3g
+    cpus: 2.0

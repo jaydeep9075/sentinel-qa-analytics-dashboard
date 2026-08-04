@@ -1,0 +1,44 @@
+# Dockerfile-specific ignore file (BuildKit convention: <dockerfile>.dockerignore
+# overrides the plain .dockerignore for that build) - Dockerfile.allinone needs
+# frontend/ in its context, unlike services/Dockerfile, so it can't reuse the
+# root .dockerignore, which excludes frontend/ entirely for that build.
+
+.git
+.gitignore
+
+# Python
+venv/
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+
+# Frontend build artifacts - rebuilt inside the image, never copied in
+frontend/node_modules
+frontend/.next
+
+# Secrets / local runtime state - never bake into an image; supplied via
+# env_file/volumes at container run time (see docker-compose.allinone.yml).
+.env
+.env.*
+config.json
+config2.json
+auth_seed_users.json
+state/
+users.db
+users.db-journal
+data/
+ingest-source/
+
+# Everything else not needed to run the combined image
+reports/
+logs/
+audit-results/
+Knowledge/
+terraform/
+vm-data/
+vm-data.zip
+tests/
+*.md
+!README.md
+node_modules/

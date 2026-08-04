@@ -1,18 +1,30 @@
 # Sentinel QA Analytics — Docker Images
 
-Two images, one stack: a FastAPI backend and a Next.js frontend for AI-powered
-test analytics (Allure/CSV/DB ingestion, chat-driven charts, live Playwright
-run streaming).
+AI-powered test analytics (Allure/CSV/DB ingestion, chat-driven charts, live
+Playwright run streaming) — a FastAPI backend and a Next.js frontend,
+published **two ways**. Pick one:
 
 ```
-jaydeepjoshi9403/sentinel-qa-backend
-jaydeepjoshi9403/sentinel-qa-frontend
+jaydeepjoshi9403/sentinel-qa-backend    ┐  split images - independent restarts,
+jaydeepjoshi9403/sentinel-qa-frontend   ┘  resource limits, and scaling (recommended)
+
+jaydeepjoshi9403/sentinel-qa               all-in-one - one pull, one container,
+                                            both processes (simplest to try)
 ```
 
-This file is written to double as the Docker Hub "Overview" page for both
-repos — paste it into **hub.docker.com → repo → Edit → Description** if it
-isn't already synced. Full source, issues, and the deeper reference docs
-(`DOCKER.md`, `SETUP.md`) live at
+**Which one do I want?** If you're standing up something teammates will
+actually depend on, use the split images (`docker-compose.pull.yml`) — that's
+the maintained, tested default, and it's what §1-§6 below describe. If you
+just want to see the thing running in the next two minutes with the smallest
+possible number of commands, jump to **§1b**: one image, one container, both
+services, supervised so a crash in one doesn't take the other down with it.
+Neither is a toy — same code, same security defaults, same data model either
+way; the difference is purely how many containers you end up running.
+
+This file is written to double as the Docker Hub "Overview" page for all
+three repos — paste it into **hub.docker.com → repo → Edit → Description**
+if it isn't already synced. Full source, issues, and the deeper reference
+docs (`DOCKER.md`, `SETUP.md`) live at
 [github.com/jaydeep9075/sentinel-qa-analytics-dashboard](https://github.com/jaydeep9075/sentinel-qa-analytics-dashboard).
 
 **No data or secrets are baked into either image.** `.env`, `data/`,
@@ -57,6 +69,42 @@ docker compose -f docker-compose.pull.yml up -d
 - Backend → http://localhost:8000 (`/docs` for Swagger, `/health` for a ping)
 
 Prefer a plain `docker run` over compose? See §6.
+
+---
+
+## 1b. Or: one image instead of two
+
+Same application, packaged as a single image running both processes
+(supervised by `supervisord`, auto-restarted independently if one crashes,
+proper signal handling on stop/restart — not a toy wrapper script). Trades
+the split images' independent restarts/resource limits/scaling for the
+simplest possible distribution story.
+
+```bash
+curl -O https://raw.githubusercontent.com/jaydeep9075/sentinel-qa-analytics-dashboard/main/docker-compose.pull.allinone.yml
+curl -O https://raw.githubusercontent.com/jaydeep9075/sentinel-qa-analytics-dashboard/main/.env.example
+cp .env.example .env
+docker compose -f docker-compose.pull.allinone.yml pull
+docker compose -f docker-compose.pull.allinone.yml up -d
+```
+
+Same URLs (frontend `:3000`, backend `:8000`), same `.env`, same
+`DATA_DIR`/`STATE_DIR`/`INGEST_SOURCE_DIR` bind mounts, same generated
+credentials on first start (§3, §4) — this is packaging, not a different
+product. One container instead of two means: one thing to `docker logs`,
+one thing to restart, and a crash in either process gets it individually
+restarted by `supervisord` without you needing to notice or intervene —
+check with `docker compose -f docker-compose.pull.allinone.yml exec app
+supervisorctl status`.
+
+**When to prefer the split images instead:** you want to scale the backend
+independently of the frontend, cap their memory/CPU separately, or restart
+one without bouncing the other (a frontend rebuild for a new
+`NEXT_PUBLIC_API_URL` doesn't need to restart the backend's live connections,
+for example). Everything past this point (§2 onward) is written against the
+split images, but applies equally to the combined one unless noted — same
+credential model, same Playwright wiring, same public/private pull rules,
+just one image name (`jaydeepjoshi9403/sentinel-qa`) instead of two.
 
 ---
 

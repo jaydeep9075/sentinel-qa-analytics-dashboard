@@ -1,0 +1,137 @@
+# One image, both services. Real tradeoff, stated up front: the split
+# images (services/Dockerfile + frontend/Dockerfile, via docker-compose.yml)
+# give backend and frontend independent restarts, independent resource
+# limits, and independent scaling - that's the maintained, recommended path
+# for anything you'd call a real deployment. This image trades all of that
+# for the simplest possible distribution story: one `docker pull`, one
+# `docker run`, both processes come up together supervised by `supervisord`,
+# both go down together. Good fit for "a teammate wants to try this in five
+# minutes" or a single-host demo; not a replacement for the split images if
+# you actually care about the independence they give you.
+#
+# Build context is the repo root (same as services/Dockerfile) - it needs
+# both services/ and frontend/.
+#
+# Why the frontend build stages here use node:24-bookworm-slim (Debian)
+# instead of the node:24-alpine that frontend/Dockerfile normally uses:
+# the backend's builder stage below needs glibc (python:3.12-slim-bookworm,
+# for the prebuilt CPU torch wheel - torch has no musl/Alpine wheels worth
+# using). Next.js's build step (`next build`) resolves a platform-specific
+# native SWC binary (@next/swc-linux-x64-gnu vs -musl) based on the libc it's
+# built under - building the frontend on Alpine and running it on Debian (or
+# vice versa) risks shipping a native binary that doesn't match the runtime's
+# libc. Building both stages against the same Debian base as the final image
+# removes that mismatch entirely, at the cost of this Dockerfile no longer
+# sharing frontend/Dockerfile's (unaffected, still-Alpine) build stages.
+
+# ---- backend deps -----------------------------------------------------
+FROM python:3.12-slim-bookworm AS backend-builder
+
+WORKDIR /build
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY requirements.txt .
+
+RUN --mount=type=cache,target=/root/.cache/pip \
+    pip install --user \
+    --extra-index-url https://download.pytorch.org/whl/cpu \
+    -r requirements.txt
+
+# supervisord is pure Python (no compiled extensions) - installed here so it
+# lands in the same /root/.local tree copied into the final image below,
+# with no extra apt package and no extra stage.
+RUN --mount=type=cache,target=/root/.cache/pip \
+    pip install --user supervisor
+
+RUN set -eux; \
+    SP=/root/.local/lib/python3.12/site-packages; \
+    rm -rf "$SP/torch/include" "$SP/torch/test" \
+           "$SP/googleapiclient/discovery_cache/documents"; \
+    find "$SP" -name "*.a" -delete
+
+ENV HF_HOME=/opt/hf-cache
+RUN python -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('all-MiniLM-L6-v2')"
+
+# ---- frontend deps (Debian-based - see header comment) -----------------
+FROM node:24-bookworm-slim AS frontend-deps
+WORKDIR /fe
+COPY frontend/package.json frontend/package-lock.json ./
+RUN npm ci --ignore-scripts
+
+FROM node:24-bookworm-slim AS frontend-builder
+WORKDIR /fe
+COPY --from=frontend-deps /fe/node_modules ./node_modules
+COPY frontend/ .
+ARG NEXT_PUBLIC_API_URL=http://localhost:8000
+ENV NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL}
+ENV NEXT_TELEMETRY_DISABLED=1
+RUN npm run build
+
+# ---- combined runtime ---------------------------------------------------
+FROM python:3.12-slim-bookworm AS runtime
+
+RUN groupadd --system appuser && useradd --system --gid appuser --home-dir /app --create-home appuser
+
+# Borrow just the node binary from an official Debian-based Node image -
+# same bookworm base as this image, so glibc/libstdc++ match exactly. Only
+# the binary is needed: the standalone frontend build carries its own
+# pruned node_modules and never calls npm at runtime.
+COPY --from=node:24-bookworm-slim /usr/local/bin/node /usr/local/bin/node
+
+WORKDIR /app
+
+COPY --from=backend-builder --chown=appuser:appuser /root/.local /home/appuser/.local
+COPY --from=backend-builder --chown=appuser:appuser /opt/hf-cache /opt/hf-cache
+
+ENV HOME=/home/appuser \
+    PATH=/home/appuser/.local/bin:$PATH \
+    PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONPATH=/app \
+    HF_HOME=/opt/hf-cache \
+    HF_HUB_OFFLINE=1 \
+    WEB_CONCURRENCY=1
+
+RUN mkdir -p /app/data /app/frontend && chown -R appuser:appuser /app
+
+COPY supervisord.allinone.conf /app/supervisord.conf
+
+USER appuser
+
+# Backend: same set as services/Dockerfile - deliberately NOT .env,
+# config.json/config2.json, users.db, data/ - all runtime state/secrets,
+# bind-mounted instead (see docker-compose.pull.allinone.yml).
+COPY --chown=appuser:appuser services ./services
+COPY --chown=appuser:appuser roles ./roles
+COPY --chown=appuser:appuser projects ./projects
+COPY --chown=appuser:appuser universal_ingester ./universal_ingester
+
+# Frontend: standalone output already traces and includes only the
+# node_modules it actually uses.
+COPY --from=frontend-builder --chown=appuser:appuser /fe/public ./frontend/public
+COPY --from=frontend-builder --chown=appuser:appuser /fe/.next/standalone ./frontend/
+COPY --from=frontend-builder --chown=appuser:appuser /fe/.next/static ./frontend/.next/static
+
+EXPOSE 8000 3000
+
+# Checks both processes - a container that's "healthy" here means both the
+# API and the dashboard are actually serving, not just that one of the two
+# supervised processes happens to be up.
+HEALTHCHECK --interval=30s --timeout=5s --start-period=45s --retries=3 \
+    CMD python -c "\
+import urllib.request, sys; \
+urllib.request.urlopen('http://localhost:8000/health', timeout=3); \
+urllib.request.urlopen('http://localhost:3000/', timeout=3); \
+sys.exit(0)" || exit 1
+
+# supervisord as PID 1: nodaemon keeps it in the foreground, and unlike a
+# plain shell script backgrounding two processes, it actually supervises
+# them - autorestart brings a crashed child back without restarting the
+# whole container, and on SIGTERM (`docker stop`/compose down) it stops
+# both children with their configured stopsignal before exiting, instead of
+# leaving one orphaned or SIGKILLed. See services/Dockerfile's CMD comment
+# for why raw signal delivery to PID 1 matters here.
+CMD ["supervisord", "-c", "/app/supervisord.conf", "-n"]

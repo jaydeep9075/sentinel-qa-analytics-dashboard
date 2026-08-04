@@ -342,6 +342,33 @@ docker compose -f docker-compose.pull.yml pull
 docker compose -f docker-compose.pull.yml up -d
 ```
 
+### 8e. The single combined image (`Dockerfile.allinone`)
+
+Alongside the split images, `jaydeepjoshi9403/sentinel-qa` packages backend
++ frontend into one image (both processes supervised by `supervisord` inside
+one container) for teammates who want the absolute simplest pull-and-run
+path. See `Dockerfile.allinone`'s header comment for the full tradeoff
+against the split images (independent restarts/resource limits/scaling vs.
+one image, one command). Build and push it the same way:
+
+```bash
+docker compose -f docker-compose.allinone.yml build
+docker compose -f docker-compose.allinone.yml push
+```
+
+Uses the same `IMAGE_NAMESPACE`/`IMAGE_TAG` vars as the split images (§8b),
+just a different compose file and a different image name. Teammates run it
+with `docker-compose.pull.allinone.yml` — see `DOCKERHUB.md` §1b.
+
+**Note on build context:** `Dockerfile.allinone` needs `frontend/` in its
+build context, but the root `.dockerignore` excludes that directory
+entirely (the split `services/Dockerfile` never needs it). BuildKit resolves
+a Dockerfile-specific ignore file when one exists
+(`<dockerfile>.dockerignore` overrides the plain `.dockerignore` for that
+build), which is what `Dockerfile.allinone.dockerignore` is for — if you
+rename `Dockerfile.allinone`, rename its ignore file to match, or the build
+will fail with a "not found" error on `COPY frontend/`.
+
 ## Environment variable reference
 
 Three different things read env vars here, and they behave differently —
