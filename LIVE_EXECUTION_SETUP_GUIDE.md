@@ -109,7 +109,7 @@ launchOptions: {
 | Option | Required | Default | Notes |
 |---|---|---|---|
 | `baseUrl` | no | `SENTINEL_BASE_URL` env, else `http://localhost:8000` | |
-| `apiKey` | no | `SENTINEL_API_KEY` env | Any non-empty value works locally (see §4) |
+| `apiKey` | no | `SENTINEL_API_KEY` env | Must match the backend's `LIVE_INGEST_API_KEY` (auto-generated on first start if unset - see §3) |
 | `projectId` | no | — | Free text, shown in the run list |
 | `environment` | no | — | Free text, e.g. `dev`/`stage`/`prod` |
 | `liveView` | no | `false` | Costs CPU/bandwidth — only turn on when someone's watching |
@@ -122,12 +122,22 @@ from the config instead of adding to it, which silently disables Sentinel. Just 
 
 ---
 
-## 3. Set environment variables and run
+## 3. Get the live-ingest key, set environment variables, and run
+
+The backend authenticates every `/live/*` write with `x-api-key`. If
+`LIVE_INGEST_API_KEY` isn't set in the backend's `.env`, one is generated on
+first start into `state/live_ingest_api_key` and printed once in the
+backend's own startup logs — grab it from either place:
+
+```powershell
+# from the backend's terminal output right after it starts, or:
+Get-Content state\live_ingest_api_key
+```
 
 **PowerShell:**
 ```powershell
 cd path\to\your-repo
-$env:SENTINEL_API_KEY = "local-dev"
+$env:SENTINEL_API_KEY = "<the key from state/live_ingest_api_key>"
 $env:SENTINEL_BASE_URL = "http://localhost:8000"
 npx playwright test path/to/your.spec.ts
 ```
@@ -135,14 +145,15 @@ npx playwright test path/to/your.spec.ts
 **Git Bash / WSL:**
 ```bash
 cd path/to/your-repo
-SENTINEL_API_KEY=local-dev SENTINEL_BASE_URL=http://localhost:8000 \
+SENTINEL_API_KEY=<the key from state/live_ingest_api_key> SENTINEL_BASE_URL=http://localhost:8000 \
   npx playwright test path/to/your.spec.ts
 ```
 
-`SENTINEL_API_KEY` just needs to be **non-empty** — it flips `useSentinel` to `true`
-in the config. The backend only actually checks the key's value if you've set
-`LIVE_INGEST_API_KEY` on the backend (unset by default for local dev — see
-`services/config.py`); until you set that, any non-empty client-side value works.
+`SENTINEL_API_KEY` must match the backend's `LIVE_INGEST_API_KEY` exactly —
+a mismatched or missing value gets a 401 from every `/live/*` call, which
+shows up as "nothing appears in Live Runs" (see Troubleshooting below). Set
+`LIVE_INGEST_API_KEY` explicitly in the backend's `.env` if you'd rather pin
+one fixed value than read a generated one back out of `state/`.
 
 ---
 
@@ -187,7 +198,7 @@ few seconds later it's finalized in the background:
 
 | Symptom | Cause | Fix |
 |---|---|---|
-| Nothing appears in Live Runs | `SENTINEL_API_KEY` wasn't set in that shell, or `--reporter=` was passed on the CLI | Re-check §3; drop any `--reporter=` flag |
+| Nothing appears in Live Runs | `SENTINEL_API_KEY` wasn't set in that shell, doesn't match the backend's `LIVE_INGEST_API_KEY` (401 - check the reporter's console output), or `--reporter=` was passed on the CLI | Re-check §3 for where to read the current key; drop any `--reporter=` flag |
 | Run appears but no live browser tile | Chromium wasn't launched with `--remote-debugging-port`, or wrong port for that worker | Check `use.launchOptions.args`; console will log `[sentinel] live view disabled: ...` with the reason |
 | "Run not found" / 401 on the live page | Not logged into the dashboard | Log in at `/login` first — the live page needs your session token |
 | Logs never appear after the run starts | Backend unreachable from the test process | Check `SENTINEL_BASE_URL` matches where the backend actually listens |

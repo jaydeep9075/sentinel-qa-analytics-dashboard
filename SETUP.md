@@ -99,13 +99,16 @@ configured yet" instead of failing to boot) — finish it later as an admin, in
 
 **`BOOTSTRAP_ADMIN_USERNAME` / `BOOTSTRAP_ADMIN_PASSWORD`** — the first admin
 account, created **only** when the user database is empty (so it can't be used
-to override or reset an existing account). Leave both unset and the backend
-bootstraps `admin` / `admin` for you — that account is created with a forced
-password change: the very first login can do nothing except set a real
-username and password, so the well-known default is never a standing
-credential. Set these instead if you'd rather choose the first admin's
-username/password yourself; you'll still get a forced change unless you also
-set `BOOTSTRAP_ADMIN_FORCE_PASSWORD_CHANGE=false`.
+to override or reset an existing account). Leave `BOOTSTRAP_ADMIN_USERNAME`
+unset and it defaults to `admin`; leave `BOOTSTRAP_ADMIN_PASSWORD` unset and
+the backend generates one for you into `state/bootstrap_admin_password`,
+printed once in the startup logs — there is no fixed `admin`/`admin` pair
+anymore, since a well-known password on anything reachable before you've
+logged in is a race, not a safeguard. That account is created with a forced
+password change either way: the very first login can do nothing except set a
+real username and password. Set these instead if you'd rather choose the
+first admin's username/password yourself; you'll still get a forced change
+unless you also set `BOOTSTRAP_ADMIN_FORCE_PASSWORD_CHANGE=false`.
 
 #### Choosing an LLM provider
 
@@ -623,7 +626,7 @@ real deployment, but an empty `.env` boots a usable install.
 | `AUTH_AUTO_APPROVE_REGISTRATION` | No | `false` |
 | `AUTH_DEFAULT_ROLE` / `AUTH_DEFAULT_WORKSPACE` | No | `viewer` / `default` |
 | `LEGACY_BUILDS_WORKSPACE` | No | `default` — see §3a |
-| `LIVE_INGEST_API_KEY` | No | empty — set before exposing the backend beyond localhost |
+| `LIVE_INGEST_API_KEY` | No | auto-generated into `state/live_ingest_api_key`, logged once at startup |
 | `WEB_CONCURRENCY` | No | `1` — read DOCKER.md §5 before raising |
 
 Change any of these and run `docker compose up -d`. No rebuild. Any value set

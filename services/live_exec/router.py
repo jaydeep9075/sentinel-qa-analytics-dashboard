@@ -41,9 +41,10 @@ def require_ingest_key(x_api_key: str = Header(default="")) -> None:
     if not config.LIVE_INGEST_API_KEY:
         if not _warned_no_ingest_key:
             logger.warning(
-                "LIVE_INGEST_API_KEY is not set - live-execution ingestion endpoints "
-                "are unauthenticated. Fine for local dev, set it before exposing this "
-                "backend beyond your own machine."
+                "LIVE_INGEST_API_KEY is unset AND couldn't be auto-generated "
+                "(state directory unwritable - see the error logged at startup) - "
+                "live-execution ingestion endpoints are unauthenticated. Set "
+                "LIVE_INGEST_API_KEY in .env or fix state directory permissions."
             )
             _warned_no_ingest_key = True
         return

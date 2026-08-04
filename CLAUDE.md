@@ -126,8 +126,14 @@ python verify_system.py
 - **Auto-Seeding**: Optional bootstrap from `auth_seed_users.json` via `AUTH_AUTO_SEED_USERS=true`
 - **Secret Key**: If `SECRET_KEY` is unset, one is generated into `state/secret_key` on first
   start and reused after that (env always wins when set) — see `config._resolve_secret_key()`.
-- **Zero-config first run**: `BOOTSTRAP_ADMIN_USERNAME`/`_PASSWORD` default to `admin`/`admin`
-  when unset. That account is created with `must_change_password=true`, and
+- **Live ingest key**: If `LIVE_INGEST_API_KEY` is unset, one is generated into
+  `state/live_ingest_api_key` and logged once at startup (same pattern as `SECRET_KEY`) — see
+  `config._resolve_live_ingest_api_key()`. `services/live_exec/router.py`'s `require_ingest_key`
+  only falls back to "unauthenticated" if generation itself fails (unwritable state dir).
+- **Zero-config first run**: `BOOTSTRAP_ADMIN_USERNAME` defaults to `admin`. `BOOTSTRAP_ADMIN_PASSWORD`,
+  if unset, is generated into `state/bootstrap_admin_password` and logged once at startup — there
+  is no fixed `admin`/`admin` default anymore (see `config._resolve_bootstrap_admin_password()`).
+  That account is created with `must_change_password=true`, and
   `main.credential_change_middleware` refuses every route except `/auth/me`,
   `/auth/permissions`, `POST /auth/account/password` and `POST /auth/account/username` until it's
   cleared — the default password is a one-time door, not a standing credential. An admin
@@ -307,8 +313,11 @@ LLM_API_KEY          # API key (or provider-specific: OPENAI_API_KEY, etc.) — 
 LLM_MODEL            # Full model ID
 OLLAMA_URL           # http://localhost:11434 (if using Ollama)
 SECRET_KEY           # ≥32 chars, random — auto-generated into state/secret_key if unset
+LIVE_INGEST_API_KEY  # Playwright reporter's x-api-key — auto-generated into
+                      # state/live_ingest_api_key and logged once at startup if unset
 BOOTSTRAP_ADMIN_USERNAME   # default: admin
-BOOTSTRAP_ADMIN_PASSWORD   # default: admin (forces a password change on first login)
+BOOTSTRAP_ADMIN_PASSWORD   # default: auto-generated into state/bootstrap_admin_password, logged
+                            # once at startup (forces a password change on first login either way)
 BOOTSTRAP_ADMIN_FORCE_PASSWORD_CHANGE # default: true
 MIN_PASSWORD_LENGTH  # default: 8
 BCRYPT_ROUNDS        # 10–16 (default 12)

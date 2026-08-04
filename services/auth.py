@@ -297,13 +297,14 @@ def _bootstrap_admin_if_empty() -> None:
     )
     if is_default_password:
         logger.warning(
-            "Bootstrapped first admin '%s' with the BUILT-IN DEFAULT password. "
-            "Sign in with username '%s' and password '%s' - you will be required "
-            "to set a real username and password before doing anything else. Set "
-            "BOOTSTRAP_ADMIN_USERNAME/BOOTSTRAP_ADMIN_PASSWORD in .env to skip "
-            "shipping with the default at all.",
-            config.BOOTSTRAP_ADMIN_USERNAME, config.BOOTSTRAP_ADMIN_USERNAME,
-            config.BOOTSTRAP_ADMIN_PASSWORD,
+            "Bootstrapped first admin '%s' with an AUTO-GENERATED password: '%s' "
+            "(also saved to %s). Sign in with username '%s' and that password - "
+            "you will be required to set a real username and password before "
+            "doing anything else. Set BOOTSTRAP_ADMIN_USERNAME/"
+            "BOOTSTRAP_ADMIN_PASSWORD in .env instead if you'd rather choose it "
+            "yourself.",
+            config.BOOTSTRAP_ADMIN_USERNAME, config.BOOTSTRAP_ADMIN_PASSWORD,
+            config.BOOTSTRAP_ADMIN_PASSWORD_FILE, config.BOOTSTRAP_ADMIN_USERNAME,
         )
     else:
         logger.warning(

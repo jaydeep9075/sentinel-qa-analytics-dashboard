@@ -1,0 +1,107 @@
+# For teammates who just want to RUN the stack - no git clone, no source
+# checkout, no build. Every image is pulled from Docker Hub instead of built
+# locally. This is the only file (plus `.env`) you need on disk:
+#
+#     curl -O https://raw.githubusercontent.com/jaydeep9075/sentinel-qa-analytics-dashboard/main/docker-compose.pull.yml
+#     curl -O https://raw.githubusercontent.com/jaydeep9075/sentinel-qa-analytics-dashboard/main/.env.example
+#     cp .env.example .env      # edit it - see .env.example section A/B
+#     docker compose -f docker-compose.pull.yml pull
+#     docker compose -f docker-compose.pull.yml up -d
+#
+# `docker-compose.yml` (no `.pull`) is the maintainer's copy - it has a
+# `build:` block too, for anyone working on the source itself. This file is
+# deliberately a subset: same volumes, same env vars, same ports, but
+# `image:` only, so there is nothing here that requires the repo to exist on
+# your machine, and nothing here can accidentally rebuild from someone
+# else's checkout.
+#
+# Storage is 100% yours: DATA_DIR/STATE_DIR/INGEST_SOURCE_DIR below point at
+# folders next to this file by default, and you can repoint them (in .env)
+# at any disk, network share, or cloud-mounted volume on THIS machine - nothing
+# from the person who published the image is in there. See .env.example
+# section C.
+
+name: sentinel-qa
+
+services:
+  backend:
+    image: ${IMAGE_NAMESPACE:-jaydeepjoshi9403}/sentinel-qa-backend:${IMAGE_TAG:-latest}
+    env_file:
+      - .env
+    environment:
+      CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS:-http://localhost:3000}
+      SENTINEL_DATA_DIR: /app/data
+      AUTO_INGEST_DIR: /app/ingest-source
+      SENTINEL_STATE_DIR: /app/state
+      AUTH_USER_STORE_URL: ${AUTH_USER_STORE_URL:-sqlite:////app/state/users.db}
+      SENTINEL_CONFIG2_PATH: /app/state/config2.json
+      AUTO_INGEST_ENABLED: ${AUTO_INGEST_ENABLED:-false}
+      AUTO_INGEST_INTERVAL_SECONDS: ${AUTO_INGEST_INTERVAL_SECONDS:-30}
+      AUTO_INGEST_STABLE_SECONDS: ${AUTO_INGEST_STABLE_SECONDS:-20}
+      AUTO_INGEST_DEFAULT_WORKSPACE: ${AUTO_INGEST_DEFAULT_WORKSPACE:-default}
+      BOOTSTRAP_ADMIN_USERNAME: ${BOOTSTRAP_ADMIN_USERNAME:-}
+      BOOTSTRAP_ADMIN_PASSWORD: ${BOOTSTRAP_ADMIN_PASSWORD:-}
+    ports:
+      - "${BACKEND_PORT:-8000}:8000"
+    volumes:
+      # Your own data - nothing baked into the image travels with it.
+      - ${DATA_DIR:-./data}:/app/data
+      - ${STATE_DIR:-./state}:/app/state
+      - ${INGEST_SOURCE_DIR:-./ingest-source}:/app/ingest-source
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/health', timeout=3).status == 200 else 1)"]
+      interval: 30s
+      timeout: 5s
+      start_period: 45s
+      retries: 3
+    restart: unless-stopped
+    mem_limit: 3g
+    cpus: 2.0
+
+  frontend:
+    image: ${IMAGE_NAMESPACE:-jaydeepjoshi9403}/sentinel-qa-frontend:${IMAGE_TAG:-latest}
+    environment:
+      SENTINEL_DATA_DIR: /app/data
+      SENTINEL_CONFIG2_PATH: /app/state/config2.json
+    volumes:
+      - ${DATA_DIR:-./data}:/app/data:ro
+      - ${STATE_DIR:-./state}:/app/state
+    ports:
+      - "${FRONTEND_PORT:-3000}:3000"
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    depends_on:
+      backend:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://localhost:3000/').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      start_period: 20s
+      retries: 3
+    restart: unless-stopped
+    mem_limit: 1g
+    cpus: 1.0
+
+  # One-shot ingestion trigger, same image as `backend`:
+  #   docker compose -f docker-compose.pull.yml run --rm ingest
+  ingest:
+    image: ${IMAGE_NAMESPACE:-jaydeepjoshi9403}/sentinel-qa-backend:${IMAGE_TAG:-latest}
+    profiles: ["ingest"]
+    working_dir: /app/universal_ingester
+    entrypoint: ["python", "ingester.py"]
+    environment:
+      SENTINEL_DATA_DIR: /app/data
+      SENTINEL_CONFIG2_PATH: /app/state/config2.json
+    volumes:
+      - ${DATA_DIR:-./data}:/app/data
+      - ${STATE_DIR:-./state}:/app/state
+      - ${INGEST_SOURCE_DIR:-./ingest-source}:/app/ingest-source

@@ -331,24 +331,56 @@ AUTH_DEFAULT_ROLE = (os.getenv("AUTH_DEFAULT_ROLE") or "viewer").strip().lower()
 # override: once any user exists this is ignored, and changing the password
 # here later does nothing.
 #
-# Both values now DEFAULT rather than being required, so `docker compose up`
-# on an empty .env yields a deployment you can actually sign into - the
-# appliance pattern (a router, Grafana, Jenkins). What makes a well-known
-# default credential safe is the other half of the pattern, and it is not
-# optional here: the bootstrapped account is created with
-# must_change_password set, so the default password gets you exactly one
-# screen - "choose your real username and password" - and every other route
-# in the API refuses that session until you do. See
-# auth._bootstrap_admin_if_empty() and main.credential_change_middleware().
+# The username defaults so `docker compose up` on an empty .env yields a
+# deployment you can actually sign into - the appliance pattern (a router,
+# Grafana, Jenkins). The password does NOT default to a fixed, guessable
+# string ("admin") for the same reason those appliances have mostly moved
+# away from that too: a well-known default password on anything reachable
+# before the operator has logged in is a race, not a safeguard - whoever
+# reaches the login page first wins, attacker or owner. Instead, an unset
+# BOOTSTRAP_ADMIN_PASSWORD is generated per-deployment and persisted to the
+# mounted state directory (same pattern as SECRET_KEY below), then logged
+# once at startup. must_change_password is still forced regardless, so it
+# remains a one-time door either way - this just makes the door unguessable
+# instead of merely one-time. See auth._bootstrap_admin_if_empty() and
+# main.credential_change_middleware().
 DEFAULT_BOOTSTRAP_ADMIN_USERNAME = "admin"
-DEFAULT_BOOTSTRAP_ADMIN_PASSWORD = "admin"
+BOOTSTRAP_ADMIN_PASSWORD_FILE = STATE_DIR / "bootstrap_admin_password"
+
+
+def _resolve_bootstrap_admin_password() -> tuple[str, bool]:
+    """Returns (password, was_generated)."""
+    env_value = (os.getenv("BOOTSTRAP_ADMIN_PASSWORD") or "").strip()
+    if env_value:
+        return env_value, False
+
+    try:
+        if BOOTSTRAP_ADMIN_PASSWORD_FILE.exists():
+            stored = BOOTSTRAP_ADMIN_PASSWORD_FILE.read_text(encoding="utf-8").strip()
+            if stored:
+                return stored, True
+
+        generated = secrets.token_urlsafe(18)
+        BOOTSTRAP_ADMIN_PASSWORD_FILE.parent.mkdir(parents=True, exist_ok=True)
+        BOOTSTRAP_ADMIN_PASSWORD_FILE.write_text(generated + "\n", encoding="utf-8")
+        try:
+            BOOTSTRAP_ADMIN_PASSWORD_FILE.chmod(stat.S_IRUSR | stat.S_IWUSR)
+        except OSError:
+            pass
+        return generated, True
+    except Exception:
+        # An unwritable state directory shouldn't take the whole service
+        # down when BOOTSTRAP_ADMIN_PASSWORD could still be supplied via env
+        # instead - falls through to an empty password, which
+        # _bootstrap_admin_if_empty() already treats as "don't bootstrap".
+        logger.error("Could not read or create %s", BOOTSTRAP_ADMIN_PASSWORD_FILE, exc_info=True)
+        return "", False
+
 
 BOOTSTRAP_ADMIN_USERNAME = (
     os.getenv("BOOTSTRAP_ADMIN_USERNAME") or DEFAULT_BOOTSTRAP_ADMIN_USERNAME
 ).strip().lower()
-BOOTSTRAP_ADMIN_PASSWORD = (
-    os.getenv("BOOTSTRAP_ADMIN_PASSWORD") or DEFAULT_BOOTSTRAP_ADMIN_PASSWORD
-)
+BOOTSTRAP_ADMIN_PASSWORD, _BOOTSTRAP_ADMIN_PASSWORD_WAS_GENERATED = _resolve_bootstrap_admin_password()
 # Whether the bootstrapped admin must replace its credentials before the
 # session is good for anything else. Default on even when an explicit
 # password was supplied: that password sits in a plaintext .env forever, and
@@ -360,7 +392,15 @@ BOOTSTRAP_ADMIN_FORCE_PASSWORD_CHANGE = _get_bool(
 
 
 def bootstrap_password_is_default() -> bool:
-    return BOOTSTRAP_ADMIN_PASSWORD == DEFAULT_BOOTSTRAP_ADMIN_PASSWORD
+    """True when BOOTSTRAP_ADMIN_PASSWORD was auto-generated rather than set
+    explicitly via env - kept name-compatible with callers that gate
+    "is this the unattended first-run credential, not something an operator
+    chose" (auth._bootstrap_admin_if_empty() forces a password change either
+    way, but treats this case as always-force regardless of
+    BOOTSTRAP_ADMIN_FORCE_PASSWORD_CHANGE, same as the old literal-default
+    check did).
+    """
+    return _BOOTSTRAP_ADMIN_PASSWORD_WAS_GENERATED
 
 
 # Minimum length for any password a human sets through the UI or the CLI.
@@ -387,10 +427,60 @@ LEGACY_BUILDS_WORKSPACE = (
 ).strip().lower() or DEFAULT_WORKSPACE_ID
 
 # Live test execution (reporter -> backend ingestion)
-# Shared secret the @sentinel/playwright reporter sends as `x-api-key`.
-# Left empty in local/dev by default so `playwright test` works with zero
-# setup; set it before exposing the backend beyond your own machine.
-LIVE_INGEST_API_KEY = os.getenv("LIVE_INGEST_API_KEY", "")
+# Shared secret the @sentinel/playwright reporter sends as `x-api-key` to
+# every /live/* ingestion route (services/live_exec/router.py's
+# require_ingest_key). This used to default to "" (empty), which
+# require_ingest_key treated as "endpoint unauthenticated" - convenient for
+# a bare `playwright test` against localhost, but it means the DEFAULT
+# state of a container reachable from any network beyond localhost is an
+# open write endpoint anyone can post fake runs to. Same fix as SECRET_KEY
+# and BOOTSTRAP_ADMIN_PASSWORD above: generate one into the mounted state
+# directory when it isn't supplied, so the endpoint is authenticated by
+# default instead of open by default, and log it once so it's actually
+# usable - unlike SECRET_KEY, a human needs this value to configure
+# SENTINEL_API_KEY in every Playwright repo that reports to this backend.
+LIVE_INGEST_API_KEY_FILE = STATE_DIR / "live_ingest_api_key"
+
+
+def _resolve_live_ingest_api_key() -> tuple[str, bool]:
+    """Returns (key, was_generated)."""
+    env_value = (os.getenv("LIVE_INGEST_API_KEY") or "").strip()
+    if env_value:
+        return env_value, False
+
+    try:
+        if LIVE_INGEST_API_KEY_FILE.exists():
+            stored = LIVE_INGEST_API_KEY_FILE.read_text(encoding="utf-8").strip()
+            if stored:
+                return stored, True
+
+        generated = secrets.token_urlsafe(32)
+        LIVE_INGEST_API_KEY_FILE.parent.mkdir(parents=True, exist_ok=True)
+        LIVE_INGEST_API_KEY_FILE.write_text(generated + "\n", encoding="utf-8")
+        try:
+            LIVE_INGEST_API_KEY_FILE.chmod(stat.S_IRUSR | stat.S_IWUSR)
+        except OSError:
+            pass
+        return generated, True
+    except Exception:
+        # Unwritable state dir: fall through to "" rather than crash the
+        # backend over a feature most deployments don't use.
+        # require_ingest_key() treats "" as "unauthenticated, warn once" -
+        # a safe degrade, not a silent one.
+        logger.error("Could not read or create %s", LIVE_INGEST_API_KEY_FILE, exc_info=True)
+        return "", False
+
+
+LIVE_INGEST_API_KEY, _LIVE_INGEST_API_KEY_WAS_GENERATED = _resolve_live_ingest_api_key()
+if LIVE_INGEST_API_KEY and _LIVE_INGEST_API_KEY_WAS_GENERATED:
+    logger.warning(
+        "LIVE_INGEST_API_KEY was not set - generated one at %s: '%s'. Use this "
+        "as SENTINEL_API_KEY in any Playwright repo that reports live runs to "
+        "this backend. Set LIVE_INGEST_API_KEY in .env instead if you'd rather "
+        "choose it yourself (e.g. to share one value across multiple backend "
+        "replicas that don't share a state directory).",
+        LIVE_INGEST_API_KEY_FILE, LIVE_INGEST_API_KEY,
+    )
 LIVE_RUNS_DIR = DATA_BASE_PATH / "runs"
 # Optional. Unset (default) = single-instance mode: the live SSE bus and
 # live-frame cache stay in-process, which is correct and free as long as

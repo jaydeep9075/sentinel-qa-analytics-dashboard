@@ -51,7 +51,12 @@ Open `.env` and set at minimum:
   `LLM_API_KEY` is the fallback. Any litellm provider works; ones without a
   built-in default must name `LLM_MODEL` explicitly. See SETUP.md §3 step 1.
 - `BOOTSTRAP_ADMIN_USERNAME` / `BOOTSTRAP_ADMIN_PASSWORD` — the first admin,
-  created only when the user database is empty.
+  created only when the user database is empty. Leave `BOOTSTRAP_ADMIN_PASSWORD`
+  blank and one is generated into `state/bootstrap_admin_password` and printed
+  in the backend's startup logs (`docker compose logs backend`) — there is no
+  fixed "admin"/"admin" default anymore, on purpose (a well-known password on
+  an appliance reachable before you've logged in is a race, not a safeguard).
+  A forced password change on first login applies either way.
 
 Every other variable has a working default (see the comments in
 `.env.example` — it documents what each one does and what `services/config.py`
@@ -249,6 +254,94 @@ sentence-transformers — the slow ones) stay cached unless
 `requirements.txt` itself changed, so a code-only backend rebuild takes
 seconds, not minutes.
 
+## 8. Publishing images so teammates don't need to build
+
+The images already contain **no data and no secrets** — see "What never
+gets baked into the images" below; this section is just about getting the
+already-clean image onto Docker Hub so people can `pull` it instead of
+cloning the repo and waiting for a build.
+
+### 8a. One-time: log in and make sure the repos exist
+
+```bash
+docker login -u jaydeepjoshi9403
+```
+
+Docker Hub auto-creates a repo (as **public**, on the free plan) the first
+time you push a tag that doesn't exist yet — nothing to create by hand on
+hub.docker.com first. If you'd rather set visibility explicitly, or you want
+these **private** instead, create `sentinel-qa-backend` and
+`sentinel-qa-frontend` under your account on Docker Hub before the first
+push and pick the visibility there. Private repos need every consumer added
+as a Collaborator (or org Team member) before `pull` works — see
+`DOCKERHUB.md` §2 for the exact steps and for what the failure looks like
+when someone hasn't been granted access yet.
+
+### 8b. Build and push
+
+```bash
+docker compose build backend frontend
+docker compose push backend frontend
+```
+
+This builds using the `image:` tags already set in `docker-compose.yml`
+(`jaydeepjoshi9403/sentinel-qa-backend:latest`,
+`jaydeepjoshi9403/sentinel-qa-frontend:latest`) and pushes both. Re-run
+this any time you want to publish a new version — `latest` moves to
+whatever you just built. To publish a *pinned* version instead of moving
+`latest`:
+
+```bash
+IMAGE_TAG=v1.2.0 docker compose build backend frontend
+IMAGE_TAG=v1.2.0 docker compose push backend frontend
+```
+
+Note the frontend image bakes in `NEXT_PUBLIC_API_URL` at build time (§4).
+The default (`http://localhost:8000`) is exactly right for teammates who
+run the stack on their own machine with the default ports — their own
+browser calls their own `localhost:8000`, not yours. Only override it if
+you're publishing an image meant to point at one shared backend URL.
+
+> **Everything a teammate needs to know as a Docker Hub *consumer*** —
+> condensed `.env` reference, public-vs-private pull steps, feature
+> gotchas, and how to wire a Playwright project's live-run reporter up to a
+> Dockerized backend — is written up in **`DOCKERHUB.md`**, formatted to be
+> pasted directly into the Docker Hub repo's Overview/Description field.
+> This section stays focused on the maintainer side: building, tagging,
+> pushing, and access control.
+
+### 8c. What a teammate does — no clone required
+
+They need exactly two files, not the repo:
+
+```bash
+curl -O https://raw.githubusercontent.com/jaydeep9075/sentinel-qa-analytics-dashboard/main/docker-compose.pull.yml
+curl -O https://raw.githubusercontent.com/jaydeep9075/sentinel-qa-analytics-dashboard/main/.env.example
+cp .env.example .env   # fill in section A/B - see .env.example
+docker compose -f docker-compose.pull.yml pull
+docker compose -f docker-compose.pull.yml up -d
+```
+
+`docker-compose.pull.yml` is a trimmed copy of `docker-compose.yml` with
+every `build:` block removed — `image:` only, so there's nothing there that
+needs source code. `DATA_DIR`/`STATE_DIR`/`INGEST_SOURCE_DIR` (§ env
+reference, section D below) still default to plain folders next to that
+file on **their** machine, and can point at any disk, network share, or
+cloud-mounted volume they choose — nothing from your machine or your data
+travels with the image. Two people running this independently get two
+completely separate, empty datasets and two separate admin accounts unless
+they deliberately point `DATA_DIR`/`STATE_DIR` at the same shared storage.
+
+### 8d. Publishing a version bump later
+
+Same as 8b — build, push, and anyone who already ran the stack picks it up
+with:
+
+```bash
+docker compose -f docker-compose.pull.yml pull
+docker compose -f docker-compose.pull.yml up -d
+```
+
 ## Environment variable reference
 
 Three different things read env vars here, and they behave differently —
@@ -272,7 +365,7 @@ Read by `services/config.py` when the backend starts. Change one, run
 | `AUTH_BACKEND` | `db` | `db` (SQLite `users.db`) or `memory` (wiped on restart) |
 | `AUTH_USER_STORE_URL` | `sqlite:///./users.db` | Override only if not using the bind-mounted SQLite file |
 | `AUTH_AUTO_SEED_USERS` | `false` | If `true`, also uncomment the `auth_seed_users.json` mount in `docker-compose.yml` |
-| `LIVE_INGEST_API_KEY` | *(empty)* | Shared secret for the Playwright reporter. Empty = unauthenticated; set it before exposing the backend beyond localhost. |
+| `LIVE_INGEST_API_KEY` | *(auto-generated)* | Shared secret for the Playwright reporter's `x-api-key`. Left unset, one is generated into `state/live_ingest_api_key` and logged once at startup — use that value as `SENTINEL_API_KEY` in reporting repos. Set it explicitly to pick your own, or to share one value across replicas that don't share a state directory. |
 | `REDIS_URL` | *(empty)* | Only for >1 backend replica (see §6) |
 | `INGEST_MAX_FILE_SIZE_BYTES` | `209715200` (200MB) | Raise if your Allure zips are bigger |
 | `INGEST_MAX_ROWS` | `500000` | Per-ingestion row cap |
@@ -285,7 +378,8 @@ Read by `services/config.py` when the backend starts. Change one, run
 | `AUTO_INGEST_DEFAULT_WORKSPACE` | `default` | Workspace for files at the top level of the drop-box. A file under `<drop-box>/<team>/` goes to `<team>` if that workspace exists. |
 | `INGEST_API_KEYS` | *(empty)* | `key:workspace` pairs for `POST /ingest/upload`. The key fixes the workspace. |
 | `INGEST_UPLOAD_MAX_BYTES` | `524288000` | Cap on a single upload (500MB), enforced while streaming. |
-| `BOOTSTRAP_ADMIN_USERNAME` / `BOOTSTRAP_ADMIN_PASSWORD` | *(empty)* | First admin, created only when the user table is empty. |
+| `BOOTSTRAP_ADMIN_USERNAME` | `admin` | First admin's username, created only when the user table is empty. |
+| `BOOTSTRAP_ADMIN_PASSWORD` | *(auto-generated)* | Left unset, one is generated into `state/bootstrap_admin_password` and logged once at startup — no fixed "admin"/"admin" default. Forced password change on first login either way. |
 | `AUTH_ALLOW_SELF_REGISTRATION` | `true` | Enable `/register`. New accounts are pending until approved. |
 | `AUTH_AUTO_APPROVE_REGISTRATION` | `false` | Skip approval — registrations go straight to active. Trusted networks only. |
 | `AUTH_DEFAULT_ROLE` | `viewer` | Role given on approval when unspecified. |

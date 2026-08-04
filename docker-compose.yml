@@ -28,6 +28,13 @@ services:
     build:
       context: .
       dockerfile: services/Dockerfile
+    # Naming it here (not just letting `build` produce an anonymous tag) is
+    # what makes `docker compose push` work, and what lets a teammate who
+    # has no copy of this repo run `docker compose -f docker-compose.pull.yml
+    # pull` instead. IMAGE_NAMESPACE/IMAGE_TAG default to this maintainer's
+    # Docker Hub account - override both in .env if you fork this and want
+    # to publish under your own.
+    image: ${IMAGE_NAMESPACE:-jaydeepjoshi9403}/sentinel-qa-backend:${IMAGE_TAG:-latest}
     env_file:
       - .env
     environment:
@@ -116,6 +123,8 @@ services:
         # inside the Docker network. For local docker-compose that's the
         # backend's published host port (matches BACKEND_PORT above).
         NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:8000}
+    # See the backend's `image:` comment above - same reasoning.
+    image: ${IMAGE_NAMESPACE:-jaydeepjoshi9403}/sentinel-qa-frontend:${IMAGE_TAG:-latest}
     environment:
       # Two route handlers run server-side inside this container and read
       # files that live at the REPO ROOT when you run from a checkout
@@ -167,6 +176,10 @@ services:
     build:
       context: .
       dockerfile: services/Dockerfile
+    # Same image as `backend` (identical context/dockerfile) - naming it
+    # here too means `docker compose build` doesn't build it twice under a
+    # different anonymous tag.
+    image: ${IMAGE_NAMESPACE:-jaydeepjoshi9403}/sentinel-qa-backend:${IMAGE_TAG:-latest}
     profiles: ["ingest"]
     working_dir: /app/universal_ingester
     entrypoint: ["python", "ingester.py"]
