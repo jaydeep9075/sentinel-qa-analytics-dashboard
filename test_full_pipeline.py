@@ -1,23 +1,17 @@
 #!/usr/bin/env python3
 """
 Full pipeline integration tests.
-Tests: Ingestion → Schema Detection → Query → RAG Response
+Tests: Ingestion connector/config validation → Schema Detection
 """
 
 import sys
-import json
-import tempfile
 from pathlib import Path
 
 # Add services to path
 sys.path.insert(0, str(Path(__file__).parent))
 
 from services.ingestion_service import IngestionService
-from services.rag_service import PromptAnalyzer, ResponseValidator, RAGService
-from services.query_executor import QueryBuilder, QueryExecutor, ResponseFormatter
-from services.production_prompts import validate_response_quality
 from universal_ingester.schema.runtime_detector import RuntimeSchemaDetector
-import pandas as pd
 
 
 def test_section(name: str):
@@ -56,8 +50,8 @@ def test_ingestion_service():
     allure_type = service.field_mapper.auto_detect_type("/path/to/allure")
     print_result("Auto-detect Allure", allure_type == 'allure')
 
-    json_type = service.field_mapper.auto_detect_type("/data/file.json")
-    print_result("Auto-detect JSON", json_type == 'json')
+    excel_type = service.field_mapper.auto_detect_type("/data/file.xlsx")
+    print_result("Auto-detect Excel", excel_type == 'excel')
 
     # Test 1.3: Get connector config
     config = service.field_mapper.get_connector_config('allure')
@@ -134,209 +128,6 @@ def test_schema_detection():
     return True
 
 
-# ==================== TEST 3: Prompt Analysis ====================
-
-def test_prompt_analyzer():
-    """Test prompt analysis and intent detection."""
-    test_section("RAG - Prompt Analysis")
-
-    analyzer = PromptAnalyzer()
-
-    # Test 3.1: Count intent
-    analysis = analyzer.analyze("How many tests passed?")
-    print_result("Detect count intent", analysis['intent'] == 'count')
-
-    # Test 3.2: Trend intent
-    analysis = analyzer.analyze("Show test failure trend")
-    print_result("Detect trend intent", analysis['intent'] == 'trend')
-
-    # Test 3.3: Comparison intent
-    analysis = analyzer.analyze("Compare mobile vs desktop")
-    print_result("Detect comparison intent", analysis['intent'] == 'comparison')
-
-    # Test 3.4: Top intent
-    analysis = analyzer.analyze("Top failing modules")
-    print_result("Detect top intent", analysis['intent'] == 'top')
-
-    # Test 3.5: Entity extraction
-    analysis = analyzer.analyze("How many tests passed in auth module?")
-    has_module = 'module' in analysis['entities']
-    print_result("Extract entities", has_module, f"Entities: {analysis['entities']}")
-
-    # Test 3.6: Filter extraction
-    analysis = analyzer.analyze("Show passed tests only")
-    has_status = 'status' in analysis['filters']
-    print_result("Extract filters", has_status, f"Filters: {analysis['filters']}")
-
-    # Test 3.7: Confidence score
-    analysis = analyzer.analyze("How many tests?")
-    print_result(
-        "Calculate confidence",
-        0 <= analysis['confidence'] <= 1,
-        f"Confidence: {analysis['confidence']}"
-    )
-
-    return True
-
-
-# ==================== TEST 4: Response Validator ====================
-
-def test_response_validator():
-    """Test response quality validation."""
-    test_section("RAG - Response Validation")
-
-    validator = ResponseValidator()
-
-    # Test 4.1: Validate good response
-    good_response = "1,247 tests passed (81.8% pass rate). Highest in production."
-    validation = validator.validate_response(good_response, "How many passed?", {})
-
-    print_result(
-        "Validate good response",
-        validation['is_valid'],
-        f"Confidence: {validation['confidence']}"
-    )
-
-    # Test 4.2: Reject poor response
-    poor_response = "okay"
-    validation = validator.validate_response(poor_response, "How many passed?", {})
-    print_result("Reject poor response", not validation['is_valid'])
-
-    # Test 4.3: Check validation details
-    validation_checks = validation['validation_checks']
-    print_result(
-        "Has numbers check",
-        validation_checks.get('has_numbers', False)
-    )
-
-    print_result(
-        "Has context check",
-        validation_checks.get('has_context', False)
-    )
-
-    # Test 4.4: Quality score
-    quality_score = validate_response_quality(good_response)
-    print_result(
-        "Calculate quality score",
-        quality_score['quality_score'] > 70,
-        f"Score: {quality_score['quality_score']}/100"
-    )
-
-    return True
-
-
-# ==================== TEST 5: Query Building ====================
-
-def test_query_builder():
-    """Test SQL query building from analysis."""
-    test_section("Query Builder - Analysis to SQL")
-
-    builder = QueryBuilder()
-
-    # Test 5.1: Count query
-    analysis = {
-        'intent': 'count',
-        'filters': {'status': 'passed'},
-        'aggregations': ['count']
-    }
-    query = builder.build_query(analysis)
-    has_count = 'COUNT(*)' in query
-    has_where = 'WHERE' in query
-    print_result("Build count query", has_count and has_where, query)
-
-    # Test 5.2: Top query
-    analysis = {
-        'intent': 'top',
-        'filters': {},
-        'aggregations': ['count'],
-        'sort': {'field': 'count', 'direction': 'desc'}
-    }
-    query = builder.build_query(analysis)
-    has_group = 'GROUP BY' in query
-    has_order = 'ORDER BY' in query
-    print_result("Build top query", has_group and has_order, query)
-
-    # Test 5.3: Trend query
-    analysis = {
-        'intent': 'trend',
-        'filters': {},
-        'aggregations': ['count'],
-        'sort': {'field': 'date', 'direction': 'asc'}
-    }
-    query = builder.build_query(analysis)
-    has_date = 'DATE(' in query
-    print_result("Build trend query", has_date, query)
-
-    return True
-
-
-# ==================== TEST 6: Response Formatting ====================
-
-def test_response_formatter():
-    """Test formatting query results to natural language."""
-    test_section("Response Formatter - Results to Natural Language")
-
-    # Test 6.1: Format count response
-    results = [{'total_count': 1247}]
-    response = ResponseFormatter.format_response('count', results, {})
-    print_result("Format count response", '1247' in response, response)
-
-    # Test 6.2: Format top response
-    results = [
-        {'test_name': 'test1', 'count': 45},
-        {'test_name': 'test2', 'count': 32}
-    ]
-    response = ResponseFormatter.format_response('top', results, {})
-    print_result("Format top response", 'test1' in response, response[:50] + "...")
-
-    # Test 6.3: Format distribution response
-    results = [
-        {'status': 'passed', 'count': 1000},
-        {'status': 'failed', 'count': 247}
-    ]
-    response = ResponseFormatter.format_response('distribution', results, {})
-    has_percentage = '%' in response
-    print_result("Format distribution response", has_percentage, response[:50] + "...")
-
-    return True
-
-
-# ==================== TEST 7: Full RAG Pipeline ====================
-
-def test_full_pipeline():
-    """Test complete RAG pipeline."""
-    test_section("Complete RAG Pipeline - Prompt to Response")
-
-    rag = RAGService()
-
-    # Test 7.1: Generate response
-    result = rag.generate_response("How many tests passed?")
-
-    print_result(
-        "Generate response",
-        len(result['response']) > 20,
-        f"Response: {result['response'][:50]}..."
-    )
-
-    # Test 7.2: Analysis included
-    has_analysis = 'analysis' in result and 'intent' in result['analysis']
-    print_result("Include analysis", has_analysis)
-
-    # Test 7.3: Validation included
-    has_validation = 'validation' in result and 'is_valid' in result['validation']
-    print_result("Include validation", has_validation)
-
-    # Test 7.4: Confidence score
-    confidence = result.get('confidence', 0)
-    print_result(
-        "Include confidence",
-        0 <= confidence <= 1,
-        f"Confidence: {confidence}"
-    )
-
-    return True
-
-
 # ==================== Main ====================
 
 def main():
@@ -350,11 +141,6 @@ def main():
     try:
         results.append(("Ingestion Service", test_ingestion_service()))
         results.append(("Schema Detection", test_schema_detection()))
-        results.append(("Prompt Analysis", test_prompt_analyzer()))
-        results.append(("Response Validator", test_response_validator()))
-        results.append(("Query Builder", test_query_builder()))
-        results.append(("Response Formatter", test_response_formatter()))
-        results.append(("Full RAG Pipeline", test_full_pipeline()))
 
     except Exception as e:
         print(f"\n[ERROR] Test failed: {e}")

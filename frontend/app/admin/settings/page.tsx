@@ -1,6 +1,6 @@
 "use client";
 import { useCallback, useEffect, useState } from "react";
-import { Lock, RefreshCw, Save, Wand2 } from "lucide-react";
+import { AlertTriangle, KeyRound, RefreshCw, Save, Wand2 } from "lucide-react";
 import PageTransition from "@/components/PageTransition";
 import Skeleton from "@/components/Skeleton";
 
@@ -13,22 +13,39 @@ function authHeaders(): Record<string, string> {
 
 type LLMSettings = {
   provider: string;
-  provider_locked: boolean;
   provider_source: string;
   model: string;
-  model_locked: boolean;
   model_source: string;
   api_key_set: boolean;
-  api_key_locked: boolean;
   api_key_source: string;
   api_key_masked: string;
   api_base: string;
-  api_base_locked: boolean;
   api_base_source: string;
   keyless: boolean;
 };
 
 const PROVIDERS = ["gemini", "openai", "anthropic", "azure", "mistral", "groq", "cohere", "deepseek", "openrouter", "together_ai", "bedrock", "vertex_ai", "ollama"];
+
+type SecretKeyInfo = {
+  source: string;
+  masked: string;
+};
+
+type EmbeddingSettings = {
+  model: string;
+  source: string;
+};
+
+// All free, local (sentence-transformers) models - no API cost, work no
+// matter which chat LLM provider is configured (including Anthropic, which
+// has no embeddings API of its own).
+const EMBEDDING_MODELS = [
+  "BAAI/bge-small-en-v1.5",        // default: best quality/speed balance
+  "all-MiniLM-L6-v2",              // lightest/fastest, lower quality
+  "BAAI/bge-base-en-v1.5",         // higher quality, slower, larger
+  "all-mpnet-base-v2",
+  "paraphrase-multilingual-MiniLM-L12-v2", // non-English content
+];
 
 export default function AdminSettingsPage() {
   const [settings, setSettings] = useState<LLMSettings | null>(null);
@@ -43,6 +60,104 @@ export default function AdminSettingsPage() {
   const [model, setModel] = useState("");
   const [apiKey, setApiKey] = useState("");
   const [apiBase, setApiBase] = useState("");
+
+  const [secretKeyInfo, setSecretKeyInfo] = useState<SecretKeyInfo | null>(null);
+  const [secretKeyValue, setSecretKeyValue] = useState("");
+  const [confirmingRotate, setConfirmingRotate] = useState<"custom" | "generate" | null>(null);
+  const [rotating, setRotating] = useState(false);
+  const [secretKeyError, setSecretKeyError] = useState("");
+  const [secretKeyNotice, setSecretKeyNotice] = useState("");
+
+  const [embeddingSettings, setEmbeddingSettings] = useState<EmbeddingSettings | null>(null);
+  const [embeddingModel, setEmbeddingModel] = useState("");
+  const [embeddingSaving, setEmbeddingSaving] = useState(false);
+  const [embeddingError, setEmbeddingError] = useState("");
+  const [embeddingNotice, setEmbeddingNotice] = useState("");
+
+  const loadEmbedding = useCallback(async () => {
+    try {
+      const res = await fetch(`${API}/admin/settings/embedding`, { headers: authHeaders() });
+      if (!res.ok) throw new Error("Failed to load");
+      const data: EmbeddingSettings = await res.json();
+      setEmbeddingSettings(data);
+      setEmbeddingModel(data.model);
+    } catch {
+      setEmbeddingError("Could not load embedding model settings.");
+    }
+  }, []);
+
+  useEffect(() => {
+    loadEmbedding();
+  }, [loadEmbedding]);
+
+  const saveEmbedding = async () => {
+    setEmbeddingSaving(true);
+    setEmbeddingError("");
+    setEmbeddingNotice("");
+    try {
+      const res = await fetch(`${API}/admin/settings/embedding`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json", ...authHeaders() },
+        body: JSON.stringify({ model: embeddingModel }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.detail || "Failed to save");
+      setEmbeddingNotice(
+        "Embedding model saved. Takes effect immediately for new ingestions and searches. " +
+        "Builds already ingested under the previous model keep their old embeddings - re-ingest to switch them over."
+      );
+      await loadEmbedding();
+    } catch (err: unknown) {
+      setEmbeddingError(err instanceof Error ? err.message : "Failed to save embedding model.");
+    } finally {
+      setEmbeddingSaving(false);
+    }
+  };
+
+  const loadSecretKey = useCallback(async () => {
+    try {
+      const res = await fetch(`${API}/admin/settings/secret-key`, { headers: authHeaders() });
+      if (!res.ok) throw new Error("Failed to load");
+      setSecretKeyInfo(await res.json());
+    } catch {
+      setSecretKeyError("Could not load signing key info.");
+    }
+  }, []);
+
+  useEffect(() => {
+    loadSecretKey();
+  }, [loadSecretKey]);
+
+  const rotateSecretKey = async (mode: "custom" | "generate") => {
+    setRotating(true);
+    setSecretKeyError("");
+    setSecretKeyNotice("");
+    try {
+      const res = await fetch(`${API}/admin/settings/secret-key`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json", ...authHeaders() },
+        body: JSON.stringify(
+          mode === "generate"
+            ? { generate: true, confirm: true }
+            : { value: secretKeyValue, confirm: true }
+        ),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.detail || "Failed to rotate signing key");
+      setSecretKeyInfo(data);
+      setSecretKeyValue("");
+      setConfirmingRotate(null);
+      setSecretKeyNotice("Signing key rotated. Every session, including yours, is now signed out - you'll be redirected to log in.");
+      setTimeout(() => {
+        localStorage.removeItem("token");
+        window.location.href = "/login";
+      }, 2500);
+    } catch (err: unknown) {
+      setSecretKeyError(err instanceof Error ? err.message : "Failed to rotate signing key.");
+    } finally {
+      setRotating(false);
+    }
+  };
 
   const load = useCallback(async () => {
     setError("");
@@ -75,10 +190,10 @@ export default function AdminSettingsPage() {
         method: "PUT",
         headers: { "Content-Type": "application/json", ...authHeaders() },
         body: JSON.stringify({
-          provider: settings?.provider_locked ? undefined : provider,
-          model: settings?.model_locked ? undefined : model,
-          api_base: settings?.api_base_locked ? undefined : apiBase,
-          api_key: settings?.api_key_locked || !apiKey ? undefined : apiKey,
+          provider,
+          model,
+          api_base: apiBase,
+          api_key: apiKey || undefined,
         }),
       });
       const data = await res.json().catch(() => ({}));
@@ -101,10 +216,10 @@ export default function AdminSettingsPage() {
         method: "POST",
         headers: { "Content-Type": "application/json", ...authHeaders() },
         body: JSON.stringify({
-          provider: settings?.provider_locked ? undefined : provider,
-          model: settings?.model_locked ? undefined : model,
-          api_base: settings?.api_base_locked ? undefined : apiBase,
-          api_key: settings?.api_key_locked ? undefined : apiKey || undefined,
+          provider,
+          model,
+          api_base: apiBase,
+          api_key: apiKey || undefined,
         }),
       });
       const data = await res.json().catch(() => ({}));
@@ -149,7 +264,7 @@ export default function AdminSettingsPage() {
         <div>
           <h2 className="text-xl font-bold">LLM settings</h2>
           <p className="text-sm text-slate-500 dark:text-white/40">
-            Provider, model and credential used for chat and chart generation. A field locked by <code>.env</code> can&apos;t be changed here.
+            Provider, model and credential used for chat and chart generation. Saving here always takes effect immediately, even if <code>.env</code> also sets a value.
           </p>
         </div>
         <button
@@ -164,45 +279,42 @@ export default function AdminSettingsPage() {
       {notice && <div className="text-emerald-500 text-sm bg-emerald-500/[0.08] p-3 rounded-xl border border-emerald-500/20">{notice}</div>}
 
       <div className="rounded-xl border border-slate-200 dark:border-white/[0.08] p-5 space-y-4">
-        <Field label="Provider" locked={settings.provider_locked} source={settings.provider_source}>
+        <Field label="Provider" source={settings.provider_source}>
           <select
             className={inputCls}
             value={provider}
-            disabled={settings.provider_locked}
             onChange={(e) => setProvider(e.target.value)}
           >
+            <option value="">— select a provider —</option>
             {PROVIDERS.map((p) => (
               <option key={p} value={p}>{p}</option>
             ))}
           </select>
         </Field>
 
-        <Field label="Model" locked={settings.model_locked} source={settings.model_source}>
+        <Field label="Model" source={settings.model_source}>
           <input
             className={inputCls}
             value={model}
-            disabled={settings.model_locked}
             onChange={(e) => setModel(e.target.value)}
             placeholder={`${provider}/model-name`}
           />
         </Field>
 
-        <Field label="API key" locked={settings.api_key_locked} source={settings.api_key_source}>
+        <Field label="API key" source={settings.api_key_source}>
           <input
             className={inputCls}
             type="password"
             value={apiKey}
-            disabled={settings.api_key_locked}
             onChange={(e) => setApiKey(e.target.value)}
             placeholder={settings.api_key_set ? settings.api_key_masked : settings.keyless ? "not required for this provider" : "not set"}
           />
         </Field>
 
-        <Field label="API base URL (optional)" locked={settings.api_base_locked} source={settings.api_base_source}>
+        <Field label="API base URL (optional)" source={settings.api_base_source}>
           <input
             className={inputCls}
             value={apiBase}
-            disabled={settings.api_base_locked}
             onChange={(e) => setApiBase(e.target.value)}
             placeholder="https://... (gateway / self-hosted endpoint)"
           />
@@ -241,6 +353,122 @@ export default function AdminSettingsPage() {
           </div>
         )}
       </div>
+
+      <div>
+        <h2 className="text-xl font-bold">Embedding model</h2>
+        <p className="text-sm text-slate-500 dark:text-white/40">
+          Local model used to embed ingested documents for semantic/vector search in chat. Kept
+          separate from the LLM above - stays local so ingesting doesn&apos;t cost API calls.
+        </p>
+      </div>
+
+      {embeddingError && <div className="text-red-400 text-sm bg-red-500/[0.08] p-3 rounded-xl border border-red-500/20">{embeddingError}</div>}
+      {embeddingNotice && <div className="text-emerald-500 text-sm bg-emerald-500/[0.08] p-3 rounded-xl border border-emerald-500/20">{embeddingNotice}</div>}
+
+      {embeddingSettings && (
+        <div className="rounded-xl border border-slate-200 dark:border-white/[0.08] p-5 space-y-4">
+          <Field label="Model" source={embeddingSettings.source}>
+            <input
+              className={inputCls}
+              list="embedding-model-options"
+              value={embeddingModel}
+              onChange={(e) => setEmbeddingModel(e.target.value)}
+              placeholder="all-MiniLM-L6-v2"
+            />
+            <datalist id="embedding-model-options">
+              {EMBEDDING_MODELS.map((m) => (
+                <option key={m} value={m} />
+              ))}
+            </datalist>
+          </Field>
+
+          <div className="flex flex-wrap gap-3 pt-2">
+            <button
+              onClick={saveEmbedding}
+              disabled={embeddingSaving || !embeddingModel.trim()}
+              className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-gradient-to-r from-cyan-500 to-blue-600 text-white text-sm font-semibold disabled:opacity-60"
+            >
+              <Save className="w-4 h-4" /> {embeddingSaving ? "Saving…" : "Save"}
+            </button>
+          </div>
+        </div>
+      )}
+
+      <div>
+        <h2 className="text-xl font-bold">JWT signing key</h2>
+        <p className="text-sm text-slate-500 dark:text-white/40">
+          Signs every login token. Rotating it invalidates every currently logged-in session immediately, including your own.
+        </p>
+      </div>
+
+      {secretKeyError && <div className="text-red-400 text-sm bg-red-500/[0.08] p-3 rounded-xl border border-red-500/20">{secretKeyError}</div>}
+      {secretKeyNotice && <div className="text-emerald-500 text-sm bg-emerald-500/[0.08] p-3 rounded-xl border border-emerald-500/20">{secretKeyNotice}</div>}
+
+      <div className="rounded-xl border border-slate-200 dark:border-white/[0.08] p-5 space-y-4">
+        {secretKeyInfo && (
+          <Field label="Current key" source={secretKeyInfo.source}>
+            <div className={`${inputCls} flex items-center gap-2 text-slate-500 dark:text-white/40`}>
+              <KeyRound className="w-4 h-4 shrink-0" />
+              {secretKeyInfo.masked}
+            </div>
+          </Field>
+        )}
+
+        <Field label="Set a new key (32+ characters)" source="—">
+          <input
+            className={inputCls}
+            type="password"
+            value={secretKeyValue}
+            onChange={(e) => setSecretKeyValue(e.target.value)}
+            placeholder="paste your own random 32+ character value"
+          />
+        </Field>
+
+        {confirmingRotate ? (
+          <div className="rounded-xl border border-amber-500/30 bg-amber-500/[0.08] p-4 space-y-3">
+            <div className="flex items-start gap-2 text-sm text-amber-600 dark:text-amber-400">
+              <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
+              <span>
+                This signs out every logged-in user right now, including you. You&apos;ll be sent back to the login page.
+                Are you sure?
+              </span>
+            </div>
+            <div className="flex gap-3">
+              <button
+                onClick={() => rotateSecretKey(confirmingRotate)}
+                disabled={rotating}
+                className="px-4 py-2 rounded-xl bg-red-600 text-white text-sm font-semibold disabled:opacity-60"
+              >
+                {rotating ? "Rotating…" : "Yes, rotate and sign everyone out"}
+              </button>
+              <button
+                onClick={() => setConfirmingRotate(null)}
+                disabled={rotating}
+                className="px-4 py-2 rounded-xl border border-slate-300 dark:border-white/10 text-sm"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        ) : (
+          <div className="flex flex-wrap gap-3 pt-2">
+            <button
+              onClick={() => setConfirmingRotate("custom")}
+              disabled={secretKeyValue.trim().length < 32}
+              title={secretKeyValue.trim().length < 32 ? "Enter at least 32 characters above first" : ""}
+              className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-gradient-to-r from-cyan-500 to-blue-600 text-white text-sm font-semibold disabled:opacity-40 disabled:cursor-not-allowed"
+            >
+              <Save className="w-4 h-4" /> Set this key
+            </button>
+            <button
+              onClick={() => setConfirmingRotate("generate")}
+              className="flex items-center gap-2 px-4 py-2.5 rounded-xl border border-slate-300 dark:border-white/10 text-sm font-semibold hover:border-cyan-500/40"
+            >
+              <Wand2 className="w-4 h-4" /> Generate one for me instead
+            </button>
+          </div>
+        )}
+      </div>
     </div>
     </PageTransition>
   );
@@ -248,12 +476,10 @@ export default function AdminSettingsPage() {
 
 function Field({
   label,
-  locked,
   source,
   children,
 }: {
   label: string;
-  locked: boolean;
   source: string;
   children: React.ReactNode;
 }) {
@@ -261,14 +487,18 @@ function Field({
     <div>
       <div className="flex items-center gap-2 mb-1.5">
         <label className="text-xs font-semibold uppercase tracking-widest text-slate-500 dark:text-white/40">{label}</label>
-        {locked && (
-          <span
-            title={`Set via ${source} — edit .env to change this`}
-            className="flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded-full bg-slate-200 dark:bg-white/10 text-slate-500 dark:text-white/40"
-          >
-            <Lock className="w-2.5 h-2.5" /> locked by env
-          </span>
-        )}
+        <span
+          title={
+            source === "env"
+              ? "Currently set from .env - saving here will override it"
+              : source === "database"
+              ? "Set from this Settings page"
+              : "Using the built-in default"
+          }
+          className="text-[10px] px-1.5 py-0.5 rounded-full bg-slate-200 dark:bg-white/10 text-slate-500 dark:text-white/40"
+        >
+          {source}
+        </span>
       </div>
       {children}
     </div>

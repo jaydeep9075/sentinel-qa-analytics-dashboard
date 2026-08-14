@@ -1,4 +1,4 @@
-import logging
+﻿import logging
 import os
 import uuid
 import json
@@ -7,16 +7,19 @@ import shutil
 import tempfile
 import time
 from pathlib import Path
-from fastapi import FastAPI, HTTPException, Header, Depends, Query, Request, BackgroundTasks, File, UploadFile
+from fastapi import FastAPI, HTTPException, Header, Depends, Query, Request, BackgroundTasks, File, UploadFile, Form
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from fastapi.concurrency import run_in_threadpool
 from contextlib import asynccontextmanager
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
+import asyncio
 import uvicorn
-from typing import Optional
+from typing import Optional, Dict, Any
 from datetime import datetime, timezone
-from . import config, state, data_loader, handlers, memory, llm_client, ingestion_jobs
-from . import token_usage_store, auto_ingest, build_owner, app_settings, audit_log
+from urllib.parse import urlparse
+from . import config, state, data_loader, handlers, memory, llm_client, ingestion_jobs, schema_context
+from . import token_usage_store, auto_ingest, build_owner, app_settings, audit_log, ingestion_service
 from jose import JWTError, jwt
 from . import auth as auth_module
 from .prompts import SUGGESTION_PROMPT
@@ -49,28 +52,26 @@ _STATUS_CACHE_TTL_SECONDS = 10.0
 _QUALITY_CACHE_TTL_SECONDS = 20.0
 _SUGGESTIONS_CACHE_TTL_SECONDS = 120.0
 _INGESTIONS_CACHE_TTL_SECONDS = 15.0
-_TOKEN_USAGE_CACHE_TTL_SECONDS = 8.0
 _status_cache: dict[str, tuple[float, dict]] = {}
 _quality_cache: dict[str, tuple[float, dict]] = {}
 _suggestions_cache: dict[str, tuple[float, dict]] = {}
 _ingestions_cache: dict[str, tuple[float, dict]] = {}
-_token_usage_cache: dict[str, tuple[float, dict]] = {}
 # The ingestions list is cached per viewer scope ("admin" or "ws:<workspace>")
-# rather than under one global key — see list_ingestions().
+# rather than under one global key â€” see list_ingestions().
 _PERF_PATH_PREFIXES = (
     "/dashboard/overview",
     "/data/status",
     "/data/quality",
     "/ingestions",
     "/chart/history/",
-    "/usage/tokens",
 )
 
 def _get_test_results_table() -> str:
     """Get the actual table name for test results.
     Supports both old (flattened_tests) and new (structured_test_results) names."""
     try:
-        tables = state.duck_conn.execute("SELECT table_name FROM information_schema.tables WHERE table_schema='memory'").df()
+        with state._duck_query_lock:
+            tables = state.duck_conn.execute("SELECT table_name FROM information_schema.tables WHERE table_schema='memory'").df()
         table_names = tables['table_name'].tolist() if not tables.empty else []
 
         # Try new name first, fallback to old name
@@ -97,6 +98,26 @@ class IngestRequest(BaseModel):
     source_path: str
     source_type: Optional[str] = None
     workspace_id: Optional[str] = None
+
+
+class ConnectorTestRequest(BaseModel):
+    connector_type: str
+    config: Dict[str, Any] = Field(default_factory=dict)
+
+
+class BuildIngestRequest(BaseModel):
+    connector_type: str
+    config: Dict[str, Any] = Field(default_factory=dict)
+    display_name: Optional[str] = None
+    workspace_id: Optional[str] = None
+
+
+_WIZARD_CONNECTOR_TYPES = {"allure", "csv", "excel", "database", "api"}
+_UPLOAD_EXTENSIONS = {
+    "allure": (".zip",),
+    "csv": (".csv", ".tsv"),
+    "excel": (".xlsx", ".xls"),
+}
 
 
 class RegisterRequest(BaseModel):
@@ -172,6 +193,19 @@ class AdminLLMTestRequest(BaseModel):
     api_base: Optional[str] = None
 
 
+class AdminEmbeddingSettingsRequest(BaseModel):
+    model: str
+
+
+class AdminSecretKeyRequest(BaseModel):
+    # Both optional, mutually exclusive in practice: set `value` to pick your
+    # own (must be 32+ chars), or `generate=true` to have the server mint a
+    # random one. Either way this signs everyone out - see the confirm flag.
+    value: Optional[str] = None
+    generate: bool = False
+    confirm: bool = False
+
+
 class FeedbackRequest(BaseModel):
     target_kind: str
     feedback_type: str
@@ -241,7 +275,7 @@ _NUMERIC_TYPE_HINTS = ("INT", "DOUBLE", "FLOAT", "DECIMAL", "REAL", "NUMERIC")
 
 def _schema_driven_fallback_suggestions(schema_profile: Optional[dict]) -> Optional[dict]:
     """Generate simple suggestions directly from the real ingested schema,
-    with no LLM call — the no-LLM safety net for non-QA datasets (CSV/PDF/
+    with no LLM call â€” the no-LLM safety net for non-QA datasets (CSV/PDF/
     JSON of any domain) so suggestions reflect the ACTUAL ingested data
     instead of hardcoded QA/test phrasing that wouldn't apply. Returns None
     if no usable schema profile is available."""
@@ -605,16 +639,17 @@ def _get_status_payload(normalized_ingestion_id: str) -> dict:
         return _cache_set(_status_cache, normalized_ingestion_id, payload)
 
     test_table = _get_test_results_table()
-    row = state.duck_conn.execute(
-        f"""
-        SELECT
-          COUNT(*) AS total_rows,
-          SUM(CASE WHEN status='passed' THEN 1 ELSE 0 END) AS passed,
-          SUM(CASE WHEN status='failed' THEN 1 ELSE 0 END) AS failed,
-          SUM(CASE WHEN status='skipped' THEN 1 ELSE 0 END) AS skipped
-        FROM {test_table}
-        """
-    ).fetchone()
+    with state._duck_query_lock:
+        row = state.duck_conn.execute(
+            f"""
+            SELECT
+              COUNT(*) AS total_rows,
+              SUM(CASE WHEN status='passed' THEN 1 ELSE 0 END) AS passed,
+              SUM(CASE WHEN status='failed' THEN 1 ELSE 0 END) AS failed,
+              SUM(CASE WHEN status='skipped' THEN 1 ELSE 0 END) AS skipped
+            FROM {test_table}
+            """
+        ).fetchone()
     total_rows = int(row[0] or 0)
     passed = int(row[1] or 0)
     failed = int(row[2] or 0)
@@ -661,15 +696,6 @@ def _get_quality_payload(normalized_ingestion_id: str) -> dict:
     )
 
 
-def _get_cached_token_usage(user_id: Optional[str], workspace_id: Optional[str]) -> dict:
-    key = f"{workspace_id}:{user_id}"
-    cached = _cache_get(_token_usage_cache, key, _TOKEN_USAGE_CACHE_TTL_SECONDS)
-    if cached is not None:
-        return cached
-    payload = token_usage_store.get_usage(user_id=user_id, workspace_id=workspace_id)
-    return _cache_set(_token_usage_cache, key, payload)
-
-
 def _get_cached_quality_payload(normalized_ingestion_id: str) -> dict:
     cached = _cache_get(_quality_cache, normalized_ingestion_id, _QUALITY_CACHE_TTL_SECONDS)
     if cached is not None:
@@ -680,6 +706,45 @@ def _get_cached_quality_payload(normalized_ingestion_id: str) -> dict:
         "checks": [],
         "guidance": ["Quality panel is warming up. Live metrics will appear shortly."],
     }
+
+def _find_most_recent_ingestion_id() -> Optional[str]:
+    """Newest ingestion folder under DATA_BASE_PATH, by mtime.
+
+    Used only to decide what to pre-warm at startup, never for auth/
+    visibility, so it doesn't need to account for workspace ownership.
+    """
+    try:
+        candidates = [
+            p for p in config.DATA_BASE_PATH.iterdir()
+            if p.is_dir() and (p / "lancedb").exists()
+        ]
+    except FileNotFoundError:
+        return None
+    if not candidates:
+        return None
+    return max(candidates, key=lambda p: p.stat().st_mtime).name
+
+
+async def _prewarm_default_ingestion() -> None:
+    """Load the most recently created ingestion into the warm pool right
+    after boot, off the event loop, so the first real dashboard request
+    after a restart doesn't pay for the LanceDB -> pandas -> DuckDB
+    rebuild that ensure_ingestion_loaded does on a cold miss. Runs as a
+    background task (not awaited by lifespan) so it never delays the app
+    from accepting connections/health checks.
+    """
+    try:
+        ingestion_id = await run_in_threadpool(_find_most_recent_ingestion_id)
+        if not ingestion_id:
+            return
+        ok = await run_in_threadpool(data_loader.ensure_ingestion_loaded, ingestion_id)
+        if ok:
+            logger.info("Pre-warmed ingestion '%s' at startup", ingestion_id)
+        else:
+            logger.warning("Pre-warm failed for ingestion '%s'", ingestion_id)
+    except Exception:
+        logger.warning("Pre-warm of default ingestion failed", exc_info=True)
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -712,6 +777,7 @@ async def lifespan(app: FastAPI):
         logger.warning("Could not check LLM configuration at startup", exc_info=True)
 
     await auto_ingest.start()
+    asyncio.create_task(_prewarm_default_ingestion())
     yield
     logger.info("Shutting down...")
     await auto_ingest.stop()
@@ -747,7 +813,7 @@ def _user_from_request(request: Request) -> Optional[dict]:
     if scheme.lower() != "bearer" or not token.strip():
         return None
     try:
-        payload = jwt.decode(token.strip(), auth_module.SECRET_KEY, algorithms=[auth_module.ALGORITHM])
+        payload = jwt.decode(token.strip(), app_settings.get_secret_key(), algorithms=[auth_module.ALGORITHM])
     except JWTError:
         return None
     if not payload.get("sub"):
@@ -897,7 +963,7 @@ async def health():
 @app.post("/auth/login")
 async def login(username: str, password: str, workspace_id: Optional[str] = None):
     """Sign in. `workspace_id` is accepted for backwards compatibility and
-    ignored — the workspace comes from the account, not from the client."""
+    ignored â€” the workspace comes from the account, not from the client."""
     uname_for_audit = str(username or "").strip().lower()
     try:
         user = authenticate_user(username, password)
@@ -911,6 +977,22 @@ async def login(username: str, password: str, workspace_id: Optional[str] = None
     if not user:
         audit_log.record("login_failed", uname_for_audit, success=False)
         raise HTTPException(status_code=401, detail="Invalid credentials")
+    default_password_prompt = (
+        auth_module.is_default_password_value(password)
+        and auth_module.user_has_default_password(user["username"])
+    )
+    if default_password_prompt and user.get("must_change_password"):
+        # Default-password logins are now a soft prompt (Change now / Remind later),
+        # not a hard lock. Keep the hard lock for non-default temporary passwords.
+        try:
+            auth_module.get_user_store().set_must_change_password(user["username"], False)
+            user["must_change_password"] = False
+        except Exception:
+            logger.warning(
+                "Could not clear must_change_password for default-password user '%s'",
+                user["username"],
+                exc_info=True,
+            )
 
     audit_log.record("login", user["username"], workspace_id=user.get("workspace_id", ""))
     ws = str(user.get("workspace_id") or config.DEFAULT_WORKSPACE_ID).strip().lower()
@@ -929,7 +1011,13 @@ async def login(username: str, password: str, workspace_id: Optional[str] = None
         # to check it - see credential_change_middleware, which re-reads it
         # from the store on each protected request instead of relying on
         # this snapshot.
-        "must_change_password": bool(user.get("must_change_password")),
+        "must_change_password": bool(user.get("must_change_password")),        "default_password_prompt": bool(default_password_prompt),
+        "default_password_message": (
+            "You are signed in with the default password. "
+            "Change it now to secure your account."
+            if default_password_prompt
+            else ""
+        ),
     }
 
 
@@ -1243,7 +1331,7 @@ def _guard_last_admin(store, record: dict, target: str, new_role, new_status) ->
     """Block an edit that would remove the final active admin.
 
     Without this, demoting or disabling yourself when you're the only admin
-    leaves the deployment with no one able to reach /admin/users — recoverable
+    leaves the deployment with no one able to reach /admin/users â€” recoverable
     only by exec-ing into the container. Cheap to prevent, tedious to undo.
     """
     was_admin = str(record.get("role") or "").lower() in {"admin", "cto"} and record.get("status") == "active"
@@ -1309,6 +1397,289 @@ async def ingest_from_config2(
     }
 
 
+@app.get("/ingest/connectors")
+async def ingest_connectors(current_user: dict = Depends(require_permission(PERM_DATA_INGEST))):
+    """Declarative schema (id/name/fields/formats) for the Add Build wizard's
+    connector picker + dynamic config form. Every field returned here is
+    genuinely honored by the corresponding connector - see
+    services/ingestion_service.py for the source of truth."""
+    return ingestion_service.IngestionService().get_connector_options()
+
+
+@app.post("/ingest/upload-file")
+async def ingest_upload_file(
+    connector_type: str = Form(...),
+    file: UploadFile = File(...),
+    current_user: dict = Depends(require_permission(PERM_DATA_INGEST)),
+):
+    """Stage a file (Allure .zip, CSV, Excel) uploaded from the wizard so a
+    subsequent POST /ingest/build can reference it by path. Staged under a
+    private per-upload directory rather than the auto-ingest drop-box
+    (config.AUTO_INGEST_DIR) so the watcher never picks it up and
+    double-ingests it - this endpoint's caller triggers ingestion explicitly.
+    """
+    ctype = str(connector_type or "").strip().lower()
+    allowed_ext = _UPLOAD_EXTENSIONS.get(ctype)
+    if not allowed_ext:
+        raise HTTPException(
+            status_code=400,
+            detail=f"File upload is not supported for connector type '{connector_type}'",
+        )
+
+    filename = Path(str(file.filename or "")).name
+    if not filename or filename.startswith("."):
+        raise HTTPException(status_code=400, detail="A named file is required")
+    if any(ch in filename for ch in ("/", "\\")) or filename in {".", ".."}:
+        raise HTTPException(status_code=400, detail="Invalid filename")
+    if not filename.lower().endswith(allowed_ext):
+        raise HTTPException(
+            status_code=400,
+            detail=f"File must have one of these extensions: {', '.join(allowed_ext)}",
+        )
+
+    target_dir = config.DATA_BASE_PATH / "_uploads" / uuid.uuid4().hex
+    try:
+        target_dir.mkdir(parents=True, exist_ok=True)
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Could not stage upload: {exc}") from exc
+
+    final_path = target_dir / filename
+    staging_path = target_dir / f"{filename}.part"
+    written = 0
+    try:
+        with open(staging_path, "wb") as out:
+            while True:
+                chunk = await file.read(1024 * 1024)
+                if not chunk:
+                    break
+                written += len(chunk)
+                if written > config.INGEST_UPLOAD_MAX_BYTES:
+                    raise HTTPException(
+                        status_code=413,
+                        detail=f"Upload exceeds the "
+                               f"{config.INGEST_UPLOAD_MAX_BYTES // (1024 * 1024)}MB limit",
+                    )
+                out.write(chunk)
+        if written == 0:
+            raise HTTPException(status_code=400, detail="Uploaded file is empty")
+        os.replace(staging_path, final_path)
+    except HTTPException:
+        shutil.rmtree(target_dir, ignore_errors=True)
+        raise
+    except Exception as exc:
+        shutil.rmtree(target_dir, ignore_errors=True)
+        logger.exception("Upload failed for %s", filename)
+        raise HTTPException(status_code=500, detail=f"Upload failed: {exc}") from exc
+
+    return {"success": True, "staged_path": str(final_path), "filename": filename, "bytes": written}
+
+
+def _redact_db_summary(connection_string: str) -> str:
+    """Host/db only, never username or password - safe to log/audit."""
+    try:
+        parsed = urlparse(connection_string)
+        host = parsed.hostname or ""
+        port = f":{parsed.port}" if parsed.port else ""
+        db = (parsed.path or "").lstrip("/")
+        return f"{parsed.scheme}://{host}{port}/{db}".rstrip("/")
+    except Exception:
+        return "(unparseable connection string)"
+
+
+@app.post("/ingest/test-connection")
+async def ingest_test_connection(
+    request: ConnectorTestRequest,
+    current_user: dict = Depends(require_permission(PERM_DATA_INGEST)),
+):
+    """A quick connectivity probe for Database/API connectors, run before
+    committing to a full background ingestion. Never persists the tested
+    config - it exists only for the duration of this request."""
+    connector_type = str(request.connector_type or "").strip().lower()
+    cfg = request.config or {}
+
+    if connector_type == "database":
+        def _run():
+            from universal_ingester.connectors.db_connector import DBConnector
+            raw_tables = cfg.get("tables")
+            tables = None
+            if raw_tables:
+                if isinstance(raw_tables, list):
+                    tables = [str(t).strip() for t in raw_tables if str(t).strip()]
+                else:
+                    tables = [t.strip() for t in str(raw_tables).split(",") if t.strip()]
+            connector = DBConnector(
+                connection_string=str(cfg.get("connection_string") or ""),
+                tables=tables,
+                connect_args=cfg.get("connect_args") or {},
+            )
+            try:
+                return connector.test_connection()
+            finally:
+                connector.close()
+
+        try:
+            result = await run_in_threadpool(_run)
+        except Exception as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return {"success": True, **result}
+
+    if connector_type == "api":
+        def _run():
+            from universal_ingester.connectors.api_connector import APIConnector
+            headers = cfg.get("headers")
+            if isinstance(headers, str):
+                headers = json.loads(headers) if headers.strip() else {}
+            connector = APIConnector(
+                url=str(cfg.get("url") or ""),
+                method=str(cfg.get("method") or "GET").upper(),
+                headers=headers,
+            )
+            return connector.test_connection()
+
+        try:
+            result = await run_in_threadpool(_run)
+        except Exception as exc:
+            raise HTTPException(status_code=400, detail=f"API test failed: {exc}") from exc
+        return {"success": True, **result}
+
+    raise HTTPException(
+        status_code=400,
+        detail="Test connection is only supported for 'database' and 'api' connectors",
+    )
+
+
+@app.post("/ingest/build")
+async def ingest_build(
+    request: BuildIngestRequest,
+    background_tasks: BackgroundTasks,
+    current_user: dict = Depends(require_permission(PERM_DATA_INGEST)),
+):
+    """Connector-driven build creation for the Add Build wizard - the
+    successor to /ingest/config2 for anything beyond a bare filesystem path
+    (Database/API/CSV/Excel with real per-connector config). /ingest/config2
+    is left untouched for backward compatibility."""
+    connector_type = str(request.connector_type or "").strip().lower()
+    if connector_type not in _WIZARD_CONNECTOR_TYPES:
+        raise HTTPException(status_code=400, detail=f"Unknown connector type: {request.connector_type}")
+
+    cfg = dict(request.config or {})
+    is_valid, message = ingestion_service.IngestionValidator.validate(connector_type, cfg)
+    if not is_valid:
+        raise HTTPException(status_code=400, detail=message)
+
+    build_id = f"ingestion_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}"
+    workspace_id = _normalize_workspace(request.workspace_id, current_user)
+    display_name = str(request.display_name or "").strip()[:200]
+    source_path_for_guard = ""  # only meaningful for file-based connectors' size pre-check
+
+    cleanup_dir: Optional[str] = None
+    if connector_type in ("allure", "csv", "excel"):
+        path = str(cfg.get("path") or "").strip()
+        source_path_for_guard = path
+        # A path staged by POST /ingest/upload-file lives under a private
+        # per-upload folder - remove that folder once ingestion finishes
+        # (success or failure) so wizard uploads don't leak disk forever.
+        try:
+            uploads_root = (config.DATA_BASE_PATH / "_uploads").resolve()
+            resolved = Path(path).resolve()
+            if uploads_root in resolved.parents:
+                cleanup_dir = str(resolved.parent)
+        except Exception:
+            pass
+        engine_type = "allure" if connector_type == "allure" else "file"
+        params: Dict[str, Any] = {"path": path}
+        if connector_type == "csv":
+            if cfg.get("delimiter"):
+                params["delimiter"] = cfg["delimiter"]
+            if cfg.get("has_header") is not None:
+                params["has_header"] = bool(cfg["has_header"])
+            if cfg.get("encoding"):
+                params["encoding"] = cfg["encoding"]
+        if connector_type == "excel" and cfg.get("sheet_name"):
+            params["sheet_name"] = cfg["sheet_name"]
+        source_summary = Path(path).name or path
+
+    elif connector_type == "database":
+        engine_type = "db"
+        conn_str = str(cfg.get("connection_string") or "")
+        raw_tables = cfg.get("tables")
+        tables = None
+        if raw_tables:
+            if isinstance(raw_tables, list):
+                tables = [str(t).strip() for t in raw_tables if str(t).strip()]
+            else:
+                tables = [t.strip() for t in str(raw_tables).split(",") if t.strip()]
+        params = {
+            "connection_string": conn_str,
+            "tables": tables,
+            "connect_args": cfg.get("connect_args") or {},
+        }
+        if cfg.get("batch_size"):
+            try:
+                params["batch_size"] = int(cfg["batch_size"])
+            except (TypeError, ValueError):
+                pass
+        source_summary = _redact_db_summary(conn_str)
+
+    else:  # api
+        engine_type = "api"
+        url = str(cfg.get("url") or "")
+        headers = cfg.get("headers")
+        if isinstance(headers, str):
+            try:
+                headers = json.loads(headers) if headers.strip() else {}
+            except json.JSONDecodeError:
+                raise HTTPException(status_code=400, detail="Headers must be valid JSON")
+        body = cfg.get("body")
+        if isinstance(body, str):
+            try:
+                body = json.loads(body) if body.strip() else None
+            except json.JSONDecodeError:
+                raise HTTPException(status_code=400, detail="Request body must be valid JSON")
+        params = {
+            "url": url,
+            "method": str(cfg.get("method") or "GET").upper(),
+            "headers": headers or {},
+            "json_body": body,
+        }
+        source_summary = url
+
+    dynamic_cfg = {
+        "ingestion_name": f"{workspace_id}_{connector_type}",
+        "sources": [{"type": engine_type, "params": params}],
+        "output": {"base_path": str(config.DATA_BASE_PATH)},
+    }
+
+    background_tasks.add_task(
+        ingestion_jobs.start_ingestion,
+        build_id,
+        dynamic_cfg,
+        source_path_for_guard,
+        workspace_id=workspace_id,
+        created_by=str(current_user.get("username") or ""),
+        source="wizard",
+        display_name=display_name,
+        cleanup_dir=cleanup_dir,
+    )
+    _ingestions_cache.clear()
+
+    audit_log.record(
+        "build_ingest_start",
+        str(current_user.get("username") or ""),
+        target=build_id,
+        workspace_id=workspace_id,
+        details={"connector_type": connector_type, "source_summary": source_summary},
+    )
+
+    return {
+        "success": True,
+        "build_id": build_id,
+        "connector_type": connector_type,
+        "workspace_id": workspace_id,
+        "status": "pending",
+    }
+
+
 @app.post("/ingest/upload")
 async def ingest_upload(
     request: Request,
@@ -1320,7 +1691,7 @@ async def ingest_upload(
 
     The drop-box watcher needs the producer to be able to WRITE to the data
     volume. A GitHub Actions runner, a Lambda, or a build agent in another
-    network usually can't — mounting the analytics volume into every CI
+    network usually can't â€” mounting the analytics volume into every CI
     environment is exactly the coupling you don't want. This endpoint is the
     same trigger reached over the network instead.
 
@@ -1447,7 +1818,7 @@ async def ingest_status(build_id: str, current_user: dict = Depends(get_current_
     if build_path is None:
         raise HTTPException(status_code=400, detail="Invalid build id")
     # Status is polled while the build directory is still being created, so a
-    # missing owner.json here means "not started yet", not "unowned" — check
+    # missing owner.json here means "not started yet", not "unowned" â€” check
     # visibility only once there is something to check.
     if (build_path / build_owner.OWNER_FILENAME).exists():
         if not build_owner.can_view(build_owner.read_owner(build_path), current_user):
@@ -1540,7 +1911,9 @@ async def get_chat_history_endpoint(
     current_user: dict = Depends(get_current_user)
 ):
     normalized_ingestion_id = str(x_ingestion_id or "").strip()
-    data_loader.ensure_ingestion_loaded(normalized_ingestion_id)
+    _entry = await run_in_threadpool(data_loader.get_or_load_ingestion, normalized_ingestion_id)
+    if _entry is not None:
+        state.set_active_ingestion(normalized_ingestion_id, _entry["duck_conn"], _entry["lance_db"], _entry["embedder"])
     target = str(target_user or "").strip().lower()
     if target and target != str(current_user["username"]).strip().lower() and not _is_admin_role(current_user.get("role")):
         raise HTTPException(status_code=403, detail="Not allowed to access other users history")
@@ -1563,7 +1936,9 @@ async def get_chart_history_endpoint(
     current_user: dict = Depends(get_current_user)
 ):
     normalized_ingestion_id = str(x_ingestion_id or "").strip()
-    data_loader.ensure_ingestion_loaded(normalized_ingestion_id)
+    _entry = await run_in_threadpool(data_loader.get_or_load_ingestion, normalized_ingestion_id)
+    if _entry is not None:
+        state.set_active_ingestion(normalized_ingestion_id, _entry["duck_conn"], _entry["lance_db"], _entry["embedder"])
     target = str(target_user or "").strip().lower()
     if target and target != str(current_user["username"]).strip().lower() and not _is_admin_role(current_user.get("role")):
         raise HTTPException(status_code=403, detail="Not allowed to access other users history")
@@ -1586,7 +1961,9 @@ async def delete_chart(
     current_user: dict = Depends(get_current_user)
 ):
     normalized_ingestion_id = str(x_ingestion_id or "").strip()
-    data_loader.ensure_ingestion_loaded(normalized_ingestion_id)
+    _entry = await run_in_threadpool(data_loader.get_or_load_ingestion, normalized_ingestion_id)
+    if _entry is not None:
+        state.set_active_ingestion(normalized_ingestion_id, _entry["duck_conn"], _entry["lance_db"], _entry["embedder"])
     if state.lance_db is None or "chart_history" not in state.lance_db.table_names():
         return {"error": "Chart history not available"}
     try:
@@ -1631,17 +2008,21 @@ async def debug_data(
     current_user: dict = Depends(get_current_user)
 ):
     normalized_ingestion_id = str(x_ingestion_id or "").strip()
-    data_loader.ensure_ingestion_loaded(normalized_ingestion_id)
+    _entry = await run_in_threadpool(data_loader.get_or_load_ingestion, normalized_ingestion_id)
+    if _entry is not None:
+        state.set_active_ingestion(normalized_ingestion_id, _entry["duck_conn"], _entry["lance_db"], _entry["embedder"])
     data = {}
     if state.duck_conn:
-        tables = state.duck_conn.execute("SHOW TABLES").fetchall()
+        with state._duck_query_lock:
+            tables = state.duck_conn.execute("SHOW TABLES").fetchall()
         data["tables"] = [t[0] for t in tables]
-        test_table = _get_test_results_table()
+        test_table = _get_test_results_table()  # locks internally - must stay outside any `with` block here
         # Check if test table exists
         if test_table in data["tables"]:
-            sample = state.duck_conn.execute(f"SELECT * FROM {test_table} LIMIT 5").df()
+            with state._duck_query_lock:
+                sample = state.duck_conn.execute(f"SELECT * FROM {test_table} LIMIT 5").df()
+                data["test_results_count"] = state.duck_conn.execute(f"SELECT COUNT(*) FROM {test_table}").fetchone()[0]
             data["test_results_sample"] = sample.to_dict(orient="records")
-            data["test_results_count"] = state.duck_conn.execute(f"SELECT COUNT(*) FROM {test_table}").fetchone()[0]
     return data
 
 @app.get("/data/status")
@@ -1650,7 +2031,9 @@ async def data_status(
     current_user: dict = Depends(get_current_user)
 ):
     normalized_ingestion_id = str(x_ingestion_id or "").strip()
-    data_loader.ensure_ingestion_loaded(normalized_ingestion_id)
+    _entry = await run_in_threadpool(data_loader.get_or_load_ingestion, normalized_ingestion_id)
+    if _entry is not None:
+        state.set_active_ingestion(normalized_ingestion_id, _entry["duck_conn"], _entry["lance_db"], _entry["embedder"])
 
     try:
         return _get_status_payload(normalized_ingestion_id)
@@ -1665,7 +2048,9 @@ async def data_profile(
     current_user: dict = Depends(get_current_user)
 ):
     normalized_ingestion_id = str(x_ingestion_id or "").strip()
-    data_loader.ensure_ingestion_loaded(normalized_ingestion_id)
+    _entry = await run_in_threadpool(data_loader.get_or_load_ingestion, normalized_ingestion_id)
+    if _entry is not None:
+        state.set_active_ingestion(normalized_ingestion_id, _entry["duck_conn"], _entry["lance_db"], _entry["embedder"])
 
     if not state.duck_conn:
         return {"tables": {}}
@@ -1683,7 +2068,9 @@ async def data_quality(
     current_user: dict = Depends(get_current_user)
 ):
     normalized_ingestion_id = str(x_ingestion_id or "").strip()
-    data_loader.ensure_ingestion_loaded(normalized_ingestion_id)
+    _entry = await run_in_threadpool(data_loader.get_or_load_ingestion, normalized_ingestion_id)
+    if _entry is not None:
+        state.set_active_ingestion(normalized_ingestion_id, _entry["duck_conn"], _entry["lance_db"], _entry["embedder"])
 
     try:
         return _get_quality_payload(normalized_ingestion_id)
@@ -1700,7 +2087,6 @@ async def data_quality(
 @app.get("/dashboard/overview")
 async def dashboard_overview(
     x_ingestion_id: Optional[str] = Header(None),
-    x_workspace_id: Optional[str] = Header(None),
     include_quality: bool = Query(False),
     current_user: dict = Depends(get_current_user),
 ):
@@ -1715,14 +2101,15 @@ async def dashboard_overview(
     }
 
     if normalized_ingestion_id:
-        loaded = data_loader.ensure_ingestion_loaded(normalized_ingestion_id)
-        if not loaded:
+        _entry = await run_in_threadpool(data_loader.get_or_load_ingestion, normalized_ingestion_id)
+        if _entry is not None:
+            state.set_active_ingestion(normalized_ingestion_id, _entry["duck_conn"], _entry["lance_db"], _entry["embedder"])
+        if _entry is None:
             # Don't fall through to computing status/quality against
-            # state.duck_conn - it's a single global pointer (see state.py),
-            # so on failure it's either None or still pointing at whatever
-            # ingestion was loaded last (which can belong to a different
-            # request/tab). Surfacing a clear error beats silently caching
-            # another build's numbers under this ingestion_id's cache key.
+            # state.duck_conn - this request's context never got activated,
+            # so it would just read the ContextVar default (None). Surfacing
+            # a clear error beats silently caching empty/wrong numbers under
+            # this ingestion_id's cache key.
             logger.error(f"Failed to load ingestion '{normalized_ingestion_id}' for overview")
             quality_payload = {
                 "score": 0,
@@ -1744,26 +2131,16 @@ async def dashboard_overview(
             except Exception as e:
                 logger.error(f"Error computing overview quality: {e}")
 
-    persistent = _get_cached_token_usage(
-        user_id=current_user.get("username"),
-        workspace_id=_normalize_workspace(x_workspace_id, current_user),
-    )
-
+    # Token usage is intentionally NOT included here anymore - it used to be
+    # embedded in every caller's dashboard overview regardless of role, which
+    # is what made it visible on the home dashboard to every account. Spend
+    # visibility is admin-only now: see PERM_USAGE_VIEW_ALL and
+    # GET /admin/usage, which is the only place it's still exposed.
     return {
         "connected": True,
         "ingestion_id": normalized_ingestion_id,
         "status": status_payload,
         "quality": quality_payload,
-        "token_usage": {
-            "totals": persistent.get("totals", {}),
-            "by_model": persistent.get("by_model", {}),
-            "scope": persistent.get("scope", {}),
-            "updated_at": persistent.get("updated_at", ""),
-        },
-        "runtime_token_usage": {
-            "totals": state.token_usage,
-            "by_model": state.token_usage_by_model,
-        },
         "server_time": datetime.now(timezone.utc).isoformat(),
     }
 
@@ -1773,7 +2150,7 @@ async def list_ingestions(current_user: dict = Depends(get_current_user)):
 
     Admins get every workspace (each row carries its workspace_id so the UI
     can label them); everyone else gets only their own. The cache key includes
-    the viewer's scope — a single global key would serve one workspace's build
+    the viewer's scope â€” a single global key would serve one workspace's build
     list to the next caller for the whole TTL.
     """
     viewer_scope = (
@@ -1789,7 +2166,7 @@ async def list_ingestions(current_user: dict = Depends(get_current_user)):
     for path in config.DATA_BASE_PATH.iterdir():
         if path.is_dir() and (path / "lancedb").exists():
             if ingestion_jobs.is_failed(path.name):
-                # Ingestion started but failed partway — don't present a
+                # Ingestion started but failed partway â€” don't present a
                 # half-written build as a usable one.
                 continue
             owner = build_owner.read_owner(path)
@@ -1819,6 +2196,7 @@ async def list_ingestions(current_user: dict = Depends(get_current_user)):
                 "workspace_id": owner.get("workspace_id", ""),
                 "created_by": owner.get("created_by", ""),
                 "source": owner.get("source", ""),
+                "display_name": owner.get("display_name", ""),
                 "can_delete": build_owner.can_delete(owner, current_user),
             })
 
@@ -1834,8 +2212,8 @@ def _purge_build_state(ingestion_id: str) -> None:
     """Drop every in-process trace of a build before its folder is removed.
 
     Deleting a build has to be complete, not just "the directory is gone".
-    Everything that build produced — its chat history, saved charts, feedback,
-    schema profile, summary and job status — lives in
+    Everything that build produced â€” its chat history, saved charts, feedback,
+    schema profile, summary and job status â€” lives in
     data/<build>/{lancedb,duckdb} and goes with the directory. What does NOT
     go with it, and is what this function handles:
 
@@ -1848,29 +2226,32 @@ def _purge_build_state(ingestion_id: str) -> None:
         its old dashboard panels for the rest of the TTL.
       * The ingestion_jobs status cache, which would otherwise report the
         build as `completed` forever.
+      * schema_context's per-ingestion summary cache, which is valid for the
+        process lifetime by design (see schema_context.py) and so would
+        otherwise keep answering chat/chart requests for this ingestion_id
+        with a schema summary for data that no longer exists, for as long
+        as the backend process stays up.
 
     Note on the drop-box: the file that produced this build stays marked as
-    processed in auto_ingest_state.json. That is deliberate — clearing it
+    processed in auto_ingest_state.json. That is deliberate â€” clearing it
     while the source file is still sitting in the drop-box would have the
     watcher immediately re-ingest what you just deleted. Re-drop the file to
     import it again.
     """
+    # Closing the pool's own connection is enough to release the file lock
+    # for shutil.rmtree below - "active ingestion" is now per-request
+    # (ContextVar-backed, see state.py), not a single process-wide pointer,
+    # so there's no separate global "current" handle to close/reset here.
+    # Any other request whose own context still points at this build's
+    # (now-closed) connection object will get a clear "connection closed"
+    # error on its next query - correct: better than silently continuing to
+    # look like it's serving a build that no longer exists on disk.
     entry = state._ingestion_pool.pop(ingestion_id, None)
     if entry is not None:
         try:
             entry["duck_conn"].close()
         except Exception:
             logger.debug("Could not close pooled DuckDB connection for %s", ingestion_id, exc_info=True)
-
-    if state.current_ingestion_id == ingestion_id:
-        try:
-            if state.duck_conn is not None:
-                state.duck_conn.close()
-        except Exception:
-            logger.debug("Could not close active DuckDB connection", exc_info=True)
-        state.current_ingestion_id = None
-        state.duck_conn = None
-        state.lance_db = None
 
     for cache in (_status_cache, _quality_cache, _suggestions_cache):
         cache.pop(ingestion_id, None)
@@ -1880,6 +2261,7 @@ def _purge_build_state(ingestion_id: str) -> None:
     _ingestions_cache.clear()
 
     ingestion_jobs.forget(ingestion_id)
+    schema_context.invalidate_cache(ingestion_id)
 
 
 @app.delete("/ingestions/{ingestion_id}")
@@ -1890,14 +2272,14 @@ async def delete_ingestion(
     """Delete an ingestion and all its associated data.
 
     This calls shutil.rmtree, so it is guarded twice. First the id is
-    validated as a path segment before being joined onto DATA_BASE_PATH —
+    validated as a path segment before being joined onto DATA_BASE_PATH â€”
     previously `..%2F..%2Fsomething` was concatenated straight in. Second,
     authorization: any authenticated user could previously delete any build,
     including another team's.
     """
     # The authorization checks sit OUTSIDE the try block on purpose. They
     # raise HTTPException, and the `except Exception` below would otherwise
-    # catch a 403 and turn it into a 200 carrying {"error": ...} — a refusal
+    # catch a 403 and turn it into a 200 carrying {"error": ...} â€” a refusal
     # the client would have no reason to treat as one.
     ingestion_path = build_owner.resolve_build_path(ingestion_id)
     if ingestion_path is None:
@@ -1946,7 +2328,9 @@ async def role_suggestions(
     current_user: dict = Depends(get_current_user),
 ):
     normalized_ingestion_id = str(x_ingestion_id or "").strip()
-    data_loader.ensure_ingestion_loaded(normalized_ingestion_id)
+    _entry = await run_in_threadpool(data_loader.get_or_load_ingestion, normalized_ingestion_id)
+    if _entry is not None:
+        state.set_active_ingestion(normalized_ingestion_id, _entry["duck_conn"], _entry["lance_db"], _entry["embedder"])
 
     role_id = str(x_role or current_user.get("role") or "qa-engineer").strip()
     project_id = str(x_project or "all").strip()
@@ -2040,7 +2424,9 @@ async def submit_feedback(
     current_user: dict = Depends(get_current_user),
 ):
     normalized_ingestion_id = str(x_ingestion_id or "").strip()
-    data_loader.ensure_ingestion_loaded(normalized_ingestion_id)
+    _entry = await run_in_threadpool(data_loader.get_or_load_ingestion, normalized_ingestion_id)
+    if _entry is not None:
+        state.set_active_ingestion(normalized_ingestion_id, _entry["duck_conn"], _entry["lance_db"], _entry["embedder"])
 
     if state.lance_db is None:
         raise HTTPException(status_code=500, detail="Data store not initialized")
@@ -2106,45 +2492,18 @@ async def test_sql(
     current_user: dict = Depends(get_current_user)
 ):
     normalized_ingestion_id = str(x_ingestion_id or "").strip()
-    data_loader.ensure_ingestion_loaded(normalized_ingestion_id)
+    _entry = await run_in_threadpool(data_loader.get_or_load_ingestion, normalized_ingestion_id)
+    if _entry is not None:
+        state.set_active_ingestion(normalized_ingestion_id, _entry["duck_conn"], _entry["lance_db"], _entry["embedder"])
     if state.duck_conn:
         try:
-            result = state.duck_conn.execute("SELECT COUNT(*) FROM flattened_tests").fetchone()
+            with state._duck_query_lock:
+                result = state.duck_conn.execute("SELECT COUNT(*) FROM flattened_tests").fetchone()
             return {"count": result[0]}
         except Exception as e:
             return {"error": str(e)}
     else:
         return {"error": "duck_conn not initialized"}
-
-
-@app.get("/usage/tokens")
-async def token_usage(current_user: dict = Depends(get_current_user)):
-    persistent = _get_cached_token_usage(
-        user_id=current_user.get("username"),
-        workspace_id=_normalize_workspace(None, current_user),
-    )
-    # Lifetime total (all workspaces) and the account's quota, not just this
-    # workspace's totals above - what _enforce_token_quota() actually
-    # compares, so the dashboard's usage meter matches the number that will
-    # eventually 429 it instead of a workspace-scoped figure that could
-    # under-represent it.
-    username = current_user.get("username")
-    limit = get_user_store().get_token_limit(username)
-    lifetime_total = token_usage_store.get_lifetime_total(username)
-    return {
-        "totals": persistent.get("totals", {}),
-        "by_model": persistent.get("by_model", {}),
-        "scope": persistent.get("scope", {}),
-        "updated_at": persistent.get("updated_at", ""),
-        "runtime_totals": state.token_usage,
-        "runtime_by_model": state.token_usage_by_model,
-        "quota": {
-            "limit": limit,
-            "unlimited": limit <= 0,
-            "lifetime_total": lifetime_total,
-            "remaining": max(0, limit - lifetime_total) if limit > 0 else None,
-        },
-    }
 
 
 @app.get("/admin/usage")
@@ -2249,6 +2608,82 @@ async def admin_test_llm_settings(
     return result
 
 
+@app.get("/admin/settings/embedding")
+async def admin_get_embedding_settings(
+    _admin: dict = Depends(require_permission(permissions.PERM_SETTINGS_MANAGE)),
+):
+    """Effective embedding model (database > env > default) - the local
+    sentence-transformers model used to embed ingested documents for
+    semantic/vector search. Independent of the LLM provider/model above."""
+    return app_settings.get_embedding_model_settings()
+
+
+@app.put("/admin/settings/embedding")
+async def admin_update_embedding_settings(
+    payload: AdminEmbeddingSettingsRequest,
+    admin: dict = Depends(require_permission(permissions.PERM_SETTINGS_MANAGE)),
+):
+    """Takes effect immediately for new ingestions and the next vector-search
+    call - no restart needed (see data_loader._get_shared_embedder()). Note:
+    builds already ingested under a DIFFERENT model keep their old
+    embeddings: their vector search will degrade to 'no results' rather than
+    error if the new model's dimensionality doesn't match (see
+    data_loader.vector_search) - re-ingest a build to embed it under the new
+    model."""
+    try:
+        updated = app_settings.update_embedding_model(
+            model=payload.model,
+            updated_by=str(admin.get("username") or ""),
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    audit_log.record(
+        "embedding_settings_update", admin.get("username"),
+        details={"model": updated.get("model")},
+    )
+    return updated
+
+
+@app.get("/admin/settings/secret-key")
+async def admin_get_secret_key(
+    _admin: dict = Depends(require_permission(permissions.PERM_SETTINGS_MANAGE)),
+):
+    """Masked info only - the real signing secret never leaves the process."""
+    return app_settings.get_secret_key_info()
+
+
+@app.put("/admin/settings/secret-key")
+async def admin_set_secret_key(
+    payload: AdminSecretKeyRequest,
+    admin: dict = Depends(require_permission(permissions.PERM_SETTINGS_MANAGE)),
+):
+    """Rotate the JWT signing secret. Requires `confirm: true` - this is not
+    an ordinary settings save: it invalidates every currently-issued token,
+    including the caller's own, the instant it's written. The frontend must
+    show that consequence and get an explicit click before setting confirm.
+    """
+    if not payload.confirm:
+        raise HTTPException(
+            status_code=400,
+            detail="Set confirm=true to proceed - changing this signs out every "
+            "logged-in user immediately, including you.",
+        )
+    if not payload.generate and not (payload.value or "").strip():
+        raise HTTPException(status_code=400, detail="Provide `value` or set `generate: true`")
+
+    username = str(admin.get("username") or "")
+    try:
+        if payload.generate:
+            app_settings.generate_secret_key(updated_by=username)
+        else:
+            app_settings.set_secret_key(payload.value, updated_by=username)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    audit_log.record("secret_key_rotate", username)
+    return app_settings.get_secret_key_info()
+
+
 @app.post("/admin/usage/{username}/reset")
 async def admin_reset_usage(
     username: str,
@@ -2259,7 +2694,6 @@ async def admin_reset_usage(
     quota and wanting their counter to start clean, or to clear test/noise
     usage recorded before a limit was configured."""
     deleted = token_usage_store.reset_usage(username)
-    _token_usage_cache.clear()
     logger.info("Admin '%s' reset token usage for '%s' (%d rows)", admin.get("username"), username, deleted)
     audit_log.record("usage_reset", admin.get("username"), target=username, details={"rows_cleared": deleted})
     return {"success": True, "rows_cleared": deleted}
@@ -2273,6 +2707,45 @@ async def admin_audit_log(
     _admin: dict = Depends(require_permission(permissions.PERM_AUDIT_VIEW)),
 ):
     return {"events": audit_log.list_events(limit=limit, action=action, actor=actor)}
+
+
+@app.get("/admin/notifications")
+async def admin_notifications(admin: dict = Depends(require_admin)):
+    """Live-computed feed for the admin bell icon: pending registrations
+    waiting on approval, and recent ingestion failures. Not a persisted/
+    read-tracked notification system (no "mark as read" state) - each item
+    is just a current fact pulled from its own source of truth (user store,
+    ingestion_jobs), the same pattern /admin/overview already uses. Spans
+    Users + ingestion, both admin-only concerns, so gated by require_admin
+    rather than one specific permission.
+    """
+    store = get_user_store()
+    pending_users = store.list_users(status="pending")
+    failed_jobs = ingestion_jobs.list_failed(limit=20)
+
+    items = []
+    for u in pending_users:
+        items.append({
+            "type": "pending_registration",
+            "id": f"user:{u.get('username')}",
+            "message": f"'{u.get('username')}' is awaiting approval to join {u.get('workspace_id') or 'default'}",
+            "timestamp": u.get("created_at") or "",
+            "link": "/admin/users",
+        })
+    for j in failed_jobs:
+        items.append({
+            "type": "ingestion_failed",
+            "id": f"job:{j.get('build_id')}",
+            "message": f"Ingestion '{j.get('build_id')}' failed: {j.get('error') or 'unknown error'}",
+            "timestamp": j.get("finished_at") or "",
+            "link": "/dashboard",
+        })
+
+    items.sort(key=lambda i: i["timestamp"], reverse=True)
+    return {
+        "count": len(items),
+        "items": items,
+    }
 
 
 @app.get("/admin/overview")

@@ -9,17 +9,20 @@ from jose import JWTError, jwt
 from fastapi import HTTPException, status, Depends
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from dotenv import load_dotenv
-from . import config
+from . import config, app_settings
 from .user_store import UserStore
 
 load_dotenv()  # Load .env file
 
 logger = logging.getLogger(__name__)
 
-# Read from environment (set in .env)
-SECRET_KEY = os.getenv("SECRET_KEY")
-if not SECRET_KEY:
-    raise ValueError("SECRET_KEY environment variable not set")
+# SECRET_KEY is intentionally NOT a module-level constant: it's admin-
+# configurable at runtime (app_settings.get_secret_key(), database > env >
+# auto-generated file), and has to be re-read on every sign/verify so a
+# change from the admin Settings tab takes effect on the very next request
+# without a restart. config.py's own resolution (env or the auto-generated
+# state/secret_key file) still guarantees SOME valid value exists even
+# before any admin has touched Settings - see config._resolve_secret_key().
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 60 * 24  # 24 hours
 
@@ -297,14 +300,12 @@ def _bootstrap_admin_if_empty() -> None:
     )
     if is_default_password:
         logger.warning(
-            "Bootstrapped first admin '%s' with an AUTO-GENERATED password: '%s' "
-            "(also saved to %s). Sign in with username '%s' and that password - "
-            "you will be required to set a real username and password before "
-            "doing anything else. Set BOOTSTRAP_ADMIN_USERNAME/"
-            "BOOTSTRAP_ADMIN_PASSWORD in .env instead if you'd rather choose it "
-            "yourself.",
+            "Bootstrapped first admin '%s' with the default password '%s'. "
+            "Sign in with those credentials - you will be required to set a "
+            "real username and password before doing anything else. Set "
+            "BOOTSTRAP_ADMIN_USERNAME/BOOTSTRAP_ADMIN_PASSWORD in .env instead "
+            "if you'd rather choose the first-run credential yourself.",
             config.BOOTSTRAP_ADMIN_USERNAME, config.BOOTSTRAP_ADMIN_PASSWORD,
-            config.BOOTSTRAP_ADMIN_PASSWORD_FILE, config.BOOTSTRAP_ADMIN_USERNAME,
         )
     else:
         logger.warning(
@@ -340,6 +341,32 @@ def verify_password(username: str, password: str) -> bool:
         return False
     try:
         return bcrypt.checkpw(password.encode("utf-8"), stored_hash.encode("utf-8"))
+    except ValueError:
+        return False
+
+
+def is_default_password_value(password: str) -> bool:
+    """True when the provided plain password is the built-in default.
+
+    This is intentionally the literal shipped default (config.DEFAULT_BOOTSTRAP_ADMIN_PASSWORD),
+    not an operator-supplied BOOTSTRAP_ADMIN_PASSWORD from .env.
+    """
+    return str(password or "") == str(config.DEFAULT_BOOTSTRAP_ADMIN_PASSWORD)
+
+
+def user_has_default_password(username: str) -> bool:
+    """True when this account's current hash still matches the built-in default password."""
+    uname = str(username or "").strip().lower()
+    if not uname:
+        return False
+    stored_hash = _user_store.get_password_hash(uname)
+    if not stored_hash:
+        return False
+    try:
+        return bcrypt.checkpw(
+            str(config.DEFAULT_BOOTSTRAP_ADMIN_PASSWORD).encode("utf-8"),
+            stored_hash.encode("utf-8"),
+        )
     except ValueError:
         return False
 
@@ -431,7 +458,7 @@ def create_access_token(data: dict, expires_delta: Optional[timedelta] = None):
     else:
         expire = datetime.utcnow() + timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
     to_encode.update({"exp": expire})
-    encoded_jwt = jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
+    encoded_jwt = jwt.encode(to_encode, app_settings.get_secret_key(), algorithm=ALGORITHM)
     return encoded_jwt
 
 
@@ -444,11 +471,25 @@ async def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(s
         )
     token = credentials.credentials
     try:
-        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        payload = jwt.decode(token, app_settings.get_secret_key(), algorithms=[ALGORITHM])
         username: str = payload.get("sub")
         role: str = payload.get("role")
         workspace_id: str = _normalize_workspace(payload.get("workspace_id"))
         if username is None or role is None:
+            raise HTTPException(status_code=401, detail="Invalid token")
+        if config.AUTH_BACKEND == "db" and get_user_store().get_user(username) is None:
+            # The account this token names no longer exists under this
+            # username - renamed away (change_own_username re-issues a
+            # token, but the OLD one is still cryptographically valid until
+            # it expires) or deleted. Without this check the stale token
+            # would otherwise keep authenticating successfully for the rest
+            # of its 24h lifetime: credential_change_middleware's fresh
+            # must-change-password check ALSO silently treats "no such row"
+            # as "nothing required" (see UserStore.get_must_change_password),
+            # so nothing else catches this. That would quietly defeat the
+            # entire point of forcing bootstrap admin/admin off its default
+            # identity - a token obtained during that default-credential
+            # window would keep working under the old name regardless.
             raise HTTPException(status_code=401, detail="Invalid token")
         return {"username": username, "role": role, "workspace_id": workspace_id}
     except JWTError:

@@ -185,7 +185,8 @@ Create or edit `.env` in the repository root:
 ```env
 # LLM Configuration
 LLM_PROVIDER=gemini
-LLM_API_KEY=AIzaSyC8lzUATGdMQcCQ9MIqvOLWOX3xGpRnL6o
+
+LLM_API_KEY=your-gemini-api-key-here
 LLM_MODEL=models/gemini-2.5-flash
 
 # Role-based AI context directories
@@ -193,7 +194,7 @@ PROJECTS_ROOT=./projects
 ROLES_ROOT=./roles
 
 # JWT Authentication (REQUIRED - change for production)
-SECRET_KEY=QL0J9WfFAx+tWVBcfTsILM0PJMZD4kFEX7x6FnVUdhI=
+SECRET_KEY=generate-your-own-32-plus-char-random-secret
 BCRYPT_ROUNDS=12
 ```
 

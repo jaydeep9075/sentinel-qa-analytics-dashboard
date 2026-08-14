@@ -2,28 +2,33 @@
 app_settings.py — Runtime-editable configuration, persisted in the same
 SQLite database as auth (config.AUTH_USER_STORE_URL).
 
-Only the LLM provider/model/key/base-url live here today. Everything else in
-config.py (ports, mount paths, CORS, SECRET_KEY, ...) is read once at process
-start and a container is already running with those values by the time any
-UI could change them - genuinely runtime-editable settings are the narrow
-exception, not the rule. See WORKLOG.md item 5 for why this split exists.
+LLM provider/model/key/base-url and SECRET_KEY live here. Everything else in
+config.py (ports, mount paths, CORS, ...) is read once at process start and a
+container is already running with those values by the time any UI could
+change them - genuinely runtime-editable settings are the narrow exception,
+not the rule. See WORKLOG.md item 5 for why this split exists.
 
-Resolution order for every field is **env > database > built-in default**:
+Resolution order for every field is **database > env > built-in default**:
 
-  * env stays authoritative so a pinned production config (k8s secret, a
-    provisioning script) can never be silently overridden by someone with
-    admin-console access - the corresponding input is disabled in the UI and
-    `locked` is reported alongside the value so the frontend knows to do that.
-  * database is what the admin Settings tab writes. It is what makes the
-    first-run setup path work without touching .env at all.
+  * database is what the admin Settings tab writes, and always wins once set.
+    This is deliberate: a Docker image is meant to ship with nothing
+    preconfigured, and whatever an admin sets from the UI - including
+    switching providers/models later, or rotating SECRET_KEY - has to stick
+    even if .env still has an old value sitting in it from how the container
+    was first brought up. Nothing here is "locked" by env anymore.
+  * env is the seed for a fresh deployment that hasn't been configured from
+    the UI yet (or is intentionally pinned via infra and never will be -
+    nothing forces you to use the admin UI, env still works exactly as
+    before if you just never touch Settings).
   * default is config.py's per-provider table (gemini/openai/anthropic/ollama
-    default models), same as it always was.
+    default models) for LLM fields, or the auto-generated state/secret_key
+    file for SECRET_KEY (config.SECRET_KEY already resolves that tier).
 
-The one wrinkle env>DB>default doesn't cover on its own: the env-resolved API
-key was historically computed ONCE at import time, against whichever provider
+The one wrinkle database>env>default doesn't cover on its own: the env-
+resolved API key was historically computed against whichever provider
 LLM_PROVIDER named at startup. If the admin changes the *provider* through
-this module (not through .env), the key has to be re-resolved against the
-NEW effective provider, not the old one - see config.resolve_api_key_for_provider().
+this module, the key has to be re-resolved against the NEW effective
+provider, not the old one - see config.resolve_api_key_for_provider().
 """
 
 import logging
@@ -106,50 +111,52 @@ def get_llm_settings(include_secret: bool = False) -> Dict[str, object]:
     db_api_key = _get_raw("llm_api_key")
     db_api_base = _get_raw("llm_api_base")
 
-    if config.LLM_PROVIDER_FROM_ENV:
-        provider, provider_source = config.LLM_PROVIDER, "env"
-    elif db_provider:
+    if db_provider:
         provider, provider_source = db_provider, "database"
+    elif config.LLM_PROVIDER_FROM_ENV:
+        provider, provider_source = config.LLM_PROVIDER, "env"
     else:
         provider, provider_source = config.LLM_PROVIDER, "default"
 
-    if config.LLM_MODEL_FROM_ENV:
-        model, model_source = config.LLM_MODEL, "env"
-    elif db_model:
+    if db_model:
         model, model_source = db_model, "database"
+    elif config.LLM_MODEL_FROM_ENV:
+        model, model_source = config.LLM_MODEL, "env"
     else:
         model, model_source = config.default_model_for(provider), "default"
 
     # Re-resolved against the EFFECTIVE provider, not the startup-time one -
     # see the module docstring.
     env_key_for_provider = config.resolve_api_key_for_provider(provider)
-    if env_key_for_provider:
-        api_key, api_key_source = env_key_for_provider, "env"
-    elif db_api_key:
+    if db_api_key:
         api_key, api_key_source = db_api_key, "database"
+    elif env_key_for_provider:
+        api_key, api_key_source = env_key_for_provider, "env"
     else:
         api_key, api_key_source = "", "default"
 
-    if config.LLM_API_BASE_FROM_ENV:
-        api_base, api_base_source = config.LLM_API_BASE, "env"
-    elif db_api_base:
+    if db_api_base:
         api_base, api_base_source = db_api_base, "database"
+    elif config.LLM_API_BASE_FROM_ENV:
+        api_base, api_base_source = config.LLM_API_BASE, "env"
     else:
         api_base, api_base_source = "", "default"
 
     result = {
         "provider": provider,
-        "provider_locked": provider_source == "env",
+        # Nothing is env-locked anymore (database always wins once set) -
+        # kept as a field for frontend compatibility, always False now.
+        "provider_locked": False,
         "provider_source": provider_source,
         "model": model,
-        "model_locked": model_source == "env",
+        "model_locked": False,
         "model_source": model_source,
         "api_key_set": bool(api_key),
-        "api_key_locked": api_key_source == "env",
+        "api_key_locked": False,
         "api_key_source": api_key_source,
         "api_key_masked": mask_api_key(api_key),
         "api_base": api_base,
-        "api_base_locked": api_base_source == "env",
+        "api_base_locked": False,
         "api_base_source": api_base_source,
         "keyless": config.provider_is_keyless(provider),
     }
@@ -172,25 +179,21 @@ def update_llm_settings(
     can for the other fields (an admin legitimately wants to blank a stored
     key when switching to a keyless provider).
 
-    Validates the RESULTING combination (this edit merged with whatever env
-    still locks) before writing anything, via the same
+    Validates the RESULTING combination before writing anything, via the same
     config.validate_llm_config() the old startup check used - so a typo that
     would have failed at boot instead fails immediately, in this call, before
     it's saved.
     """
-    current = get_llm_settings(include_secret=True)
-
-    if provider is not None and not current["provider_locked"]:
+    if provider is not None:
         _set_raw("llm_provider", provider.strip().lower(), updated_by)
-    if model is not None and not current["model_locked"]:
+    if model is not None:
         _set_raw("llm_model", model.strip(), updated_by)
-    if api_base is not None and not current["api_base_locked"]:
+    if api_base is not None:
         _set_raw("llm_api_base", api_base.strip(), updated_by)
-    if not current["api_key_locked"]:
-        if clear_api_key:
-            _set_raw("llm_api_key", "", updated_by)
-        elif api_key is not None and api_key.strip():
-            _set_raw("llm_api_key", api_key.strip(), updated_by)
+    if clear_api_key:
+        _set_raw("llm_api_key", "", updated_by)
+    elif api_key is not None and api_key.strip():
+        _set_raw("llm_api_key", api_key.strip(), updated_by)
 
     updated = get_llm_settings(include_secret=True)
     config.validate_llm_config(
@@ -245,3 +248,97 @@ def test_llm_settings(
         return {"success": True, "model": model_str, "reply": reply}
     except Exception as exc:
         return {"success": False, "model": model_str, "error": str(exc)}
+
+
+# --- SECRET_KEY ---------------------------------------------------------
+#
+# Same database > env > default precedence as the LLM fields, but with two
+# differences that matter enough to keep this separate rather than folding
+# it into _KEYS/get_llm_settings:
+#
+#   1. auth.py calls get_secret_key() fresh on every token sign/verify (see
+#      auth.SECRET_KEY / __getattr__ in that module) - never cached at
+#      import time - so an admin's change takes effect on the very next
+#      request, no restart needed.
+#   2. Changing it invalidates every currently-issued JWT immediately: every
+#      logged-in user (including whoever just changed it) is signed out on
+#      their next request. That's inherent to what a signing secret is, not
+#      a bug - callers must surface a clear warning before calling
+#      set_secret_key(), not treat it like an ordinary settings save.
+
+def get_secret_key() -> str:
+    """The signing secret every JWT is created/verified against RIGHT NOW.
+    Read fresh - do not cache the return value across requests."""
+    db_value = _get_raw("secret_key")
+    if db_value:
+        return db_value
+    return config.SECRET_KEY
+
+
+def get_secret_key_info() -> Dict[str, object]:
+    """Masked - never return the usable secret over the admin API."""
+    db_value = _get_raw("secret_key")
+    if db_value:
+        source = "database"
+    elif config.SECRET_KEY_FROM_ENV:
+        source = "env"
+    else:
+        source = "auto-generated"
+    return {
+        "source": source,
+        "masked": mask_api_key(db_value or config.SECRET_KEY),
+    }
+
+
+def set_secret_key(value: str, updated_by: str) -> None:
+    value = (value or "").strip()
+    if len(value) < 32:
+        raise ValueError("SECRET_KEY must be at least 32 characters")
+    _set_raw("secret_key", value, updated_by)
+    logger.warning(
+        "SECRET_KEY changed by '%s' - every existing session (including "
+        "theirs) is now invalid and must log in again.",
+        updated_by,
+    )
+
+
+def generate_secret_key(updated_by: str) -> str:
+    """Let the admin UI offer "generate one for me" instead of requiring a
+    human to paste 32+ random characters correctly."""
+    import secrets as _secrets
+    value = _secrets.token_urlsafe(48)
+    set_secret_key(value, updated_by)
+    return value
+
+
+# --- Embedding model -----------------------------------------------------
+#
+# Same database > env > default precedence as the LLM fields. Kept separate
+# from get_llm_settings()/_KEYS because it's an independent axis - the
+# embedding model stays a local sentence-transformers model regardless of
+# which hosted LLM_PROVIDER is chosen for chat/chart generation.
+
+def get_embedding_model_settings() -> Dict[str, object]:
+    db_value = _get_raw("embedding_model")
+    if db_value:
+        return {"model": db_value, "source": "database"}
+    if config.EMBEDDING_MODEL_FROM_ENV:
+        return {"model": config.EMBEDDING_MODEL, "source": "env"}
+    return {"model": config.EMBEDDING_MODEL_DEFAULT, "source": "default"}
+
+
+def get_effective_embedding_model() -> str:
+    """Read fresh, not cached - the embedder singleton (services/data_loader.py)
+    compares this against what it was last built with and rebuilds itself if
+    an admin changes it from the Settings page, so a change here takes effect
+    on the next vector-search call with no restart needed."""
+    return str(get_embedding_model_settings()["model"])
+
+
+def update_embedding_model(model: str, updated_by: str) -> Dict[str, object]:
+    model = (model or "").strip()
+    if not model:
+        raise ValueError("Embedding model name is required")
+    _set_raw("embedding_model", model, updated_by)
+    logger.info("Embedding model updated by '%s': %s", updated_by, model)
+    return get_embedding_model_settings()

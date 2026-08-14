@@ -68,7 +68,7 @@ export default function IngestionSelector() {
       >
         {ingestions.map((ing) => (
           <option key={ing.id} value={ing.id} className="bg-white text-slate-700 dark:bg-black dark:text-white">
-            {ing.build_label}
+            {ing.display_name || ing.build_label}
           </option>
         ))}
       </select>

@@ -153,7 +153,7 @@ Diagram:
 
 ### API Smoke Test Example
 - Login:
-  - POST /auth/login?username=admin&password=Admin@123
+  - POST /auth/login?username=admin&password=admin
 - Health:
   - GET /health
 - Protected test:

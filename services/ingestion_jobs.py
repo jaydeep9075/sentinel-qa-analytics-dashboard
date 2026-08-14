@@ -25,7 +25,7 @@ from typing import Dict, Optional
 
 import anyio
 
-from . import build_owner, config
+from . import app_settings, build_owner, config
 
 logger = logging.getLogger(__name__)
 
@@ -86,6 +86,19 @@ def is_failed(build_id: str) -> bool:
     return bool(status and status.get("status") == "failed")
 
 
+def list_failed(limit: int = 20) -> list[dict]:
+    """Recent failed jobs, most recent first - backs the admin notification
+    bell. Only looks at the in-memory cache (not the on-disk fallback
+    get_status() uses), so this is "failures since the backend last
+    restarted", not a complete history - acceptable for a live notification
+    feed, which isn't meant to be an audit trail (see audit_log.py for that).
+    """
+    with _lock:
+        failed = [dict(v) for v in _jobs.values() if v.get("status") == "failed"]
+    failed.sort(key=lambda j: j.get("finished_at") or "", reverse=True)
+    return failed[:limit]
+
+
 def _check_source_size(source_path: str) -> Optional[str]:
     """Basic guard against absurdly large single-file sources. Directory
     sources (e.g. an Allure results folder) aren't cheaply sizeable up
@@ -110,6 +123,8 @@ async def start_ingestion(
     workspace_id: Optional[str] = None,
     created_by: str = "",
     source: str = "",
+    display_name: str = "",
+    cleanup_dir: Optional[str] = None,
 ) -> None:
     """Runs as a FastAPI BackgroundTask: the HTTP response has already been
     sent by the time this executes, so blocking here doesn't delay the
@@ -119,14 +134,30 @@ async def start_ingestion(
     workspace_id/created_by are recorded as owner.json before any work starts,
     so a build that fails halfway is still attributed — an unowned directory
     would otherwise fall back to the legacy workspace and become visible to
-    the wrong people."""
+    the wrong people.
+
+    cleanup_dir: a private staging directory (e.g. an uploaded file's
+    per-request folder under DATA_BASE_PATH/_uploads) to remove once this
+    run finishes, success or failure — the connector has already read
+    whatever it needed from it by then, and leaving it around would leak
+    disk on every wizard upload."""
     started_at = datetime.now(timezone.utc).isoformat()
+
+    def _cleanup_staging() -> None:
+        if not cleanup_dir:
+            return
+        try:
+            import shutil
+            shutil.rmtree(cleanup_dir, ignore_errors=True)
+        except Exception:
+            logger.warning("Could not remove staging dir %s", cleanup_dir, exc_info=True)
 
     build_owner.write_owner(
         build_id,
         workspace_id or config.DEFAULT_WORKSPACE_ID,
         created_by=created_by,
         source=source,
+        display_name=display_name,
     )
 
     size_error = _check_source_size(source_path)
@@ -135,6 +166,7 @@ async def start_ingestion(
             "build_id": build_id, "status": "failed", "error": size_error,
             "started_at": started_at, "finished_at": datetime.now(timezone.utc).isoformat(),
         })
+        _cleanup_staging()
         return
 
     _write_status(build_id, {
@@ -150,7 +182,10 @@ async def start_ingestion(
 
         from universal_ingester.ingester import UniversalIngester
 
-        ingester = UniversalIngester(data_base_path=str(config.DATA_BASE_PATH))
+        ingester = UniversalIngester(
+            data_base_path=str(config.DATA_BASE_PATH),
+            embedding_model=app_settings.get_effective_embedding_model(),
+        )
 
         try:
             with anyio.fail_after(config.INGEST_TIMEOUT_SECONDS):
@@ -182,3 +217,4 @@ async def start_ingestion(
                 os.remove(temp_cfg_path)
             except Exception:
                 pass
+        _cleanup_staging()

@@ -1,8 +1,8 @@
 "use client";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter, usePathname } from "next/navigation";
 import Link from "next/link";
-import { ArrowLeft, Gauge, KeyRound, ScrollText, Settings as SettingsIcon, Users } from "lucide-react";
+import { ArrowLeft, Bell, Gauge, KeyRound, ScrollText, Settings as SettingsIcon, Users } from "lucide-react";
 import BrandLogo from "@/components/BrandLogo";
 
 const API = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
@@ -19,6 +19,94 @@ const TABS = [
   { href: "/admin/settings", label: "Settings", icon: SettingsIcon },
   { href: "/admin/audit", label: "Audit", icon: ScrollText },
 ];
+
+type NotificationItem = {
+  type: string;
+  id: string;
+  message: string;
+  timestamp: string;
+  link: string;
+};
+
+const NOTIF_POLL_MS = 60000;
+
+function NotificationBell() {
+  const [items, setItems] = useState<NotificationItem[]>([]);
+  const [open, setOpen] = useState(false);
+  const boxRef = useRef<HTMLDivElement>(null);
+
+  const load = useCallback(async () => {
+    try {
+      const res = await fetch(`${API}/admin/notifications`, { headers: authHeaders() });
+      if (!res.ok) return;
+      const data = await res.json();
+      setItems(data.items || []);
+    } catch {
+      // Silent - a failed background poll shouldn't put an error banner in
+      // front of an admin who's looking at something else entirely.
+    }
+  }, []);
+
+  useEffect(() => {
+    load();
+    const interval = setInterval(load, NOTIF_POLL_MS);
+    return () => clearInterval(interval);
+  }, [load]);
+
+  useEffect(() => {
+    function onClickOutside(e: MouseEvent) {
+      if (boxRef.current && !boxRef.current.contains(e.target as Node)) setOpen(false);
+    }
+    document.addEventListener("mousedown", onClickOutside);
+    return () => document.removeEventListener("mousedown", onClickOutside);
+  }, []);
+
+  return (
+    <div className="relative" ref={boxRef}>
+      <button
+        onClick={() => setOpen((v) => !v)}
+        className="relative flex items-center justify-center w-9 h-9 rounded-lg border border-slate-200 dark:border-white/10 text-slate-500 dark:text-white/50 hover:text-cyan-500 hover:border-cyan-500/40"
+        title="Notifications"
+      >
+        <Bell className="w-4 h-4" />
+        {items.length > 0 && (
+          <span className="absolute -top-1.5 -right-1.5 min-w-[18px] h-[18px] px-1 flex items-center justify-center rounded-full bg-red-500 text-white text-[10px] font-bold">
+            {items.length > 99 ? "99+" : items.length}
+          </span>
+        )}
+      </button>
+      {open && (
+        <div className="absolute right-0 mt-2 w-80 max-h-96 overflow-y-auto rounded-xl border border-slate-200 dark:border-white/[0.08] bg-white dark:bg-black/95 shadow-xl backdrop-blur-xl z-50">
+          <div className="px-4 py-3 border-b border-slate-200 dark:border-white/[0.08] text-xs font-semibold uppercase tracking-widest text-slate-500 dark:text-white/40">
+            Notifications
+          </div>
+          {items.length === 0 ? (
+            <div className="px-4 py-6 text-sm text-slate-500 dark:text-white/40 text-center">Nothing needs your attention.</div>
+          ) : (
+            <ul>
+              {items.map((item) => (
+                <li key={item.id} className="border-b border-slate-100 dark:border-white/[0.04] last:border-0">
+                  <Link
+                    href={item.link}
+                    onClick={() => setOpen(false)}
+                    className="block px-4 py-3 text-sm hover:bg-slate-50 dark:hover:bg-white/[0.04]"
+                  >
+                    <p className="text-slate-800 dark:text-white/80">{item.message}</p>
+                    {item.timestamp && (
+                      <p className="mt-1 text-[10px] text-slate-400 dark:text-white/30">
+                        {new Date(item.timestamp).toLocaleString()}
+                      </p>
+                    )}
+                  </Link>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
 
 export default function AdminLayout({ children }: { children: React.ReactNode }) {
   const router = useRouter();
@@ -124,6 +212,7 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
               );
             })}
           </nav>
+          <NotificationBell />
         </div>
       </header>
       <main className="max-w-6xl mx-auto px-6 py-8">{children}</main>

@@ -26,6 +26,16 @@ type UsageRow = {
   over_limit: boolean;
 };
 
+function formatRoleLabel(role: string): string {
+  const normalized = String(role || "").trim().toLowerCase();
+  if (!normalized) return "";
+  if (normalized === "cto") return "CTO";
+  return normalized
+    .split("-")
+    .map((part) => (part ? `${part[0].toUpperCase()}${part.slice(1)}` : part))
+    .join(" ");
+}
+
 export default function AdminUsagePage() {
   const [rows, setRows] = useState<UsageRow[]>([]);
   const [totals, setTotals] = useState({ prompt_tokens: 0, completion_tokens: 0, total_tokens: 0, calls: 0 });
@@ -119,7 +129,7 @@ export default function AdminUsagePage() {
             {rows.map((r) => (
               <tr key={r.username} className={`border-t border-slate-200 dark:border-white/[0.06] ${r.over_limit ? "bg-red-500/[0.04]" : ""}`}>
                 <td className="px-4 py-3 font-medium">{r.username}</td>
-                <td className="px-4 py-3 text-slate-500 dark:text-white/40">{r.role || "—"}</td>
+                <td className="px-4 py-3 text-slate-500 dark:text-white/40">{r.role ? formatRoleLabel(r.role) : "—"}</td>
                 <td className="px-4 py-3 text-right tabular-nums">{r.prompt_tokens.toLocaleString()}</td>
                 <td className="px-4 py-3 text-right tabular-nums">{r.completion_tokens.toLocaleString()}</td>
                 <td className="px-4 py-3 text-right tabular-nums font-semibold">{r.total_tokens.toLocaleString()}</td>

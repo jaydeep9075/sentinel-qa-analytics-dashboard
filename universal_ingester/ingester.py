@@ -74,12 +74,34 @@ logger = logging.getLogger(__name__)
 EMBED_STRUCTURED_MODE = os.getenv("INGEST_EMBED_STRUCTURED", "auto").strip().lower()  # auto|always|never
 EMBED_MAX_ROWS = int(os.getenv("INGEST_EMBED_MAX_ROWS", "20000"))
 
+# Hard cap on rows per structured dataset - documented in CLAUDE.md but,
+# until now, never actually enforced anywhere. Without it, a runaway CSV or
+# an unfiltered "ingest the whole table" database source can consume
+# unbounded memory/disk before anyone notices.
+INGEST_MAX_ROWS = int(os.getenv("INGEST_MAX_ROWS", "500000"))
+
+
+class RowLimitExceededError(RuntimeError):
+    pass
+
 
 class UniversalIngester:
-    def __init__(self, data_base_path: str = "../data"):
+    def __init__(self, data_base_path: str = "../data", embedding_model: Optional[str] = None):
+        """
+        embedding_model: optional override of the sentence-transformers model
+            used to embed documents at ingest time. None keeps
+            EmbeddingGenerator's own default (all-MiniLM-L6-v2), so this
+            package stays fully runnable standalone (CLI, tests) with zero
+            external config. The FastAPI service layer (ingestion_jobs.py)
+            passes the admin/env-configured model in explicitly - this
+            module deliberately does not import services.app_settings
+            itself to keep the dependency direction one-way (services
+            depends on universal_ingester, never the reverse).
+        """
         self.data_base_path = Path(data_base_path).absolute()
         self.data_base_path.mkdir(parents=True, exist_ok=True)
         self._embedder = None  # lazy: not every ingestion needs embeddings
+        self._embedding_model = embedding_model
         self.schema_detector = RuntimeSchemaDetector()
         self.duck_db = None
         self.lance_db = None
@@ -90,7 +112,8 @@ class UniversalIngester:
     @property
     def embedder(self) -> EmbeddingGenerator:
         if self._embedder is None:
-            self._embedder = EmbeddingGenerator()
+            kwargs = {"model_name": self._embedding_model} if self._embedding_model else {}
+            self._embedder = EmbeddingGenerator(**kwargs)
         return self._embedder
 
     # ------------------------------------------------------------------
@@ -124,21 +147,48 @@ class UniversalIngester:
             self.report.dataset_failed(source_type, exc)
             datasets = []
 
-        for dataset in datasets:
-            name = dataset.get('name', 'unnamed')
-            self.report.dataset_started(name, source_type)
-            try:
-                rows = self._ingest_dataset(dataset, source_type, build_id)
-                total_rows += rows
-            except Exception as exc:
-                # One bad dataset must not abort the run.
-                logger.exception("Dataset %s failed", name)
-                self.report.dataset_failed(name, exc)
+        try:
+            for dataset in datasets:
+                name = dataset.get('name', 'unnamed')
+                self.report.dataset_started(name, source_type)
+                try:
+                    rows = self._ingest_dataset(dataset, source_type, build_id)
+                    total_rows += rows
+                except Exception as exc:
+                    # One bad dataset must not abort the run.
+                    logger.exception("Dataset %s failed", name)
+                    self.report.dataset_failed(name, exc)
+        finally:
+            # DBConnector holds a pooled engine (open file handle for
+            # SQLite, open sockets for network databases) for as long as its
+            # streamed datasets are being consumed above - release it now
+            # rather than waiting on garbage collection, which on Windows
+            # can leave a SQLite file locked well after ingestion "finishes".
+            close = getattr(connector, "close", None)
+            if callable(close):
+                try:
+                    close()
+                except Exception:
+                    logger.warning("Error closing connector for %s", source_type, exc_info=True)
 
         self.link_to_duckdb()
         self.report.finish()
+        report_dict = self.report.to_dict()
         self.report.write(ingestion_folder)
         self._generate_summary(build_id, total_rows)
+
+        # A build directory with only failed datasets is not a usable build -
+        # surface it as a job failure (instead of a silent "completed" with 0
+        # rows) so ingestion_jobs.start_ingestion marks it failed and
+        # GET /ingestions correctly hides it rather than listing an empty
+        # build with no explanation.
+        if report_dict.get("overall_status") == "failed":
+            errors = "; ".join(
+                f"{ds_name}: {info.get('error')}"
+                for ds_name, info in report_dict.get("datasets", {}).items()
+                if info.get("status") == "failed"
+            )
+            raise RuntimeError(f"Ingestion failed: {errors or 'all datasets failed'}")
         logger.info(f"Ingestion {build_id} completed. Summary saved.")
         return total_rows
 
@@ -158,19 +208,27 @@ class UniversalIngester:
                 source_type = 'allure'
 
         if source_type == 'file':
-            connector = FileConnector(params['path'])
+            connector = FileConnector(
+                params['path'],
+                delimiter=params.get('delimiter'),
+                has_header=params.get('has_header', True),
+                encoding=params.get('encoding'),
+                sheet_name=params.get('sheet_name'),
+            )
         elif source_type == 'db':
             connector = DBConnector(
                 connection_string=params['connection_string'],
                 tables=params.get('tables'),
-                connect_args=params.get('connect_args')
+                connect_args=params.get('connect_args'),
+                batch_size=params.get('batch_size'),
             )
         elif source_type == 'api':
             connector = APIConnector(
                 url=params['url'],
                 method=params.get('method', 'GET'),
                 headers=params.get('headers'),
-                params=params.get('params')
+                params=params.get('params'),
+                json_body=params.get('json_body'),
             )
         elif source_type == 'allure':
             try:
@@ -273,6 +331,11 @@ class UniversalIngester:
                            source_type: str, source_id: str, build_id: str) -> int:
         if df is None:
             df = pd.DataFrame()
+        if len(df) > INGEST_MAX_ROWS:
+            raise RowLimitExceededError(
+                f"Dataset '{name}' has {len(df):,} rows, exceeding the configured "
+                f"{INGEST_MAX_ROWS:,} row ingestion limit"
+            )
         df = self._flatten_json_column(df)
         # Preserve any original build_id column from the source data.
         if 'build_id' in df.columns:
@@ -314,6 +377,11 @@ class UniversalIngester:
             if batch is None or batch.empty:
                 continue
             batch_no += 1
+            if total + len(batch) > INGEST_MAX_ROWS:
+                raise RowLimitExceededError(
+                    f"Dataset '{name}' exceeds the configured {INGEST_MAX_ROWS:,} row "
+                    f"ingestion limit (stopped after {total:,} rows across {batch_no - 1} batches)"
+                )
             try:
                 batch = self._flatten_json_column(batch)
                 if 'build_id' in batch.columns and 'original_build_id' not in batch.columns:
@@ -475,9 +543,18 @@ class UniversalIngester:
         if not docs:
             return 0
         texts = [doc['text'] for doc in docs]
-        embeddings = self.embedder.embed(texts)
+        embedder = self.embedder
+        embeddings = embedder.embed(texts)
         for doc, emb in zip(docs, embeddings):
             doc['embedding'] = emb
+            # Lets query-time vector_search() detect "this build was
+            # embedded under a DIFFERENT model than is currently
+            # configured" and refuse rather than silently returning
+            # meaningless nearest-neighbors - two models can share a vector
+            # dimension (e.g. both 384-dim) while their embedding spaces
+            # are completely unrelated, so a dimension check alone isn't
+            # enough to catch a stale/switched model.
+            doc['embedding_model'] = embedder.model_name
         return self.storage.write_documents(docs, build_id)
 
     # ------------------------------------------------------------------
@@ -692,19 +769,27 @@ class UniversalIngester:
             text = " | ".join(parts)
             if not text:
                 continue
-            docs.append({
-                'id': f"{dataset_name}_{idx}_{uuid.uuid4().hex[:8]}",
-                'text': text,
-                'metadata': meta_json,
-                'source_id': source_id,
-                'build_id': build_id,
-                'timestamp': now,
-                'parent_id': source_id,
-                'chunk_index': 0,
-                'chunk_count': 1,
-                'doc_type': 'structured_row',
-                'content_hash': compute_text_hash(text),
-            })
+            # Almost every row is short and chunk_text() returns it
+            # unchanged as a single chunk in that case - this only
+            # actually splits the rare row carrying one long field (a full
+            # stack trace/error message) that would otherwise be embedded
+            # whole, silently exceeding what the embedding model can
+            # effectively attend to.
+            parent_id = f"{dataset_name}_{idx}_{uuid.uuid4().hex[:8]}"
+            for chunk in chunk_text(text):
+                docs.append({
+                    'id': f"{parent_id}_c{chunk['chunk_index']}",
+                    'text': chunk['text'],
+                    'metadata': meta_json,
+                    'source_id': source_id,
+                    'build_id': build_id,
+                    'timestamp': now,
+                    'parent_id': parent_id,
+                    'chunk_index': chunk['chunk_index'],
+                    'chunk_count': chunk['chunk_count'],
+                    'doc_type': 'structured_row',
+                    'content_hash': compute_text_hash(chunk['text']),
+                })
         return docs
 
     # ------------------------------------------------------------------

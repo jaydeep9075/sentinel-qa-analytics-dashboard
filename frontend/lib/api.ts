@@ -302,22 +302,110 @@ export async function ingestFromConfigPath(sourcePath: string) {
   return data;
 }
 
-export async function getTokenUsage() {
-  const key = withCacheKey("tokenUsage", "global");
-  const cached = cacheGet<Record<string, unknown>>(key);
-  if (cached) return cached;
+export interface ConnectorField {
+  name: string;
+  type: "text" | "select" | "checkbox" | "textarea" | "number";
+  label: string;
+  placeholder?: string;
+  required: boolean;
+  help?: string;
+  default?: unknown;
+  options?: { value: string; label: string }[];
+  validation?: string;
+}
 
-  const res = await timedFetch(
-    `${API_BASE}/usage/tokens`,
-    {
-    cache: "no-store",
+export interface ConnectorOption {
+  id: string;
+  name: string;
+  description: string;
+  fields: ConnectorField[];
+  formats: string[];
+  auto_detect: boolean;
+}
+
+async function parseJsonOrThrow<T>(res: Response, fallback: string): Promise<T> {
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    throw new Error((data?.detail as string) || (data?.error as string) || fallback);
+  }
+  return data as T;
+}
+
+export async function getConnectorOptions(): Promise<{ connectors: ConnectorOption[] }> {
+  const res = await fetch(`${API_BASE}/ingest/connectors`, { headers: getAuthHeaders() });
+  return parseJsonOrThrow<{ connectors: ConnectorOption[] }>(res, "Failed to load connector options");
+}
+
+export async function uploadIngestFile(
+  file: File,
+  connectorType: string,
+): Promise<{ staged_path: string; filename: string; bytes: number }> {
+  const form = new FormData();
+  form.append("connector_type", connectorType);
+  form.append("file", file);
+  const res = await fetch(`${API_BASE}/ingest/upload-file`, {
+    method: "POST",
     headers: getAuthHeaders(),
-    },
-    "api:token-usage",
+    body: form,
+  });
+  return parseJsonOrThrow<{ staged_path: string; filename: string; bytes: number }>(res, "Upload failed");
+}
+
+export interface TestConnectionResult {
+  success: boolean;
+  message?: string;
+  tables?: string[];
+  table_count?: number;
+  status_code?: number;
+  content_type?: string;
+  is_json?: boolean;
+  preview?: string;
+}
+
+export async function testConnection(
+  connectorType: string,
+  config: Record<string, unknown>,
+): Promise<TestConnectionResult> {
+  const res = await fetch(`${API_BASE}/ingest/test-connection`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...getAuthHeaders() },
+    body: JSON.stringify({ connector_type: connectorType, config }),
+  });
+  return parseJsonOrThrow<TestConnectionResult>(res, "Connection test failed");
+}
+
+export interface BuildIngestPayload {
+  connector_type: string;
+  config: Record<string, unknown>;
+  display_name?: string;
+}
+
+export async function startBuildIngestion(
+  payload: BuildIngestPayload,
+): Promise<{ success: boolean; build_id: string; connector_type: string; status: string }> {
+  const res = await fetch(`${API_BASE}/ingest/build`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...getAuthHeaders() },
+    body: JSON.stringify(payload),
+  });
+  return parseJsonOrThrow<{ success: boolean; build_id: string; connector_type: string; status: string }>(
+    res, "Failed to start ingestion",
   );
-  const data = await res.json();
-  cacheSet(key, data, 12000);
-  return data;
+}
+
+export interface IngestStatus {
+  build_id: string;
+  status: "running" | "completed" | "failed";
+  error: string | null;
+  started_at: string;
+  finished_at: string | null;
+}
+
+export async function getIngestStatus(buildId: string): Promise<IngestStatus> {
+  const res = await fetch(`${API_BASE}/ingest/status/${encodeURIComponent(buildId)}`, {
+    headers: getAuthHeaders(),
+  });
+  return parseJsonOrThrow<IngestStatus>(res, "Failed to fetch ingestion status");
 }
 
 export interface DashboardOverview {
@@ -333,14 +421,6 @@ export interface DashboardOverview {
     quality?: string;
     guidance?: string[];
     checks?: { name?: string; passed?: boolean; detail?: string }[];
-  };
-  token_usage?: {
-    totals?: {
-      total_tokens?: number;
-      prompt_tokens?: number;
-      completion_tokens?: number;
-      calls?: number;
-    };
   };
   server_time?: string;
 }
@@ -359,7 +439,6 @@ export async function getDashboardOverview(
       connected: true,
       status: { has_data: false, total_rows: 0, status_summary: { passed: 0, failed: 0 } },
       quality: { score: 0, quality: "unknown", guidance: ["No ingestion selected"], checks: [] },
-      token_usage: { totals: { total_tokens: 0, prompt_tokens: 0, completion_tokens: 0, calls: 0 } },
     };
   }
 

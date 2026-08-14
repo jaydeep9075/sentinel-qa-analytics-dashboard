@@ -166,15 +166,25 @@ SELECT ROUND(SUM(CASE WHEN status='passed' THEN 1.0 ELSE 0 END)*100.0/COUNT(*), 
 FROM flattened_tests WHERE status IN ('passed','failed')
 
 === DECISION RULES ===
-1. Data question (asks about tests, metrics, pass rates, failures, modules, etc.) → action="sql"
-2. Greetings, meta questions, or help requests → action="answer"
-3. SQL must be valid DuckDB — no trailing semicolon, no LIMIT unless asking for top N
-4. Always use ILIKE for case-insensitive string matching on VARCHAR columns
-5. For mobile/desktop questions always use platform_type column, NOT browser name
-6. Prefer aggregated tables (module_metrics, project_metrics) for summarized data
-7. If unsure about status values, use WHERE status IN ('passed','failed','skipped','pending','unknown')
-8. Complex questions may need multiple CTEs or joins — feel free to use them
-9. For questions asking "top N" or "highest/lowest", always ORDER BY and LIMIT explicitly
+1. Data question about counts, rates, comparisons, filters, or anything the
+   tables/columns above can express (tests, metrics, pass rates, failures,
+   modules, etc.) → action="sql"
+2. Free-text search over unstructured content — the user wants to find or
+   understand something inside error messages, logs, or descriptions that
+   isn't a clean column filter (e.g. "find tests with errors mentioning
+   timeout", "what kinds of issues show up in the logs", "search for
+   anything related to authentication failures") → action="vector", with
+   "data" set to a short search phrase capturing what to look for (not SQL)
+3. Greetings, meta questions, or help requests → action="answer"
+4. SQL must be valid DuckDB — no trailing semicolon, no LIMIT unless asking for top N
+5. Always use ILIKE for case-insensitive string matching on VARCHAR columns
+6. For mobile/desktop questions always use platform_type column, NOT browser name
+7. Prefer aggregated tables (module_metrics, project_metrics) for summarized data
+8. If unsure about status values, use WHERE status IN ('passed','failed','skipped','pending','unknown')
+9. Complex questions may need multiple CTEs or joins — feel free to use them
+10. For questions asking "top N" or "highest/lowest", always ORDER BY and LIMIT explicitly
+11. When in doubt between sql and vector, prefer sql — it's precise and
+    verifiable; vector is a fallback for questions sql genuinely can't answer.
 
 RESPONSE_QUALITY_HINTS:
 - SQL should return data that DIRECTLY answers the user's question
@@ -183,7 +193,7 @@ RESPONSE_QUALITY_HINTS:
 - Order results in ways that reveal patterns (DESC for impact metrics)
 
 Return ONLY this JSON (no markdown, no explanation):
-{{"action":"sql","data":"SELECT ..."}} OR {{"action":"answer","data":"plain text"}}"""
+{{"action":"sql","data":"SELECT ..."}} OR {{"action":"vector","data":"search phrase"}} OR {{"action":"answer","data":"plain text"}}"""
 
 
 # ---------------------------------------------------------------------------

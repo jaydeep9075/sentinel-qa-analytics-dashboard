@@ -46,6 +46,10 @@ export default function LoginPage() {
   // Whether to offer "Request access". Deployments can disable self-service
   // registration, and a link to a form that always 403s is worse than no link.
   const [selfRegistration, setSelfRegistration] = useState(false);
+  const [showDefaultPasswordPrompt, setShowDefaultPasswordPrompt] = useState(false);
+  const [defaultPasswordMessage, setDefaultPasswordMessage] = useState(
+    "You are using the default password for this account.",
+  );
   const router = useRouter();
 
   useEffect(() => {
@@ -83,6 +87,14 @@ export default function LoginPage() {
       // client sends at login. Stored only so the UI can display it.
       localStorage.setItem("workspace_id", data.workspace_id || "default");
       localStorage.setItem("username", data.username || u);
+      if (data.default_password_prompt) {
+        setDefaultPasswordMessage(
+          data.default_password_message ||
+            "You are using the default password for this account.",
+        );
+        setShowDefaultPasswordPrompt(true);
+        return;
+      }
       if (data.must_change_password) {
         // The backend's credential_change_middleware refuses every other
         // route for this session until this happens - sending anywhere else
@@ -215,6 +227,48 @@ export default function LoginPage() {
           </div>
         </div>
       </motion.div>
+
+      {showDefaultPasswordPrompt && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-6">
+          <div
+            className="absolute inset-0 bg-black/50 backdrop-blur-sm"
+            onClick={() => setShowDefaultPasswordPrompt(false)}
+          />
+          <motion.div
+            initial={{ opacity: 0, y: 12, scale: 0.98 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            className="relative w-full max-w-md rounded-2xl border border-amber-500/30 bg-white dark:bg-slate-950 p-6 shadow-2xl"
+          >
+            <h3 className="text-lg font-bold text-slate-900 dark:text-white">Security Reminder</h3>
+            <p className="mt-2 text-sm text-slate-600 dark:text-white/70">{defaultPasswordMessage}</p>
+            <p className="mt-1 text-sm text-slate-600 dark:text-white/70">
+              Choose an option:
+            </p>
+            <div className="mt-5 grid gap-3">
+              <button
+                type="button"
+                onClick={() => {
+                  setShowDefaultPasswordPrompt(false);
+                  router.push("/account?default_password=1");
+                }}
+                className="w-full rounded-xl bg-gradient-to-r from-cyan-500 to-blue-600 px-4 py-3 text-sm font-semibold text-white"
+              >
+                Change Password
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setShowDefaultPasswordPrompt(false);
+                  router.push("/dashboard");
+                }}
+                className="w-full rounded-xl border border-slate-300 dark:border-white/15 px-4 py-3 text-sm font-semibold text-slate-700 dark:text-white/80"
+              >
+                Remind Me Later
+              </button>
+            </div>
+          </motion.div>
+        </div>
+      )}
     </div>
   );
 }

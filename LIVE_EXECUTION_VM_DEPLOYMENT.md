@@ -1,10 +1,12 @@
+
 # Hosting Sentinel Live Execution on a VM
 
 How this actually runs once it's on a server, not your laptop. One VM, no containers required (Docker is optional, not necessary).
 
 ## What's running on the VM
 
-| Process | What it is | Port |
+| Process | What it is 
+| Port |
 |---|---|---|
 | `services.main` (uvicorn) | FastAPI backend — dashboard API + live-execution ingestion/SSE | 8000 |
 | Next.js (`npm start`) | Frontend dashboard | 3000 |

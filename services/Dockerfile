@@ -126,15 +126,19 @@ EXPOSE 8000
 HEALTHCHECK --interval=30s --timeout=5s --start-period=45s --retries=3 \
     CMD python -c "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/health', timeout=3).status == 200 else 1)"
 
-# WEB_CONCURRENCY defaults to 1 worker deliberately, not for lack of CPU
-# headroom: state.py's current_ingestion_id/lance_db/duck_conn are mutable
-# globals swapped per-request by ensure_ingestion_loaded(), not request-scoped.
-# That's safe across separate worker *processes* (each has its own globals)
-# but NOT safe for two concurrent requests against different ingestions
-# landing on the SAME worker's event loop - one can start querying the
-# other's ingestion mid-await. Raise this only once that's fixed (e.g. via
-# contextvars-scoped ingestion state), or if your usage pattern never has
-# concurrent requests against different ingestions.
+# WEB_CONCURRENCY defaults to 1 worker - conservative, not required anymore.
+# state.py's current_ingestion_id/lance_db/duck_conn used to be mutable
+# globals swapped per-request by ensure_ingestion_loaded(), which was NOT
+# safe for two concurrent requests against different ingestions landing on
+# the same worker's event loop (one could start querying the other's
+# ingestion mid-await). That's fixed: they're now contextvars, isolated per
+# request/asyncio Task (see state.py), so it's safe to raise this for more
+# throughput. The remaining caveat at any worker count: two requests for the
+# SAME ingestion, on the SAME worker, running truly concurrently (the
+# threadpool cold-load path allows this) share one DuckDB connection object
+# from the warm pool - DuckDB connections aren't guaranteed safe for
+# concurrent use from multiple threads without per-thread cursor()s, which
+# this codebase doesn't yet do.
 #
 # `exec` is load-bearing, not style. Without it `sh` stays PID 1 with uvicorn
 # as its child, and sh does not forward signals - so `docker stop` / `docker

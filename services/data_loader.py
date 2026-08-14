@@ -29,17 +29,27 @@ NOT from text-matching on test names.
 import json
 import logging
 import re
+import threading
 import time
+from typing import Optional
 
 import duckdb
 import lancedb
 import numpy as np
 import pandas as pd
 
-from . import config, state
+from . import app_settings, config, state
 from universal_ingester.utils import EmbeddingGenerator
 
 logger = logging.getLogger(__name__)
+
+# Guards the cold-load path in ensure_ingestion_loaded (init_data +
+# _ingestion_pool insert/eviction). Route handlers now run that path via
+# run_in_threadpool, so without this lock, N concurrent requests for the
+# same not-yet-warm ingestion would each redundantly re-run the full
+# LanceDB -> pandas -> DuckDB rebuild instead of the first one finishing
+# and the rest reusing its pool entry.
+_ingestion_load_lock = threading.Lock()
 
 _DISALLOWED_SQL = [
     r"\bDROP\b", r"\bDELETE\b", r"\bUPDATE\b", r"\bINSERT\b",
@@ -206,18 +216,27 @@ def execute_sql_across_builds(sql: str, build_ids: list[str]) -> tuple[pd.DataFr
 
 # ── init_data ─────────────────────────────────────────────────────────────────
 
-def init_data(ingestion_id: str) -> bool:
+def init_data(ingestion_id: str) -> Optional[dict]:
+    """Cold-build the LanceDB/DuckDB handles for `ingestion_id` and return
+    them as {"lance_db", "duck_conn", "embedder"}, or None on failure.
+
+    Deliberately builds into LOCAL variables, not state.* - this runs inside
+    get_or_load_ingestion's lock, dispatched via run_in_threadpool from
+    request handlers. Writing to state.duck_conn etc. here (as this used to)
+    would permanently shadow the ContextVar-backed module attributes for
+    every future reader (see state.py) - the very bug this whole change
+    exists to remove.
+    """
     ingestion_path = config.DATA_BASE_PATH / ingestion_id / "lancedb"
     if not ingestion_path.exists():
         logger.error(f"Ingestion path not found: {ingestion_path}")
-        return False
+        return None
 
-    state.lance_db = lancedb.connect(str(ingestion_path))
-    state.duck_conn = duckdb.connect()
-    state.embedder = None
-    state.current_ingestion_id = ingestion_id
+    lance_db = lancedb.connect(str(ingestion_path))
+    duck_conn = duckdb.connect()
+    embedder = None
 
-    available = state.lance_db.table_names()
+    available = lance_db.table_names()
     logger.info(f"LanceDB tables for '{ingestion_id}': {available}")
 
     if "structured_test_results" not in available:
@@ -225,31 +244,31 @@ def init_data(ingestion_id: str) -> bool:
         structured_candidates = [t for t in available if t.startswith("structured_")]
         if not structured_candidates:
             logger.warning("No structured tables found for ingestion")
-            return False
+            return None
         try:
             primary_table = structured_candidates[0]
-            generic_df = state.lance_db.open_table(primary_table).to_pandas()
+            generic_df = lance_db.open_table(primary_table).to_pandas()
             flat = _coerce_generic_to_flattened_tests(generic_df)
-            state.duck_conn.register("flattened_tests", flat)
+            duck_conn.register("flattened_tests", flat)
             logger.info(
                 f"Using generalized fallback from {primary_table}: registered flattened_tests with {len(flat)} rows"
             )
 
             df_mod = _compute_module_metrics(flat)
-            state.duck_conn.register("module_metrics", df_mod)
+            duck_conn.register("module_metrics", df_mod)
             df_proj = _compute_project_metrics(df_mod)
-            state.duck_conn.register("project_metrics", df_proj)
+            duck_conn.register("project_metrics", df_proj)
             tc = _build_test_cases(flat)
-            state.duck_conn.register("test_cases", tc)
+            duck_conn.register("test_cases", tc)
 
-            _log_summary(state.duck_conn)
-            return True
+            _log_summary(duck_conn)
+            return {"lance_db": lance_db, "duck_conn": duck_conn, "embedder": embedder}
         except Exception as exc:
             logger.error(f"Generalized fallback init failed: {exc}", exc_info=True)
-            return False
+            return None
 
     try:
-        df_raw = state.lance_db.open_table("structured_test_results").to_pandas()
+        df_raw = lance_db.open_table("structured_test_results").to_pandas()
         logger.info(f"structured_test_results: {len(df_raw)} rows | cols: {list(df_raw.columns)}")
 
         # ── flatten to per-test rows ──────────────────────────────────────────
@@ -260,7 +279,7 @@ def init_data(ingestion_id: str) -> bool:
 
         if not rows:
             logger.warning("No test records after flattening")
-            return False
+            return None
 
         flat = pd.DataFrame(rows)
 
@@ -271,79 +290,112 @@ def init_data(ingestion_id: str) -> bool:
         elif "platform_type" not in flat.columns:
             flat["platform_type"] = "desktop"
 
-        state.duck_conn.register("flattened_tests", flat)
+        duck_conn.register("flattened_tests", flat)
         logger.info(f"Registered flattened_tests: {len(flat)} rows")
 
         # ── module_metrics ────────────────────────────────────────────────────
         if "structured_test_module_metrics" in available:
-            df_mod = state.lance_db.open_table("structured_test_module_metrics").to_pandas()
+            df_mod = lance_db.open_table("structured_test_module_metrics").to_pandas()
             df_mod = _ensure_module_cols(df_mod)
             # Re-derive platform_type if possible
-            state.duck_conn.register("module_metrics", df_mod)
+            duck_conn.register("module_metrics", df_mod)
             logger.info(f"Registered module_metrics from LanceDB: {len(df_mod)} rows")
         else:
             df_mod = _compute_module_metrics(flat)
-            state.duck_conn.register("module_metrics", df_mod)
+            duck_conn.register("module_metrics", df_mod)
             logger.info(f"Computed+registered module_metrics: {len(df_mod)} rows")
 
         # ── project_metrics ───────────────────────────────────────────────────
         if "structured_test_project_metrics" in available:
-            df_proj = state.lance_db.open_table("structured_test_project_metrics").to_pandas()
+            df_proj = lance_db.open_table("structured_test_project_metrics").to_pandas()
             df_proj = _ensure_project_cols(df_proj)
-            state.duck_conn.register("project_metrics", df_proj)
+            duck_conn.register("project_metrics", df_proj)
             logger.info(f"Registered project_metrics from LanceDB: {len(df_proj)} rows")
         else:
             df_proj = _compute_project_metrics(df_mod)
-            state.duck_conn.register("project_metrics", df_proj)
+            duck_conn.register("project_metrics", df_proj)
             logger.info(f"Computed+registered project_metrics: {len(df_proj)} rows")
 
         # ── test_cases (backward-compat) ──────────────────────────────────────
         tc = _build_test_cases(flat)
-        state.duck_conn.register("test_cases", tc)
+        duck_conn.register("test_cases", tc)
         logger.info(f"Registered test_cases: {len(tc)} rows")
 
-        _log_summary(state.duck_conn)
-        return True
+        _log_summary(duck_conn)
+        return {"lance_db": lance_db, "duck_conn": duck_conn, "embedder": embedder}
 
     except Exception as exc:
         logger.error(f"init_data failed: {exc}", exc_info=True)
-        return False
+        return None
 
 
-def ensure_ingestion_loaded(ingestion_id: str) -> bool:
-    """Make `ingestion_id` the active ingestion, using a small LRU pool of
-    warm connections (state._ingestion_pool) so repeatedly switching between
-    a handful of recently used ingestions is an O(1) pointer swap instead of
-    a full LanceDB/DuckDB reload."""
+def get_or_load_ingestion(ingestion_id: str) -> Optional[dict]:
+    """Resolve `ingestion_id` to {"lance_db", "duck_conn", "embedder"} using
+    a small LRU pool of warm connections (state._ingestion_pool) so repeatedly
+    switching between a handful of recently used ingestions is an O(1) pool
+    hit instead of a full LanceDB/DuckDB reload.
+
+    Thread-safe, and deliberately does NOT touch which ingestion is
+    "active" - it only resolves/builds the pool entry and returns it. Callers
+    on the request path (main.py, handlers.py) must call
+    state.set_active_ingestion(ingestion_id, **entry) themselves, in their
+    own async function, with the dict this returns - see the caveat in
+    state.py about why that activation step can't happen in here.
+    """
     ingestion_id = str(ingestion_id or "").strip()
     if not ingestion_id:
-        return False
+        return None
 
     entry = state._ingestion_pool.get(ingestion_id)
     if entry is not None:
         state._ingestion_pool.move_to_end(ingestion_id)
-        state.lance_db = entry["lance_db"]
-        state.duck_conn = entry["duck_conn"]
-        state.embedder = entry["embedder"]
-        state.current_ingestion_id = ingestion_id
-        return True
+        return entry
 
-    if not init_data(ingestion_id):
+    # Cold path: serialize so concurrent requests for the same not-yet-warm
+    # ingestion don't each redo the full rebuild (see lock comment above).
+    with _ingestion_load_lock:
+        # Re-check - another thread may have finished loading this exact
+        # ingestion while we were waiting for the lock.
+        entry = state._ingestion_pool.get(ingestion_id)
+        if entry is not None:
+            state._ingestion_pool.move_to_end(ingestion_id)
+            return entry
+
+        entry = init_data(ingestion_id)
+        if entry is None:
+            return None
+
+        state._ingestion_pool[ingestion_id] = entry
+        state._ingestion_pool.move_to_end(ingestion_id)
+        while len(state._ingestion_pool) > config.INGESTION_POOL_SIZE:
+            old_id, old_entry = state._ingestion_pool.popitem(last=False)
+            try:
+                old_entry["duck_conn"].close()
+            except Exception:
+                pass
+            logger.info(f"Evicted ingestion '{old_id}' from warm pool")
+        return entry
+
+
+def ensure_ingestion_loaded(ingestion_id: str) -> bool:
+    """Legacy synchronous API: resolve `ingestion_id` AND make it this
+    process's active ingestion in one call, returning success/failure.
+
+    Only safe to use from code that is itself already confined to a single
+    thread/context for its whole duration - e.g. execute_sql_across_builds,
+    which borrows the active pointer across a loop of builds and restores it
+    before returning, all synchronously within whichever single
+    run_in_threadpool call dispatched it. Request handlers that need to make
+    an ingestion active for the REST of their own execution (including after
+    an `await`) must not use this - use
+    `await run_in_threadpool(get_or_load_ingestion, id)` followed by
+    `state.set_active_ingestion(id, **entry)` in their own async code
+    instead, or activation silently won't stick (see state.py).
+    """
+    entry = get_or_load_ingestion(ingestion_id)
+    if entry is None:
         return False
-
-    state._ingestion_pool[ingestion_id] = {
-        "lance_db": state.lance_db,
-        "duck_conn": state.duck_conn,
-        "embedder": state.embedder,
-    }
-    state._ingestion_pool.move_to_end(ingestion_id)
-    while len(state._ingestion_pool) > config.INGESTION_POOL_SIZE:
-        old_id, old_entry = state._ingestion_pool.popitem(last=False)
-        try:
-            old_entry["duck_conn"].close()
-        except Exception:
-            pass
-        logger.info(f"Evicted ingestion '{old_id}' from warm pool")
+    state.set_active_ingestion(str(ingestion_id or "").strip(), entry["duck_conn"], entry["lance_db"], entry["embedder"])
     return True
 
 
@@ -685,9 +737,10 @@ def _coerce_generic_to_flattened_tests(df: pd.DataFrame) -> pd.DataFrame:
 def get_schema_info():
     schemas = {}
     if state.duck_conn:
-        for (tbl,) in state.duck_conn.execute("SHOW TABLES").fetchall():
-            info = state.duck_conn.execute(f"DESCRIBE {tbl}").fetchall()
-            schemas[tbl] = [(r[0], r[1]) for r in info]
+        with state._duck_query_lock:
+            for (tbl,) in state.duck_conn.execute("SHOW TABLES").fetchall():
+                info = state.duck_conn.execute(f"DESCRIBE {tbl}").fetchall()
+                schemas[tbl] = [(r[0], r[1]) for r in info]
     return schemas
 
 
@@ -696,25 +749,26 @@ def get_data_profile(sample_rows: int = 5):
     if not state.duck_conn:
         return profile
 
-    try:
-        tables = [r[0] for r in state.duck_conn.execute("SHOW TABLES").fetchall()]
-    except Exception:
-        return profile
-
-    for tbl in tables:
+    with state._duck_query_lock:
         try:
-            info = state.duck_conn.execute(f"DESCRIBE {tbl}").fetchall()
-            count = int(state.duck_conn.execute(f"SELECT COUNT(*) FROM {tbl}").fetchone()[0])
-            sample_df = state.duck_conn.execute(
-                f"SELECT * FROM {tbl} LIMIT {int(max(1, sample_rows))}"
-            ).df()
-            profile["tables"][tbl] = {
-                "row_count": count,
-                "columns": [{"name": r[0], "type": r[1]} for r in info],
-                "sample": sample_df.to_dict(orient="records"),
-            }
-        except Exception as exc:
-            profile["tables"][tbl] = {"error": str(exc)}
+            tables = [r[0] for r in state.duck_conn.execute("SHOW TABLES").fetchall()]
+        except Exception:
+            return profile
+
+        for tbl in tables:
+            try:
+                info = state.duck_conn.execute(f"DESCRIBE {tbl}").fetchall()
+                count = int(state.duck_conn.execute(f"SELECT COUNT(*) FROM {tbl}").fetchone()[0])
+                sample_df = state.duck_conn.execute(
+                    f"SELECT * FROM {tbl} LIMIT {int(max(1, sample_rows))}"
+                ).df()
+                profile["tables"][tbl] = {
+                    "row_count": count,
+                    "columns": [{"name": r[0], "type": r[1]} for r in info],
+                    "sample": sample_df.to_dict(orient="records"),
+                }
+            except Exception as exc:
+                profile["tables"][tbl] = {"error": str(exc)}
     return profile
 
 
@@ -732,19 +786,20 @@ def get_ingestion_quality_report():
         report["guidance"].append("Data connection not initialized. Run ingestion first.")
         return report
 
-    try:
-        tables = [r[0] for r in state.duck_conn.execute("SHOW TABLES").fetchall()]
-    except Exception as exc:
-        report["guidance"].append(f"Could not inspect tables: {exc}")
-        return report
+    with state._duck_query_lock:
+        try:
+            tables = [r[0] for r in state.duck_conn.execute("SHOW TABLES").fetchall()]
+        except Exception as exc:
+            report["guidance"].append(f"Could not inspect tables: {exc}")
+            return report
 
-    required_tables = ["flattened_tests", "module_metrics", "project_metrics"]
-    for tbl in required_tables:
-        if tbl in tables:
-            count = int(state.duck_conn.execute(f"SELECT COUNT(*) FROM {tbl}").fetchone()[0])
-            report["table_counts"][tbl] = count
-        else:
-            report["table_counts"][tbl] = 0
+        required_tables = ["flattened_tests", "module_metrics", "project_metrics"]
+        for tbl in required_tables:
+            if tbl in tables:
+                count = int(state.duck_conn.execute(f"SELECT COUNT(*) FROM {tbl}").fetchone()[0])
+                report["table_counts"][tbl] = count
+            else:
+                report["table_counts"][tbl] = 0
 
     checks = []
     score_parts = []
@@ -781,7 +836,8 @@ def get_ingestion_quality_report():
         mandatory_cols = [
             "test_name", "status", "duration", "project_name", "module_name", "platform_type"
         ]
-        present = [c[0] for c in state.duck_conn.execute("DESCRIBE flattened_tests").fetchall()]
+        with state._duck_query_lock:
+            present = [c[0] for c in state.duck_conn.execute("DESCRIBE flattened_tests").fetchall()]
         missing = [c for c in mandatory_cols if c not in present]
         _add_check(
             "flattened_tests required columns",
@@ -791,9 +847,10 @@ def get_ingestion_quality_report():
         )
 
         try:
-            status_df = state.duck_conn.execute(
-                "SELECT status, COUNT(*) AS cnt FROM flattened_tests GROUP BY status"
-            ).df()
+            with state._duck_query_lock:
+                status_df = state.duck_conn.execute(
+                    "SELECT status, COUNT(*) AS cnt FROM flattened_tests GROUP BY status"
+                ).df()
             known = {"passed", "failed", "skipped", "pending", "unknown"}
             known_count = int(status_df[status_df["status"].astype(str).str.lower().isin(known)]["cnt"].sum())
             total = int(status_df["cnt"].sum()) if not status_df.empty else 0
@@ -840,13 +897,15 @@ def get_ingestion_quality_report():
     # Collect parser strategy insights from schema/source metadata when available.
     if "ingestion_schema_profiles" in tables:
         try:
-            prof_count = int(state.duck_conn.execute("SELECT COUNT(*) FROM ingestion_schema_profiles").fetchone()[0])
+            with state._duck_query_lock:
+                prof_count = int(state.duck_conn.execute("SELECT COUNT(*) FROM ingestion_schema_profiles").fetchone()[0])
             report["parser_insights"]["schema_profiles"] = prof_count
         except Exception:
             pass
     if "sources" in tables:
         try:
-            src_count = int(state.duck_conn.execute("SELECT COUNT(*) FROM sources").fetchone()[0])
+            with state._duck_query_lock:
+                src_count = int(state.duck_conn.execute("SELECT COUNT(*) FROM sources").fetchone()[0])
             report["parser_insights"]["sources"] = src_count
         except Exception:
             pass
@@ -864,16 +923,86 @@ def execute_sql(query: str):
         ok, clean = validate_sql(query)
         if not ok:
             return pd.DataFrame(), clean
-        return state.duck_conn.execute(clean).df(), None
+        with state._duck_query_lock:
+            return state.duck_conn.execute(clean).df(), None
     except Exception as exc:
         logger.error(f"SQL error: {exc}")
         return pd.DataFrame(), str(exc)
 
 
+_embedder_singleton: Optional[EmbeddingGenerator] = None
+_embedder_singleton_model: Optional[str] = None
+_embedder_singleton_lock = threading.Lock()
+
+
+def _get_shared_embedder() -> EmbeddingGenerator:
+    """Process-wide singleton keyed to the currently EFFECTIVE embedding
+    model (services/app_settings.py: database > env > default, same
+    resolution as the LLM settings). Rebuilds itself if an admin changes the
+    model from Settings, so that takes effect on the next call - no restart
+    needed. Previously this was accidentally rebuilt (tokenizer + weights
+    reloaded) on every single vector_search() call: state.embedder's "cache"
+    only lived in a per-request ContextVar that got reset to None on every
+    request, so the lazy-create-and-cache in the old vector_search never
+    actually persisted anything."""
+    global _embedder_singleton, _embedder_singleton_model
+    effective_model = app_settings.get_effective_embedding_model()
+    if _embedder_singleton is None or _embedder_singleton_model != effective_model:
+        with _embedder_singleton_lock:
+            if _embedder_singleton is None or _embedder_singleton_model != effective_model:
+                _embedder_singleton = EmbeddingGenerator(model_name=effective_model)
+                _embedder_singleton_model = effective_model
+    return _embedder_singleton
+
+
+def _stored_embedding_model(table) -> Optional[str]:
+    """Which model this build's documents were actually embedded with, from
+    the first row's 'embedding_model' tag (see ingester._embed_and_store).
+    None for a table predating that tag (legacy build) or any read hiccup -
+    treated as "unknown, proceed" by the caller rather than a hard block, so
+    pre-upgrade data doesn't become entirely unsearchable."""
+    try:
+        cols = table.schema.names
+        if "embedding_model" not in cols:
+            return None
+        row = table.head(1).to_pandas()
+        if row.empty:
+            return None
+        value = row["embedding_model"].iloc[0]
+        return str(value) if value else None
+    except Exception:
+        return None
+
+
 def vector_search(query: str, top_k: int = 5):
     if state.lance_db is None or "documents" not in state.lance_db.table_names():
         return []
-    if state.embedder is None:
-        state.embedder = EmbeddingGenerator()
-    q_emb = state.embedder.embed([query])[0]
-    return state.lance_db.open_table("documents").search(q_emb).limit(top_k).to_list()
+    try:
+        table = state.lance_db.open_table("documents")
+        embedder = _get_shared_embedder()
+
+        stored_model = _stored_embedding_model(table)
+        if stored_model and stored_model != embedder.model_name:
+            # Two different models can share a vector dimension (e.g. both
+            # 384-dim) while their embedding spaces are unrelated - a
+            # dimension mismatch would at least raise below, but a
+            # same-dimension mismatch would silently return
+            # plausible-looking, meaningless nearest-neighbors instead.
+            # Refuse rather than risk that; the caller already treats an
+            # empty result as "no relevant information found".
+            logger.warning(
+                "vector_search skipped: this build was embedded with '%s' but "
+                "'%s' is currently configured - re-ingest this build to search "
+                "it under the new model.", stored_model, embedder.model_name,
+            )
+            return []
+
+        q_emb = embedder.embed([query])[0]
+        return table.search(q_emb).limit(top_k).to_list()
+    except Exception as exc:
+        # Covers a genuine dimensionality mismatch (different-size vectors)
+        # for legacy builds with no embedding_model tag to check above -
+        # degrade to "no results" instead of a hard 500, same as any other
+        # empty-result case the chat vector path already handles gracefully.
+        logger.warning("vector_search failed for query %r: %s", query[:80], exc)
+        return []

@@ -22,6 +22,7 @@ function AccountPageInner() {
   // regardless of what this page shows - just what makes the reason visible
   // instead of the user landing on a bare form with no context.
   const forced = params.get("forced") === "1";
+  const fromDefaultPasswordPrompt = params.get("default_password") === "1";
 
   const [username, setUsername] = useState("");
   const [showPasswordForm, setShowPasswordForm] = useState(true);
@@ -70,15 +71,19 @@ function AccountPageInner() {
       setCurrentPassword("");
       setNewPassword("");
       setConfirmPassword("");
+      setPasswordNotice(
+        "Password updated successfully. Please use your new password for all future logins.",
+      );
       if (forced) {
         // The gate is lifted the moment this call succeeds - the session no
         // longer needs a username change to proceed, so continue straight
         // into the app rather than making the change-username form
         // mandatory too.
-        router.push("/dashboard");
+        setTimeout(() => {
+          router.push("/dashboard");
+        }, 1200);
         return;
       }
-      setPasswordNotice("Password updated.");
     } catch (err: unknown) {
       setPasswordError(err instanceof Error ? err.message : "Could not change password");
     } finally {
@@ -148,6 +153,24 @@ function AccountPageInner() {
               <p className="text-amber-700/80 dark:text-amber-300/70 mt-1">
                 Set a new password to continue — every other page is locked until you do.
                 You can change your username here too, but it isn&apos;t required.
+              </p>
+            </div>
+          </motion.div>
+        )}
+
+        {!forced && fromDefaultPasswordPrompt && (
+          <motion.div
+            initial={{ opacity: 0, y: -8 }}
+            animate={{ opacity: 1, y: 0 }}
+            className="flex items-start gap-3 rounded-xl border border-amber-500/30 bg-amber-500/[0.08] p-4"
+          >
+            <AlertTriangle className="w-5 h-5 text-amber-500 shrink-0 mt-0.5" />
+            <div className="text-sm">
+              <p className="font-semibold text-amber-600 dark:text-amber-400">
+                You&apos;re signed in with the default password.
+              </p>
+              <p className="text-amber-700/80 dark:text-amber-300/70 mt-1">
+                Set a new password now to secure your account.
               </p>
             </div>
           </motion.div>

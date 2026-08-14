@@ -6,7 +6,7 @@ from typing import Dict, List, Optional, Tuple
 import lancedb
 import pandas as pd
 from sentence_transformers import SentenceTransformer
-from . import config
+from . import app_settings, config
 from .llm_client import LLMClient
 
 logger = logging.getLogger(__name__)
@@ -17,10 +17,17 @@ class ProjectManager:
         self.projects_root.mkdir(exist_ok=True)
         self._projects_cache = {}
         self._embedder = None
+        self._embedder_model = None
 
     def _get_embedder(self):
-        if self._embedder is None:
-            self._embedder = SentenceTransformer('all-MiniLM-L6-v2')
+        # Re-resolves the effective model on every call and rebuilds if an
+        # admin changed it from Settings - same pattern as
+        # data_loader._get_shared_embedder(), so this doesn't get left
+        # behind as the one embedder that only updates on restart.
+        effective_model = app_settings.get_effective_embedding_model()
+        if self._embedder is None or self._embedder_model != effective_model:
+            self._embedder = SentenceTransformer(effective_model)
+            self._embedder_model = effective_model
         return self._embedder
 
     def list_projects(self) -> List[str]:

@@ -25,79 +25,12 @@ class ConnectorFieldMapper:
                     'label': 'Path to Allure Results',
                     'placeholder': '/path/to/allure-results or /path/to/allure.html',
                     'required': True,
-                    'help': 'Local folder with Allure JSON results or HTML report file',
+                    'help': 'Local folder with Allure JSON results, a .zip archive, or an HTML report file',
                     'validation': 'path_exists'
-                },
-                {
-                    'name': 'parse_html',
-                    'type': 'checkbox',
-                    'label': 'Also parse HTML artifacts',
-                    'required': False,
-                    'default': True,
-                    'help': 'Extract data from Allure HTML reports if JSON not found'
-                },
-                {
-                    'name': 'project_name',
-                    'type': 'text',
-                    'label': 'Project Name (optional)',
-                    'placeholder': 'e.g., WebApp, MobileApp',
-                    'required': False,
-                    'help': 'Override or tag all tests with this project name'
                 }
             ],
             'auto_detect': True,
-            'formats': ['JSON results files (*-result.json)', 'HTML reports (index.html)']
-        },
-
-        'json': {
-            'name': 'JSON Files',
-            'description': 'Ingest nested or flat JSON data',
-            'fields': [
-                {
-                    'name': 'path',
-                    'type': 'text',
-                    'label': 'Path to JSON File or Folder',
-                    'placeholder': '/path/to/data.json or /path/to/folder',
-                    'required': True,
-                    'help': 'Single JSON file or folder containing JSON files',
-                    'validation': 'path_exists'
-                },
-                {
-                    'name': 'nested_handling',
-                    'type': 'select',
-                    'label': 'Handle Nested Objects',
-                    'options': [
-                        {'value': 'flatten', 'label': 'Flatten with dot notation (default)'},
-                        {'value': 'keep_nested', 'label': 'Keep nested structure'},
-                        {'value': 'auto', 'label': 'Auto-detect best approach'}
-                    ],
-                    'required': False,
-                    'default': 'flatten',
-                    'help': 'How to handle nested JSON objects'
-                },
-                {
-                    'name': 'array_handling',
-                    'type': 'select',
-                    'label': 'Handle JSON Arrays',
-                    'options': [
-                        {'value': 'expand', 'label': 'Expand as rows (default)'},
-                        {'value': 'stringify', 'label': 'Convert to JSON strings'}
-                    ],
-                    'required': False,
-                    'default': 'expand',
-                    'help': 'How to handle arrays in JSON'
-                },
-                {
-                    'name': 'auto_schema',
-                    'type': 'checkbox',
-                    'label': 'Auto-detect schema',
-                    'required': False,
-                    'default': True,
-                    'help': 'Automatically detect field types and purposes'
-                }
-            ],
-            'auto_detect': True,
-            'formats': ['JSON files (.json)', 'JSONL files (.jsonl)', 'JSON folders']
+            'formats': ['JSON results files (*-result.json)', 'Zip archives (.zip)', 'HTML reports (index.html)']
         },
 
         'csv': {
@@ -154,6 +87,32 @@ class ConnectorFieldMapper:
             'formats': ['CSV files (.csv)', 'TSV files (.tsv)']
         },
 
+        'excel': {
+            'name': 'Excel Files',
+            'description': 'Ingest tabular data from Excel workbooks',
+            'fields': [
+                {
+                    'name': 'path',
+                    'type': 'text',
+                    'label': 'Path to Excel File',
+                    'placeholder': '/path/to/data.xlsx',
+                    'required': True,
+                    'help': 'Excel workbook to ingest',
+                    'validation': 'path_exists'
+                },
+                {
+                    'name': 'sheet_name',
+                    'type': 'text',
+                    'label': 'Sheet name (optional)',
+                    'placeholder': 'Sheet1',
+                    'required': False,
+                    'help': 'Ingest only this sheet; leave empty to ingest every sheet as its own table'
+                }
+            ],
+            'auto_detect': True,
+            'formats': ['Excel workbooks (.xlsx, .xls)']
+        },
+
         'database': {
             'name': 'Database',
             'description': 'Ingest data from SQL databases',
@@ -179,14 +138,14 @@ class ConnectorFieldMapper:
                     'name': 'batch_size',
                     'type': 'number',
                     'label': 'Batch size',
-                    'placeholder': '1000',
+                    'placeholder': '50000',
                     'required': False,
-                    'default': 1000,
-                    'help': 'Number of rows per batch'
+                    'default': 50000,
+                    'help': 'Rows fetched per streamed chunk'
                 }
             ],
             'auto_detect': False,
-            'formats': ['PostgreSQL', 'MySQL', 'SQL Server', 'SQLite']
+            'formats': ['PostgreSQL', 'MySQL', 'SQLite']
         },
 
         'api': {
@@ -222,20 +181,16 @@ class ConnectorFieldMapper:
                     'help': 'HTTP headers as JSON'
                 },
                 {
-                    'name': 'pagination',
-                    'type': 'select',
-                    'label': 'Pagination',
-                    'options': [
-                        {'value': 'none', 'label': 'No pagination'},
-                        {'value': 'offset', 'label': 'Offset-based'},
-                        {'value': 'cursor', 'label': 'Cursor-based'}
-                    ],
+                    'name': 'body',
+                    'type': 'textarea',
+                    'label': 'Request body (JSON)',
+                    'placeholder': '{"query": "..."}',
                     'required': False,
-                    'default': 'none'
+                    'help': 'Only sent when the method is POST'
                 }
             ],
             'auto_detect': False,
-            'formats': ['REST APIs', 'JSON APIs', 'GraphQL']
+            'formats': ['REST APIs returning JSON']
         }
     }
 
@@ -254,18 +209,16 @@ class ConnectorFieldMapper:
         """Auto-detect connector type from path/file."""
         path_lower = str(path).lower()
 
-        if 'allure' in path_lower:
+        if 'allure' in path_lower or path_lower.endswith('.zip'):
             return 'allure'
 
         ext = Path(path).suffix.lower() if path else ''
 
         type_map = {
-            '.json': 'json',
-            '.jsonl': 'json',
             '.csv': 'csv',
             '.tsv': 'csv',
-            '.xlsx': 'csv',  # Treat as tabular
-            '.xls': 'csv',
+            '.xlsx': 'excel',
+            '.xls': 'excel',
         }
 
         return type_map.get(ext, 'allure')  # Default to allure for directories
@@ -285,27 +238,15 @@ class IngestionValidator:
         if not Path(path).exists():
             return False, f"Path does not exist: {path}"
 
-        # Check if it's Allure directory or HTML file
-        is_html = str(path).endswith(('.html', '.htm'))
+        # Check if it's an Allure directory, a zip archive, or an HTML report
+        is_html = str(path).lower().endswith(('.html', '.htm'))
+        is_zip = str(path).lower().endswith('.zip')
         is_dir = Path(path).is_dir()
 
-        if not (is_html or is_dir):
-            return False, "Path must be a directory or HTML file"
+        if not (is_html or is_zip or is_dir):
+            return False, "Path must be a directory, a .zip archive, or an HTML file"
 
         return True, "Valid Allure configuration"
-
-    @staticmethod
-    def validate_json_config(config: Dict[str, Any]) -> tuple[bool, str]:
-        """Validate JSON connector config."""
-        path = config.get('path', '')
-
-        if not path:
-            return False, "Path is required"
-
-        if not Path(path).exists():
-            return False, f"Path does not exist: {path}"
-
-        return True, "Valid JSON configuration"
 
     @staticmethod
     def validate_csv_config(config: Dict[str, Any]) -> tuple[bool, str]:
@@ -322,6 +263,22 @@ class IngestionValidator:
             return False, "File must be CSV or TSV"
 
         return True, "Valid CSV configuration"
+
+    @staticmethod
+    def validate_excel_config(config: Dict[str, Any]) -> tuple[bool, str]:
+        """Validate Excel connector config."""
+        path = config.get('path', '')
+
+        if not path:
+            return False, "Path is required"
+
+        if not Path(path).exists():
+            return False, f"Path does not exist: {path}"
+
+        if not str(path).lower().endswith(('.xlsx', '.xls')):
+            return False, "File must be .xlsx or .xls"
+
+        return True, "Valid Excel configuration"
 
     @staticmethod
     def validate_database_config(config: Dict[str, Any]) -> tuple[bool, str]:
@@ -355,8 +312,8 @@ class IngestionValidator:
         """Validate connector configuration."""
         validators = {
             'allure': cls.validate_allure_config,
-            'json': cls.validate_json_config,
             'csv': cls.validate_csv_config,
+            'excel': cls.validate_excel_config,
             'database': cls.validate_database_config,
             'api': cls.validate_api_config,
         }

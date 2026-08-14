@@ -69,13 +69,15 @@ ROLE_PERMISSIONS: dict[str, frozenset[str]] = {
     "admin": _WILDCARD,
     "cto": _WILDCARD,
     # Runs the QA process day to day: reads data, brings in new builds,
-    # cleans up old ones, watches their own spend. Not user administration or
-    # LLM configuration - those are organizational decisions, not QA ones.
-    "qa-manager": frozenset({PERM_DATA_VIEW, PERM_DATA_INGEST, PERM_DATA_DELETE, PERM_USAGE_VIEW_OWN}),
-    "qa-engineer": frozenset({PERM_DATA_VIEW, PERM_DATA_INGEST, PERM_DATA_DELETE, PERM_USAGE_VIEW_OWN}),
+    # cleans up old ones. Not user administration or LLM configuration -
+    # those are organizational decisions, not QA ones. Token spend visibility
+    # is admin-only (see PERM_USAGE_VIEW_ALL) - non-admin roles have no usage
+    # permission at all, not even their own, by design.
+    "qa-manager": frozenset({PERM_DATA_VIEW, PERM_DATA_INGEST, PERM_DATA_DELETE}),
+    "qa-engineer": frozenset({PERM_DATA_VIEW, PERM_DATA_INGEST, PERM_DATA_DELETE}),
     # Consumes the analysis; doesn't own the pipeline that produces it.
-    "developer": frozenset({PERM_DATA_VIEW, PERM_USAGE_VIEW_OWN}),
-    "viewer": frozenset({PERM_DATA_VIEW, PERM_USAGE_VIEW_OWN}),
+    "developer": frozenset({PERM_DATA_VIEW}),
+    "viewer": frozenset({PERM_DATA_VIEW}),
 }
 
 

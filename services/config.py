@@ -7,6 +7,8 @@ import stat
 from pathlib import Path
 from dotenv import load_dotenv
 
+from universal_ingester.utils import DEFAULT_EMBEDDING_MODEL
+
 load_dotenv()
 
 logger = logging.getLogger(__name__)
@@ -67,7 +69,11 @@ def _parse_origins(raw: str) -> list[str]:
 # through as long as you name the model explicitly. That's deliberate: litellm
 # adds vendors faster than this file can be updated, and a whitelist here
 # would reject a perfectly valid config for no reason.
-LLM_PROVIDER = (os.getenv("LLM_PROVIDER") or "gemini").strip().lower()
+# No built-in fallback provider on purpose: a public/open-source deployment
+# should ship with nothing pre-selected, so a fresh install shows an empty
+# Settings tab rather than a vendor the operator never chose. Set LLM_PROVIDER
+# in .env, or pick one later from Admin -> Settings.
+LLM_PROVIDER = (os.getenv("LLM_PROVIDER") or "").strip().lower()
 
 # Which env var conventionally holds each provider's credential, in priority
 # order. Providers not listed fall back to <PROVIDER>_API_KEY then LLM_API_KEY.
@@ -151,6 +157,18 @@ LLM_PROVIDER_FROM_ENV = bool((os.getenv("LLM_PROVIDER") or "").strip())
 LLM_MODEL_FROM_ENV = bool((os.getenv("LLM_MODEL") or "").strip())
 LLM_API_KEY_FROM_ENV = bool(LLM_API_KEY)
 LLM_API_BASE_FROM_ENV = bool((os.getenv("LLM_API_BASE") or os.getenv("OPENAI_API_BASE") or "").strip())
+
+# Local sentence-transformers model used to embed ingested documents for
+# semantic/vector search - independent of LLM_PROVIDER/LLM_MODEL above (those
+# are the hosted chat/generation model; embeddings stay local so ingesting
+# thousands of chunks doesn't cost API calls). Same database > env > default
+# resolution as the LLM settings - see app_settings.get_embedding_model_settings().
+# Default comes from universal_ingester.utils - the single source of truth
+# for the model name, so this and EmbeddingGenerator's own default can't
+# silently drift apart.
+EMBEDDING_MODEL_DEFAULT = DEFAULT_EMBEDDING_MODEL
+EMBEDDING_MODEL = (os.getenv("EMBEDDING_MODEL") or EMBEDDING_MODEL_DEFAULT).strip()
+EMBEDDING_MODEL_FROM_ENV = bool((os.getenv("EMBEDDING_MODEL") or "").strip())
 
 
 def default_model_for(provider: str) -> str:
@@ -295,6 +313,11 @@ def _resolve_secret_key() -> str:
 
 
 SECRET_KEY = _resolve_secret_key()
+# Whether env supplied it (vs the auto-generated state/secret_key file) -
+# app_settings.py uses this to label the source in the admin Settings UI.
+# Doesn't change precedence: an admin-set value in the database always wins
+# over either of these now (see app_settings.get_secret_key()).
+SECRET_KEY_FROM_ENV = bool((os.getenv("SECRET_KEY") or "").strip())
 BCRYPT_ROUNDS = int(os.getenv("BCRYPT_ROUNDS", "12"))
 
 # CORS
@@ -331,50 +354,28 @@ AUTH_DEFAULT_ROLE = (os.getenv("AUTH_DEFAULT_ROLE") or "viewer").strip().lower()
 # override: once any user exists this is ignored, and changing the password
 # here later does nothing.
 #
-# The username defaults so `docker compose up` on an empty .env yields a
-# deployment you can actually sign into - the appliance pattern (a router,
-# Grafana, Jenkins). The password does NOT default to a fixed, guessable
-# string ("admin") for the same reason those appliances have mostly moved
-# away from that too: a well-known default password on anything reachable
-# before the operator has logged in is a race, not a safeguard - whoever
-# reaches the login page first wins, attacker or owner. Instead, an unset
-# BOOTSTRAP_ADMIN_PASSWORD is generated per-deployment and persisted to the
-# mounted state directory (same pattern as SECRET_KEY below), then logged
-# once at startup. must_change_password is still forced regardless, so it
-# remains a one-time door either way - this just makes the door unguessable
-# instead of merely one-time. See auth._bootstrap_admin_if_empty() and
-# main.credential_change_middleware().
+# Both username and password default to a known "admin"/"admin" pair, so
+# `docker compose up` on an empty .env always yields a deployment you can
+# actually sign into - the appliance pattern (a router, Grafana, Jenkins).
+# That's only safe because the account this creates cannot do anything else:
+# must_change_password is forced on whenever the password in use is still
+# this literal built-in default (see bootstrap_password_is_default() and
+# auth._bootstrap_admin_if_empty()), regardless of
+# BOOTSTRAP_ADMIN_FORCE_PASSWORD_CHANGE - so it's a one-time door, not a
+# standing credential, the same way the old auto-generated-password design
+# was, just guessable instead of unguessable. Set BOOTSTRAP_ADMIN_PASSWORD in
+# .env instead if you want the first-run credential to not even briefly be
+# something guessable.
 DEFAULT_BOOTSTRAP_ADMIN_USERNAME = "admin"
-BOOTSTRAP_ADMIN_PASSWORD_FILE = STATE_DIR / "bootstrap_admin_password"
+DEFAULT_BOOTSTRAP_ADMIN_PASSWORD = "admin"
 
 
 def _resolve_bootstrap_admin_password() -> tuple[str, bool]:
-    """Returns (password, was_generated)."""
+    """Returns (password, is_default)."""
     env_value = (os.getenv("BOOTSTRAP_ADMIN_PASSWORD") or "").strip()
     if env_value:
         return env_value, False
-
-    try:
-        if BOOTSTRAP_ADMIN_PASSWORD_FILE.exists():
-            stored = BOOTSTRAP_ADMIN_PASSWORD_FILE.read_text(encoding="utf-8").strip()
-            if stored:
-                return stored, True
-
-        generated = secrets.token_urlsafe(18)
-        BOOTSTRAP_ADMIN_PASSWORD_FILE.parent.mkdir(parents=True, exist_ok=True)
-        BOOTSTRAP_ADMIN_PASSWORD_FILE.write_text(generated + "\n", encoding="utf-8")
-        try:
-            BOOTSTRAP_ADMIN_PASSWORD_FILE.chmod(stat.S_IRUSR | stat.S_IWUSR)
-        except OSError:
-            pass
-        return generated, True
-    except Exception:
-        # An unwritable state directory shouldn't take the whole service
-        # down when BOOTSTRAP_ADMIN_PASSWORD could still be supplied via env
-        # instead - falls through to an empty password, which
-        # _bootstrap_admin_if_empty() already treats as "don't bootstrap".
-        logger.error("Could not read or create %s", BOOTSTRAP_ADMIN_PASSWORD_FILE, exc_info=True)
-        return "", False
+    return DEFAULT_BOOTSTRAP_ADMIN_PASSWORD, True
 
 
 BOOTSTRAP_ADMIN_USERNAME = (
@@ -392,13 +393,12 @@ BOOTSTRAP_ADMIN_FORCE_PASSWORD_CHANGE = _get_bool(
 
 
 def bootstrap_password_is_default() -> bool:
-    """True when BOOTSTRAP_ADMIN_PASSWORD was auto-generated rather than set
-    explicitly via env - kept name-compatible with callers that gate
-    "is this the unattended first-run credential, not something an operator
-    chose" (auth._bootstrap_admin_if_empty() forces a password change either
-    way, but treats this case as always-force regardless of
-    BOOTSTRAP_ADMIN_FORCE_PASSWORD_CHANGE, same as the old literal-default
-    check did).
+    """True when BOOTSTRAP_ADMIN_PASSWORD is the literal built-in default
+    ("admin") rather than set explicitly via env - gates "is this the
+    unattended first-run credential, not something an operator chose"
+    (auth._bootstrap_admin_if_empty() forces a password change either way,
+    but treats this case as always-force regardless of
+    BOOTSTRAP_ADMIN_FORCE_PASSWORD_CHANGE).
     """
     return _BOOTSTRAP_ADMIN_PASSWORD_WAS_GENERATED
 

@@ -26,6 +26,16 @@ export default function FloatingChat() {
   const [feedbackStatus, setFeedbackStatus] = useState<Record<number, string>>({});
   const LONG_ANSWER_THRESHOLD = 420;
 
+  function formatRoleLabel(role: string): string {
+    const normalized = String(role || "").trim().toLowerCase();
+    if (!normalized) return "QA Engineer";
+    if (normalized === "cto") return "CTO";
+    return normalized
+      .split("-")
+      .map((part) => (part ? `${part[0].toUpperCase()}${part.slice(1)}` : part))
+      .join(" ");
+  }
+
   const suggestions = sharedSuggestions.chat;
 
   useEffect(() => {
@@ -284,7 +294,7 @@ export default function FloatingChat() {
                     Ask a question about the test results.
                   </p>
                   <p className="text-[10px] mt-2 uppercase tracking-widest text-slate-400 dark:text-white/15">
-                    Role: {selectedRole || "QA Engineer"}
+                      Role: {formatRoleLabel(selectedRole || "")}
                   </p>
                 </div>
               ) : (

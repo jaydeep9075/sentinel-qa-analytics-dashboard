@@ -9,6 +9,16 @@ const API = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
 const ROLES = ["admin", "cto", "qa-manager", "qa-engineer", "developer", "viewer"];
 
+function formatRoleLabel(role: string): string {
+  const normalized = String(role || "").trim().toLowerCase();
+  if (!normalized) return "";
+  if (normalized === "cto") return "CTO";
+  return normalized
+    .split("-")
+    .map((part) => (part ? `${part[0].toUpperCase()}${part.slice(1)}` : part))
+    .join(" ");
+}
+
 type User = {
   username: string;
   role: string;
@@ -234,7 +244,7 @@ function PendingRow({
       >
         {ROLES.map((r) => (
           <option key={r} value={r}>
-            {r}
+            {formatRoleLabel(r)}
           </option>
         ))}
       </select>
@@ -323,7 +333,7 @@ function UserRow({
         >
           {ROLES.map((r) => (
             <option key={r} value={r}>
-              {r}
+              {formatRoleLabel(r)}
             </option>
           ))}
         </select>
@@ -467,7 +477,7 @@ function CreateUserForm({
         <select className={input} value={form.role} onChange={(e) => set("role", e.target.value)}>
           {ROLES.map((r) => (
             <option key={r} value={r}>
-              {r}
+              {formatRoleLabel(r)}
             </option>
           ))}
         </select>

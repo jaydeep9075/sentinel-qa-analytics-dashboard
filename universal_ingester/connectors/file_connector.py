@@ -31,10 +31,30 @@ STREAM_BATCH_ROWS = int(os.getenv("INGEST_STREAM_BATCH_ROWS", "20000"))
 
 
 class FileConnector(BaseConnector):
-    def __init__(self, file_path: str):
+    def __init__(
+        self,
+        file_path: str,
+        delimiter: str = None,
+        has_header: bool = True,
+        encoding: str = None,
+        sheet_name: str = None,
+    ):
+        """
+        delimiter/encoding: explicit overrides for CSV/TSV parsing; omit (or
+            pass 'auto') to keep the existing auto-sniff/multi-encoding
+            fallback behavior unchanged.
+        has_header: False reads the file with no header row (columns become
+            positional integers).
+        sheet_name: for Excel files, ingest only this sheet instead of every
+            sheet in the workbook.
+        """
         self.file_path = Path(file_path)
         if not self.file_path.exists():
             raise FileNotFoundError(f"File not found: {file_path}")
+        self.delimiter = delimiter if delimiter and delimiter != 'auto' else None
+        self.has_header = has_header if has_header is not None else True
+        self.encoding = encoding if encoding and encoding != 'auto' else None
+        self.sheet_name = sheet_name or None
 
     def fetch(self) -> List[Dict[str, Any]]:
         ext = self.file_path.suffix.lower()
@@ -64,7 +84,7 @@ class FileConnector(BaseConnector):
         base_meta = {'file_path': str(self.file_path)}
 
         if suffix in ['.csv', '.tsv']:
-            sep = '\t' if suffix == '.tsv' else ','
+            sep = self.delimiter or ('\t' if suffix == '.tsv' else ',')
             if self._is_large():
                 return [{
                     'name': self.file_path.stem,
@@ -76,7 +96,17 @@ class FileConnector(BaseConnector):
             df = self._read_delimited_csv(default_sep=sep)
 
         elif suffix in ['.xlsx', '.xls']:
-            sheet_map = pd.read_excel(self.file_path, sheet_name=None)
+            header = 0 if self.has_header else None
+            if self.sheet_name:
+                sdf = pd.read_excel(self.file_path, sheet_name=self.sheet_name, header=header)
+                sdf = sdf if isinstance(sdf, pd.DataFrame) else pd.DataFrame(sdf)
+                return [{
+                    'name': f"{self.file_path.stem}_{self.sheet_name}",
+                    'data': sdf,
+                    'type': 'structured',
+                    'metadata': {**base_meta, 'sheet_name': str(self.sheet_name), 'rows': len(sdf)},
+                }]
+            sheet_map = pd.read_excel(self.file_path, sheet_name=None, header=header)
             datasets = []
             for sheet, sdf in sheet_map.items():
                 sdf = sdf if isinstance(sdf, pd.DataFrame) else pd.DataFrame(sdf)
@@ -150,13 +180,22 @@ class FileConnector(BaseConnector):
             'metadata': {**base_meta, 'rows': len(df)},
         }]
 
+    def _encoding_candidates(self) -> list:
+        """Default fallback chain, with an explicit override tried first (but
+        the fallback chain still runs if that override turns out to be
+        wrong - never let a bad explicit encoding hard-fail without it)."""
+        defaults = ['utf-8', 'utf-8-sig', 'latin-1', 'cp1252']
+        if self.encoding:
+            return [self.encoding] + [e for e in defaults if e != self.encoding]
+        return defaults
+
     def _stream_csv(self, sep: str):
         """Yield DataFrame batches so huge CSVs never load fully in memory."""
-        encodings = ['utf-8', 'utf-8-sig', 'latin-1', 'cp1252']
-        for enc in encodings:
+        header = 0 if self.has_header else None
+        for enc in self._encoding_candidates():
             try:
                 reader = pd.read_csv(
-                    self.file_path, sep=sep, encoding=enc,
+                    self.file_path, sep=sep, encoding=enc, header=header,
                     on_bad_lines='skip', chunksize=STREAM_BATCH_ROWS,
                 )
                 for chunk in reader:
@@ -230,16 +269,16 @@ class FileConnector(BaseConnector):
             return self._read_text_with_fallbacks()
 
     def _read_delimited_csv(self, default_sep=','):
-        encodings = ['utf-8', 'utf-8-sig', 'latin-1', 'cp1252']
+        header = 0 if self.has_header else None
         last_exc = None
-        for enc in encodings:
+        for enc in self._encoding_candidates():
             try:
-                return pd.read_csv(self.file_path, sep=default_sep, encoding=enc, on_bad_lines='skip')
+                return pd.read_csv(self.file_path, sep=default_sep, encoding=enc, header=header, on_bad_lines='skip')
             except Exception as exc:
                 last_exc = exc
         if last_exc:
             raise last_exc
-        return pd.read_csv(self.file_path, sep=default_sep, on_bad_lines='skip')
+        return pd.read_csv(self.file_path, sep=default_sep, header=header, on_bad_lines='skip')
 
     def _read_text_with_fallbacks(self):
         encodings = ['utf-8', 'utf-8-sig', 'latin-1', 'cp1252']

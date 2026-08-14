@@ -8,8 +8,13 @@ from services import data_loader, state
 
 class AdaptiveIngestionTests(unittest.TestCase):
     def setUp(self):
-        self.prev_conn = state.duck_conn
-        state.duck_conn = duckdb.connect()
+        # duck_conn/lance_db/embedder/current_ingestion_id are contextvars
+        # (see state.py) - must go through set_active_ingestion, never plain
+        # assignment, or this permanently shadows the module __getattr__
+        # proxy for the rest of the process (breaking it for every test that
+        # runs after this one).
+        self._prev = (state.current_ingestion_id, state.duck_conn, state.lance_db, state.embedder)
+        state.set_active_ingestion("test", duckdb.connect(), None, None)
 
     def tearDown(self):
         try:
@@ -17,7 +22,7 @@ class AdaptiveIngestionTests(unittest.TestCase):
                 state.duck_conn.close()
         except Exception:
             pass
-        state.duck_conn = self.prev_conn
+        state.set_active_ingestion(*self._prev)
 
     def test_coerce_generic_alias_mapping(self):
         src = pd.DataFrame(

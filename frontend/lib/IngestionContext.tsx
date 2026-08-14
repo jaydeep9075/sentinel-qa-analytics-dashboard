@@ -5,6 +5,7 @@ import { listIngestions, readCachedIngestions } from "./api";
 export interface Ingestion {
   id: string;          // real folder name — used in API headers, never shown
   build_label: string; // e.g. "Build 1", "Build 2"
+  display_name?: string; // optional user-supplied name, preferred over build_label when set
   summary: string;
   created: number;
 }

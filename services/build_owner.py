@@ -75,6 +75,7 @@ def write_owner(
     workspace_id: str,
     created_by: str = "",
     source: str = "",
+    display_name: str = "",
 ) -> None:
     """Record ownership. Best-effort: never fail an ingestion over this.
 
@@ -91,6 +92,7 @@ def write_owner(
         "workspace_id": _normalize(workspace_id) or config.DEFAULT_WORKSPACE_ID,
         "created_by": _normalize(created_by),
         "source": str(source or ""),
+        "display_name": str(display_name or "").strip()[:200],
         "created_at": datetime.now(timezone.utc).isoformat(),
     }
     try:
@@ -108,6 +110,7 @@ def read_owner(build_path: Path) -> dict:
         "workspace_id": config.LEGACY_BUILDS_WORKSPACE,
         "created_by": "",
         "source": "legacy",
+        "display_name": "",
         "created_at": "",
         "is_legacy": True,
     }
@@ -129,6 +132,7 @@ def read_owner(build_path: Path) -> dict:
         "workspace_id": _normalize(data.get("workspace_id")) or config.LEGACY_BUILDS_WORKSPACE,
         "created_by": _normalize(data.get("created_by")),
         "source": str(data.get("source") or ""),
+        "display_name": str(data.get("display_name") or ""),
         "created_at": str(data.get("created_at") or ""),
         "is_legacy": False,
     }

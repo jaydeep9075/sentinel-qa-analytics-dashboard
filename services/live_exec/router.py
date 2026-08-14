@@ -25,7 +25,7 @@ from fastapi import APIRouter, BackgroundTasks, Depends, File, Header, HTTPExcep
 from fastapi.responses import FileResponse, StreamingResponse
 from jose import JWTError, jwt
 
-from .. import config
+from .. import app_settings, config
 from . import screencast, store
 from .bus import bus
 from .schemas import EventBatch, LiveFrameIn, RunCreate, RunStatusUpdate
@@ -63,7 +63,7 @@ def get_dashboard_user(request: Request, token: Optional[str] = Query(default=No
     if not raw_token:
         raise HTTPException(status_code=401, detail="Not authenticated")
     try:
-        payload = jwt.decode(raw_token, config.SECRET_KEY, algorithms=["HS256"])
+        payload = jwt.decode(raw_token, app_settings.get_secret_key(), algorithms=["HS256"])
     except JWTError:
         raise HTTPException(status_code=401, detail="Invalid token")
     username = payload.get("sub")

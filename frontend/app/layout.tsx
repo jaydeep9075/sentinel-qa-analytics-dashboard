@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { Geist, Geist_Mono, Inter } from "next/font/google";
+import Script from "next/script";
 import "./globals.css";
 import ThemeInitializer from "@/components/ThemeInitializer";
 import ThemeToggle from "@/components/ThemeToggle";
@@ -35,6 +36,33 @@ export default function RootLayout({
         suppressHydrationWarning
         className={`${geistSans.variable} ${geistMono.variable} ${inter.variable} antialiased`}
       >
+        <Script id="strip-bis-attrs" strategy="beforeInteractive">
+          {`
+            (function () {
+              var strip = function () {
+                var nodes = document.querySelectorAll('[bis_skin_checked]');
+                for (var i = 0; i < nodes.length; i++) {
+                  nodes[i].removeAttribute('bis_skin_checked');
+                }
+              };
+              strip();
+              var observer = new MutationObserver(function () {
+                strip();
+              });
+              observer.observe(document.documentElement, {
+                childList: true,
+                subtree: true,
+                attributes: true,
+                attributeFilter: ['bis_skin_checked']
+              });
+              window.addEventListener('load', function () {
+                setTimeout(function () {
+                  observer.disconnect();
+                }, 1500);
+              });
+            })();
+          `}
+        </Script>
         <ThemeInitializer />
         <ThemeToggle />
         {children}

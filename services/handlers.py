@@ -13,6 +13,7 @@ from datetime import datetime
 
 import numpy as np
 import pandas as pd
+from fastapi.concurrency import run_in_threadpool
 
 from . import config, data_loader, memory, llm_client, state, schema_context
 from .prompts import (
@@ -32,7 +33,8 @@ def _get_test_results_table() -> str:
     """Get the actual table name for test results.
     Supports both old (flattened_tests) and new (structured_test_results) names."""
     try:
-        tables = state.duck_conn.execute("SELECT table_name FROM information_schema.tables WHERE table_schema='memory'").df()
+        with state._duck_query_lock:
+            tables = state.duck_conn.execute("SELECT table_name FROM information_schema.tables WHERE table_schema='memory'").df()
         table_names = tables['table_name'].tolist() if not tables.empty else []
 
         if "structured_test_results" in table_names:
@@ -587,6 +589,9 @@ def _build_trend_dataframe(limit: int = None) -> pd.DataFrame:
     ])
 
 
+_HISTORY_TURN_CHAR_CAP = 220
+
+
 def _build_history(session_id: str, user_id: str, ingestion_id: str, limit: int = 20) -> str:
     history = memory.get_chat_history(
         session_id,
@@ -599,8 +604,16 @@ def _build_history(session_id: str, user_id: str, ingestion_id: str, limit: int 
     lines = []
     for h in reversed(history):
         role = h.get("type", "")
-        lines.append(f"{'User' if role == 'user' else 'Assistant'}: "
-                     f"{h.get('prompt', '') if role == 'user' else h.get('response', '')}")
+        text = h.get("prompt", "") if role == "user" else h.get("response", "")
+        # History is only here to give the decision LLM conversational
+        # context (what was asked/answered before), not to re-litigate
+        # exact past numbers - an assistant turn can be a full formatted
+        # table/paragraph that costs real tokens on EVERY subsequent
+        # message in the session if sent unbounded. Cap per turn instead.
+        text = str(text)
+        if len(text) > _HISTORY_TURN_CHAR_CAP:
+            text = text[:_HISTORY_TURN_CHAR_CAP].rstrip() + "…"
+        lines.append(f"{'User' if role == 'user' else 'Assistant'}: {text}")
     return "\n".join(lines[-20:])
 
 
@@ -621,9 +634,13 @@ def _make_title(prompt: str) -> str:
     return (t[:52] + "…") if len(t) > 55 else t
 
 
-def _build_schema_context(max_tables: int = 8, max_columns: int = 25) -> str:
-    profile = data_loader.get_data_profile(sample_rows=2)
-    tables = profile.get("tables", {}) if isinstance(profile, dict) else {}
+def _build_schema_context(schema_summary: dict, max_tables: int = 8, max_columns: int = 25) -> str:
+    """Renders the '[RUNTIME TABLE PROFILE]' prompt block from an
+    already-computed schema_context.build_schema_summary() result, rather
+    than issuing its own fresh DESCRIBE/COUNT/SELECT burst against every
+    table - that summary is cached per ingestion_id and carries the same
+    row_count/columns data this needs."""
+    tables = schema_summary.get("tables", {}) if isinstance(schema_summary, dict) else {}
     if not tables:
         return ""
 
@@ -657,6 +674,27 @@ def _is_chart_df_valid_for_type(df: pd.DataFrame, chart_type: str) -> bool:
     return len(num_cols) >= 1
 
 
+def _filter_relevant_vector_docs(
+    docs: list, relative_margin: float = 1.6, absolute_slack: float = 0.05
+) -> list:
+    """Keep only results reasonably close to the single best match, instead
+    of always feeding the LLM every top_k result regardless of relevance.
+    A RELATIVE cutoff (vs. the best distance in this result set) rather
+    than a fixed absolute threshold, since LanceDB's `_distance` scale
+    depends on the embedding model/dataset and there's no single number
+    that's safely correct everywhere without empirical tuning per corpus."""
+    if not docs:
+        return []
+    distances = [d.get("_distance") for d in docs if isinstance(d.get("_distance"), (int, float))]
+    if not distances:
+        return docs
+    cutoff = min(distances) * relative_margin + absolute_slack
+    return [
+        d for d in docs
+        if not isinstance(d.get("_distance"), (int, float)) or d["_distance"] <= cutoff
+    ]
+
+
 # ---------------------------------------------------------------------------
 # Chat handler
 # ---------------------------------------------------------------------------
@@ -666,8 +704,10 @@ async def handle_chat(user_message: str, session_id: str, ingestion_id: str,
                       user_id: str = "anonymous", workspace_id: str = "default"):
     nid = str(ingestion_id or "").strip()
     response_df = pd.DataFrame()
-    if not data_loader.ensure_ingestion_loaded(nid):
+    _entry = await run_in_threadpool(data_loader.get_or_load_ingestion, nid)
+    if _entry is None:
         return f"❌ Ingestion '{ingestion_id}' not found or data unavailable."
+    state.set_active_ingestion(nid, _entry["duck_conn"], _entry["lance_db"], _entry["embedder"])
 
     # Layer 1: deterministic intent handler for critical analytical prompts.
     structured_intent = _detect_structured_intent(user_message)
@@ -741,7 +781,8 @@ async def handle_chat(user_message: str, session_id: str, ingestion_id: str,
         augmented_message += f"\n\n[RELATED CONCEPTS]\n{concepts}"
     if feedback_hints:
         augmented_message += f"\n\n[USER FEEDBACK PREFERENCES]\n{feedback_hints}"
-    schema_context_block = _build_schema_context()
+    schema_summary = schema_context.build_schema_summary()
+    schema_context_block = _build_schema_context(schema_summary)
     if schema_context_block:
         augmented_message += f"\n\n{schema_context_block}"
     if wants_cross_build_rows:
@@ -751,8 +792,6 @@ async def handle_chat(user_message: str, session_id: str, ingestion_id: str,
             f"be run against each of the last {config.MAX_CROSS_BUILD_QUERY_BUILDS} builds and "
             f"combined, with a build_id column added to identify which build each row came from."
         )
-
-    schema_summary = schema_context.build_schema_summary()
 
     raw = await llm.agenerate(
         CHAT_DECISION_PROMPT.format(
@@ -782,7 +821,11 @@ async def handle_chat(user_message: str, session_id: str, ingestion_id: str,
     data   = decision.get("data", "")
     if isinstance(data, str) and "SELECT" in data.upper():
         action = "sql"
-    elif action != "sql" and _looks_like_data_question(user_message):
+    elif action == "answer" and _looks_like_data_question(user_message):
+        # Only escalate when the model landed on "answer" without
+        # recognizing this as a data question at all - never override a
+        # deliberate "vector" choice, which already IS the model
+        # recognizing this as a data question (just one sql can't answer).
         action = "sql"
         data = _fallback_sql(user_message, FALLBACK_SQL_MAP)
 
@@ -802,7 +845,7 @@ async def handle_chat(user_message: str, session_id: str, ingestion_id: str,
                 df, err = pd.DataFrame(), "empty"
             elif wants_cross_build_rows:
                 recent_build_ids = [b["build_id"] for b in data_loader.list_builds(limit=config.MAX_CROSS_BUILD_QUERY_BUILDS)]
-                df, err = data_loader.execute_sql_across_builds(sql, recent_build_ids)
+                df, err = await run_in_threadpool(data_loader.execute_sql_across_builds, sql, recent_build_ids)
             else:
                 df, err = data_loader.execute_sql(sql)
             unknown_ref = _find_unknown_entity_reference(user_message, schema_summary)
@@ -887,31 +930,60 @@ async def handle_chat(user_message: str, session_id: str, ingestion_id: str,
                             row_count=len(df),
                             data_json=df_safe.head(50).to_json(orient="records", force_ascii=False),
                         )
-                        response = await llm.agenerate(
+                        llm_response = await llm.agenerate(
                             answer_prompt, temperature=0.15, user_id=user_id, workspace_id=workspace_id
                         )
-                        response = response or _fallback_tabular_response(df)
-                        response = await _validate_grounded_response(
-                            llm,
-                            user_message,
-                            response,
-                            df_safe,
-                            user_id=user_id,
-                            workspace_id=workspace_id,
-                        )
+                        if llm_response:
+                            # Validation is a second full LLM call re-sending
+                            # the same data - only worth it for actual LLM
+                            # prose, which can hallucinate. The deterministic
+                            # fallback below is a mechanical table dump of
+                            # the exact query result - nothing to validate,
+                            # so skip the extra round-trip entirely.
+                            response = await _validate_grounded_response(
+                                llm,
+                                user_message,
+                                llm_response,
+                                df_safe,
+                                user_id=user_id,
+                                workspace_id=workspace_id,
+                            )
+                        else:
+                            response = _fallback_tabular_response(df)
 
     elif action == "vector":
-        docs = data_loader.vector_search(data, top_k=5)
-        ctx = "\n\n".join(d["text"][:400] for d in docs) if docs else ""
-        response = (
-            await llm.agenerate(
-                f"Context:\n{ctx}\n\nQuestion: {user_message}\n\nAnswer concisely:",
-                temperature=0.2,
-                user_id=user_id,
-                workspace_id=workspace_id,
+        search_query = str(data or "").strip() or user_message
+        # vector_search loads/runs the embedding model synchronously (CPU
+        # work) - offload it like every other blocking call in this path.
+        docs = await run_in_threadpool(data_loader.vector_search, search_query, 8)
+        relevant = _filter_relevant_vector_docs(docs)
+        if relevant:
+            # Ingestion already chunks text to ~1200 chars (chunk_text's
+            # target - see universal_ingester/core/chunking.py), so a
+            # display cap well above that never truncates a properly
+            # chunked doc mid-content. A structured row's useful field
+            # (e.g. log_excerpt/error) can sit near the END of its
+            # assembled "col: val | col: val | ..." text, so a too-small
+            # cap here silently hides it even when retrieval found the
+            # right document.
+            context_lines = [
+                f"[{i}] ({d.get('doc_type', 'document')}) {str(d.get('text', '')).strip()[:1500]}"
+                for i, d in enumerate(relevant, start=1)
+            ]
+            vector_prompt = (
+                "You are answering from search results over the ingested test/document data "
+                "below. Only use information actually present in these excerpts - if none of "
+                "them genuinely answer the question, say plainly that you couldn't find relevant "
+                "information in the ingested data instead of guessing.\n\n"
+                f"Search results:\n{chr(10).join(context_lines)}\n\n"
+                f"Question: {user_message}\n\n"
+                "Answer concisely, citing the bracket number(s) (e.g. [1]) of whichever result(s) you used."
             )
-            or "No relevant info found."
-        ) if ctx else "No relevant information found."
+            response = await llm.agenerate(
+                vector_prompt, temperature=0.15, user_id=user_id, workspace_id=workspace_id,
+            ) or "No relevant information found in the ingested data."
+        else:
+            response = "No relevant information found in the ingested data."
 
     else:
         response = str(data) if data else "I'm not sure how to answer that. Try rephrasing."
@@ -942,8 +1014,10 @@ async def handle_chart(user_prompt: str, session_id: str, ingestion_id: str,
                        role: str = None, project_id: str = None,
                        user_id: str = "anonymous", workspace_id: str = "default"):
     nid = str(ingestion_id or "").strip()
-    if not data_loader.ensure_ingestion_loaded(nid):
+    _entry = await run_in_threadpool(data_loader.get_or_load_ingestion, nid)
+    if _entry is None:
         return None, f"❌ Ingestion '{ingestion_id}' not found."
+    state.set_active_ingestion(nid, _entry["duck_conn"], _entry["lance_db"], _entry["embedder"])
 
     llm = llm_client.LLMClient()
     feedback_hints = memory.get_feedback_prompt_hints(
@@ -956,7 +1030,8 @@ async def handle_chart(user_prompt: str, session_id: str, ingestion_id: str,
     prompt_for_llm = user_prompt
     if feedback_hints:
         prompt_for_llm += f"\n\n[USER FEEDBACK PREFERENCES]\n{feedback_hints}"
-    schema_context_block = _build_schema_context()
+    chart_schema_summary = schema_context.build_schema_summary()
+    schema_context_block = _build_schema_context(chart_schema_summary)
     if schema_context_block:
         prompt_for_llm += f"\n\n{schema_context_block}"
 
@@ -988,7 +1063,7 @@ async def handle_chart(user_prompt: str, session_id: str, ingestion_id: str,
 
     # STEP 2: SQL
     structured_intent = _detect_structured_intent(user_prompt)
-    chart_schema_summary = schema_context.build_schema_summary()
+    # chart_schema_summary already computed above, reused here (cached per ingestion_id).
     chart_entity_mentions = schema_context.find_entity_mentions(user_prompt, chart_schema_summary)
     # Only cache prompts that resolved to something concrete (a structured
     # intent or a known entity mention). Ambiguous prompts like "compare
@@ -1020,7 +1095,7 @@ async def handle_chart(user_prompt: str, session_id: str, ingestion_id: str,
     # STEP 3: Execute with retries
     if wants_cross_build_rows:
         recent_build_ids = [b["build_id"] for b in data_loader.list_builds(limit=config.MAX_CROSS_BUILD_QUERY_BUILDS)]
-        df, err = data_loader.execute_sql_across_builds(sql, recent_build_ids)
+        df, err = await run_in_threadpool(data_loader.execute_sql_across_builds, sql, recent_build_ids)
     else:
         df, err = data_loader.execute_sql(sql)
     for attempt in range(2):
