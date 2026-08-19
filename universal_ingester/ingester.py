@@ -85,6 +85,26 @@ class RowLimitExceededError(RuntimeError):
     pass
 
 
+# LanceDB accepts only alphanumerics, underscore, hyphen and period in a table
+# name. Dataset names are derived from whatever the user uploaded, so a file
+# named "Testresults (1).csv" - the shape every browser produces on a second
+# download - otherwise reached LanceDB as `structured_Testresults (1)` and
+# failed the whole ingestion at the write step.
+_INVALID_TABLE_CHARS = re.compile(r"[^A-Za-z0-9_.-]+")
+
+
+def structured_table_name(table_key: str) -> str:
+    """The LanceDB table name for a dataset, guaranteed to be storable.
+
+    Runs of illegal characters collapse to a single underscore so
+    "Testresults (1)" and "Testresults(1)" do not become different tables by
+    accident, and a key that sanitizes away entirely still yields a usable
+    name rather than a bare prefix.
+    """
+    cleaned = _INVALID_TABLE_CHARS.sub("_", str(table_key or "")).strip("_")
+    return f"structured_{cleaned}" if cleaned else "structured_dataset"
+
+
 # (phase, human-readable detail, rows-so-far). Deliberately a plain callable
 # rather than an interface: the only producer is this module and the only
 # consumer is services/ingestion_jobs.py, which just merges the values into
@@ -341,7 +361,7 @@ class UniversalIngester:
                 build_id=build_id,
             )
             total += rows
-            tables_written.append(f"structured_{table_key}")
+            tables_written.append(structured_table_name(table_key))
 
         source_meta = {
             **metadata,
@@ -397,7 +417,7 @@ class UniversalIngester:
 
         self._record_source(source_id, source_type, name, rows, source_meta, build_id)
         self.report.dataset_completed(
-            name, rows_stored=rows, tables=[f"structured_{name}"],
+            name, rows_stored=rows, tables=[structured_table_name(name)],
             parser_strategy="native-structured", parser_confidence=1.0,
         )
         return rows
@@ -440,7 +460,7 @@ class UniversalIngester:
         }
         self._record_source(source_id, source_type, name, total, source_meta, build_id)
         self.report.dataset_completed(
-            name, rows_stored=total, tables=[f"structured_{name}"],
+            name, rows_stored=total, tables=[structured_table_name(name)],
             parser_strategy="native-structured-stream", parser_confidence=1.0,
         )
         return total
@@ -471,7 +491,7 @@ class UniversalIngester:
                 self.report.warn(dataset_name, f"Schema detection failed: {exc}")
                 self.detected_schemas[cache_key] = None
 
-        table_name = f"structured_{table_key}"
+        table_name = structured_table_name(table_key)
         stored = self.storage.write_structured(
             table_name, df, build_id=build_id, source_id=source_id, dataset_name=dataset_name
         )
@@ -544,12 +564,12 @@ class UniversalIngester:
         if not heuristic_df.empty:
             table_key = f"{name}_ai_parsed"
             parsed_rows = self.storage.write_structured(
-                f"structured_{table_key}", heuristic_df,
+                structured_table_name(table_key), heuristic_df,
                 build_id=build_id, source_id=source_id, dataset_name=name,
             )
             if parsed_rows:
-                ai_tables.append(f"structured_{table_key}")
-                self._add_schema_profile(name, f"structured_{table_key}", heuristic_df, source_type, build_id)
+                ai_tables.append(structured_table_name(table_key))
+                self._add_schema_profile(name, structured_table_name(table_key), heuristic_df, source_type, build_id)
                 logger.info(f"{parse_strategy} parsed {parsed_rows} structured rows for {name}")
             if parse_strategy == "ai-structured-fallback" and len(data) > parsed_rows:
                 self.report.warn(

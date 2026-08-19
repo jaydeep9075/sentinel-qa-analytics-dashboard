@@ -5,6 +5,7 @@ import Link from "next/link";
 import { motion } from "framer-motion";
 import { Eye, EyeOff, ArrowRight, Sparkles } from "lucide-react";
 import BrandLogo from "@/components/BrandLogo";
+import { BRAND_NAME, BRAND_TAGLINE } from "@/lib/brand";
 
 /* ───────── floating particles (login version — fewer, subtler) ───────── */
 function LoginParticles() {
@@ -148,7 +149,8 @@ export default function LoginPage() {
               <BrandLogo size={46} />
               <div>
                 <h2 className="text-2xl font-bold text-slate-900 dark:text-white">Welcome Back</h2>
-                <p className="text-slate-500 dark:text-white/30 text-xs tracking-wide">Sign in to Sentinel Analytics</p>
+                <p className="text-slate-500 dark:text-white/40 text-xs tracking-wide">Sign in to {BRAND_NAME}</p>
+                <p className="mt-0.5 text-slate-400 dark:text-white/25 text-[11px] leading-snug">{BRAND_TAGLINE}</p>
               </div>
             </div>
 
@@ -222,7 +224,7 @@ export default function LoginPage() {
             {/* subtle footer badge */}
             <div className="mt-8 flex items-center justify-center gap-1.5 text-[10px] text-slate-500 dark:text-white/20 uppercase tracking-widest">
               <Sparkles className="w-3 h-3" />
-              Sentinel QA Intelligence Platform
+              Testrig Sentinel · QA Intelligence Platform
             </div>
           </div>
         </div>

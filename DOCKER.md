@@ -90,10 +90,10 @@ locked out:
 ```bash
 docker compose exec backend python -m services.admin_users list-users
 docker compose exec backend python -m services.admin_users create-user     --username admin --role admin --workspace default --password 'pick-a-real-one'
-docker compose exec backend python -m services.admin_users approve     --username jane --workspace platform --role qa-engineer
+docker compose exec backend python -m services.admin_users approve     --username jane --workspace platform --role sdet
 ```
 
-Valid roles are the filenames in `roles/` (e.g. `cto`, `qa-engineer`), plus
+Valid roles are the filenames in `roles/` (e.g. `cto`, `sdet`), plus
 `admin`. Omit `--password` to be prompted instead — that needs an interactive
 TTY: `docker compose exec -it backend ...`.
 
@@ -409,7 +409,7 @@ Read by `services/config.py` when the backend starts. Change one, run
 | `BOOTSTRAP_ADMIN_PASSWORD` | *(auto-generated)* | Left unset, one is generated into `state/bootstrap_admin_password` and logged once at startup — no fixed "admin"/"admin" default. Forced password change on first login either way. |
 | `AUTH_ALLOW_SELF_REGISTRATION` | `true` | Enable `/register`. New accounts are pending until approved. |
 | `AUTH_AUTO_APPROVE_REGISTRATION` | `false` | Skip approval — registrations go straight to active. Trusted networks only. |
-| `AUTH_DEFAULT_ROLE` | `viewer` | Role given on approval when unspecified. |
+| `AUTH_DEFAULT_ROLE` | `sdet` | Role given on approval when unspecified. |
 | `AUTH_DEFAULT_WORKSPACE` | `DEFAULT_WORKSPACE_ID` | Workspace given on approval when unspecified. |
 | `LEGACY_BUILDS_WORKSPACE` | `DEFAULT_WORKSPACE_ID` | Workspace that builds with no ownership record count as. |
 | `WEB_CONCURRENCY` | `1` | uvicorn workers — read §5 before raising |

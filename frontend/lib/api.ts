@@ -409,7 +409,18 @@ export function uploadIngestFile(
       if (!onProgress) return;
       onProgress(e.lengthComputable && e.total > 0 ? e.loaded / e.total : null);
     };
-    xhr.onerror = () => reject(new Error("Upload failed — could not reach the server"));
+    // onerror fires only for transport-level failures - the request never
+    // reached a responding server. In practice that is almost always the
+    // backend being down, so name it and name the address, rather than
+    // leaving the user to guess between "server", "network" and "my file".
+    xhr.onerror = () =>
+      reject(
+        new Error(
+          `Upload failed — no response from the backend at ${API_BASE}. ` +
+            `Check that it is running (its /health endpoint should answer).`,
+        ),
+      );
+    xhr.ontimeout = () => reject(new Error("Upload timed out — the backend stopped responding"));
     xhr.onabort = () => reject(new Error("Upload cancelled"));
     xhr.onload = () => {
       let data: Record<string, unknown> = {};
@@ -514,12 +525,19 @@ export interface DashboardInsights {
   };
   /** The single defect signature that explains the most failures. */
   top_failure?: { signature?: string; count?: number; share?: number };
-  /** What the suite costs in wall-clock time. */
+  /** What the suite costs, split into elapsed time vs machine time. */
   runtime?: {
+    /** Critical path: how long the run actually took end to end. */
+    wall_clock_seconds?: number;
+    /** True when the run was parallel, so wall_clock_seconds is a floor. */
+    wall_clock_estimated?: boolean;
+    /** Every test duration added together - machine time, not elapsed time. */
     total_seconds?: number;
     avg_seconds?: number;
     failed_seconds?: number;
     slowest_area?: string;
+    workers?: number;
+    hosts?: number;
   };
   coverage?: { skipped?: number; skipped_rate?: number };
 }

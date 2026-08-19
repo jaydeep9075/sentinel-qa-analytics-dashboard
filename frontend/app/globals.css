@@ -115,6 +115,18 @@ body {
   background: rgba(255, 255, 255, 0.3);
 }
 
+/* A scroll container with no visible scrollbar. Used by the header's control
+   strip, where a 44px-tall row cannot spare the 6px a scrollbar costs and a
+   visible one reads as a rendering glitch rather than an affordance. */
+.no-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+
 /* Smooth transitions */
 * {
   transition:

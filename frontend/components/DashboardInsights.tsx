@@ -91,6 +91,7 @@ function InsightCard({
   valueClass = "text-slate-900 dark:text-white",
   detail,
   accent = "border-slate-200 dark:border-white/[0.06]",
+  valueTitle,
   children,
 }: {
   icon: typeof Layers;
@@ -99,6 +100,8 @@ function InsightCard({
   valueClass?: string;
   detail?: string;
   accent?: string;
+  /** Hover text for the headline number, when the number needs a definition. */
+  valueTitle?: string;
   children?: React.ReactNode;
 }) {
   return (
@@ -112,7 +115,7 @@ function InsightCard({
           {label}
         </p>
       </div>
-      <p className={`truncate text-xl font-bold leading-tight ${valueClass}`} title={value}>
+      <p className={`truncate text-xl font-bold leading-tight ${valueClass}`} title={valueTitle || value}>
         {value}
       </p>
       {detail && (
@@ -172,16 +175,27 @@ export default function DashboardInsightBand({ insights, qualityScore, loading }
 
   const runtime = insights.runtime || {};
   const wasted = Number(runtime.failed_seconds || 0);
-  const totalRuntime = Number(runtime.total_seconds || 0);
-  const wastedShare = totalRuntime > 0 ? Math.round((wasted / totalRuntime) * 100) : 0;
-  const runtimeDetail =
-    wasted > 0
-      ? `${formatDuration(wasted)} (${wastedShare}%) spent on tests that failed${
-          runtime.slowest_area ? ` · slowest area: ${runtime.slowest_area}` : ""
+  // Machine time: every test duration added together. Useful for "what did
+  // this cost", useless as an answer to "how long did the build take".
+  const machineSeconds = Number(runtime.total_seconds || 0);
+  // Elapsed time: what a wall clock next to the CI run would have shown.
+  // Falls back to machine time only when the data carries no worker identity.
+  const elapsedSeconds = Number(runtime.wall_clock_seconds ?? machineSeconds);
+  const workers = Number(runtime.workers || 0);
+  const wastedShare = machineSeconds > 0 ? Math.round((wasted / machineSeconds) * 100) : 0;
+
+  const parallelNote =
+    workers > 1
+      ? `${formatDuration(machineSeconds)} of test time across ${workers.toLocaleString()} parallel workers${
+          Number(runtime.hosts || 0) > 1 ? ` on ${Number(runtime.hosts).toLocaleString()} machines` : ""
         }`
-      : `Average ${formatDuration(runtime.avg_seconds)} per test${
-          runtime.slowest_area ? ` · slowest area: ${runtime.slowest_area}` : ""
-        }`;
+      : "";
+  const failureNote =
+    wasted > 0 ? `${formatDuration(wasted)} (${wastedShare}%) burned on tests that failed` : "";
+  const slowestNote = runtime.slowest_area ? `slowest area: ${runtime.slowest_area}` : "";
+  const runtimeDetail =
+    [parallelNote, failureNote, slowestNote].filter(Boolean).join(" · ") ||
+    `Average ${formatDuration(runtime.avg_seconds)} per test`;
 
   const score = Math.max(0, Math.min(100, Math.round(Number(qualityScore || 0))));
 
@@ -235,9 +249,16 @@ export default function DashboardInsightBand({ insights, qualityScore, loading }
 
       <InsightCard
         icon={Timer}
-        label="Suite Runtime"
-        value={formatDuration(totalRuntime)}
+        label={runtime.wall_clock_estimated ? "Suite Runtime (elapsed)" : "Suite Runtime"}
+        value={formatDuration(elapsedSeconds)}
         detail={runtimeDetail}
+        valueTitle={
+          runtime.wall_clock_estimated
+            ? "Critical path: the busiest worker's total test time. This is how " +
+              "long the run took end to end, and is a floor - it excludes CI " +
+              "queueing and container startup."
+            : "Total time for this run."
+        }
       >
         {Number(insights.coverage?.skipped || 0) > 0 && (
           <p className="mt-3 flex items-center gap-1.5 text-[11px] text-slate-500 dark:text-white/40">

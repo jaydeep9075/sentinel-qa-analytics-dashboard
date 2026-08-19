@@ -14,6 +14,7 @@ import {
   Radio,
 } from "lucide-react";
 import BrandLogo from "@/components/BrandLogo";
+import TestrigWordmark from "@/components/TestrigWordmark";
 import { API_BASE, elapsedMs, formatDuration, passRate } from "@/lib/liveRuns";
 
 interface TestRow {
@@ -372,8 +373,9 @@ export default function LiveRunPage() {
           <div className="flex items-center gap-3">
             <BrandLogo size={34} />
             <div>
-              <h1 className="text-base font-bold tracking-tight sm:text-lg">
-                <span className="text-cyan-400">Sentinel</span>{" "}
+              <h1 className="flex items-baseline gap-1.5 text-base font-bold tracking-tight sm:text-lg">
+                <TestrigWordmark className="text-[12px]" />
+                <span className="text-cyan-400">Sentinel</span>
                 <span className="font-normal text-slate-500 dark:text-white/60">Live Run</span>
               </h1>
               <p className="hidden text-[10px] font-semibold uppercase tracking-widest text-slate-500 dark:text-white/25 sm:block">

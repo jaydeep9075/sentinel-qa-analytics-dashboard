@@ -3,6 +3,7 @@ import { useCallback, useEffect, useState } from "react";
 import { RefreshCw, RotateCcw } from "lucide-react";
 import PageTransition from "@/components/PageTransition";
 import { SkeletonRows } from "@/components/Skeleton";
+import { formatRoleLabel } from "@/lib/roles";
 
 const API = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
@@ -25,16 +26,6 @@ type UsageRow = {
   remaining: number | null;
   over_limit: boolean;
 };
-
-function formatRoleLabel(role: string): string {
-  const normalized = String(role || "").trim().toLowerCase();
-  if (!normalized) return "";
-  if (normalized === "cto") return "CTO";
-  return normalized
-    .split("-")
-    .map((part) => (part ? `${part[0].toUpperCase()}${part.slice(1)}` : part))
-    .join(" ");
-}
 
 export default function AdminUsagePage() {
   const [rows, setRows] = useState<UsageRow[]>([]);

@@ -6,6 +6,7 @@ From `Desktop\ai_dashboard\`, two commands:
 
 ```powershell
 .\start-sentinel.ps1     # backend + frontend, waits until both answer
+
 .\run-live-tests.ps1     # 4 FSA login tests, headed, 2 workers
 ```
 

@@ -224,16 +224,15 @@ when you're locked out:
 ```bash
 docker compose exec backend python -m services.admin_users list-users
 docker compose exec backend python -m services.admin_users approve \
-    --username jane --workspace platform --role qa-engineer
+    --username jane --workspace platform --role sdet
 docker compose exec backend python -m services.admin_users create-user \
-    --username bob --role qa-engineer --workspace platform --password '...'
+    --username bob --role sdet --workspace platform --password '...'
 docker compose exec backend python -m services.admin_users set-workspace \
     --username bob --workspace mobile
 docker compose exec backend python -m services.admin_users delete-user --username bob
 ```
 
-Valid roles: `admin`, `cto`, `qa-manager`, `qa-engineer`, `developer`,
-`viewer` — the account-permission roles in `services/permissions.py`, not to
+Valid roles: `admin`, `cto`, `qa-manager`, `sdet` — the account-permission roles in `services/permissions.py`, not to
 be confused with the LLM chat personas in `roles/*.md` (selected per-chat via
 the role picker, unrelated to who's allowed to do what). `admin` and `cto` are
 equivalent administrator roles; the rest are increasingly read-only — see the
@@ -309,7 +308,7 @@ Everything below runs from the repo root.
 | Restart just the backend | `docker compose restart backend` |
 | Open a shell in a container | `docker compose exec backend sh` |
 | List accounts | `docker compose exec backend python -m services.admin_users list-users` |
-| Approve a signup | `docker compose exec backend python -m services.admin_users approve --username <n> --workspace <ws> --role qa-engineer` |
+| Approve a signup | `docker compose exec backend python -m services.admin_users approve --username <n> --workspace <ws> --role sdet` |
 | Switch LLM provider | edit `LLM_PROVIDER`/`LLM_MODEL`/key in `.env`, then `docker compose up -d` |
 
 **Next time you want to run this**, that's just:
@@ -624,7 +623,7 @@ real deployment, but an empty `.env` boots a usable install.
 | `INGEST_API_KEYS` | No | empty — CI upload keys, see §5b |
 | `AUTH_ALLOW_SELF_REGISTRATION` | No | `true` — new accounts land pending |
 | `AUTH_AUTO_APPROVE_REGISTRATION` | No | `false` |
-| `AUTH_DEFAULT_ROLE` / `AUTH_DEFAULT_WORKSPACE` | No | `viewer` / `default` |
+| `AUTH_DEFAULT_ROLE` / `AUTH_DEFAULT_WORKSPACE` | No | `sdet` / `default` |
 | `LEGACY_BUILDS_WORKSPACE` | No | `default` — see §3a |
 | `LIVE_INGEST_API_KEY` | No | auto-generated into `state/live_ingest_api_key`, logged once at startup |
 | `WEB_CONCURRENCY` | No | `1` — read DOCKER.md §5 before raising |
@@ -682,7 +681,7 @@ route unlocks immediately.
 
 **"Your account is awaiting administrator approval"** — the account registered
 but hasn't been approved. An admin approves it on **Users**, or:
-`docker compose exec backend python -m services.admin_users approve --username <name> --workspace <ws> --role qa-engineer`.
+`docker compose exec backend python -m services.admin_users approve --username <name> --workspace <ws> --role sdet`.
 
 **A user sees no builds** — they're in a workspace that has none. Check with
 `list-users`, then either move them (`set-workspace`) or ingest into their

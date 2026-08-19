@@ -3,18 +3,8 @@
 import { useState, useEffect, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { motion } from "framer-motion";
-import {
-  TrendingUp,
-  LogOut,
-  Wifi,
-  WifiOff,
-  Plus,
-  Radio,
-  Shield,
-  UserCog,
-  LayoutDashboard,
-} from "lucide-react";
-import { NavLink, NAV_ACTION, NAV_DANGER } from "@/components/HeaderNav";
+import { Wifi, WifiOff, Plus } from "lucide-react";
+import { NAV_ACTION } from "@/components/HeaderNav";
 import ChartGallery from "@/components/ChartGallery";
 import DashboardInsightBand from "@/components/DashboardInsights";
 import IngestionSelector from "@/components/IngestionSelector";
@@ -22,7 +12,7 @@ import ProjectSelector from "@/components/ProjectSelector";
 import RoleSelector from "@/components/RoleSelector";
 import FloatingChat from "@/components/FloatingChat";
 import FloatingChart from "@/components/FloatingChart";  // new
-import BrandHeading from "@/components/BrandHeading";
+import AppHeader from "@/components/AppHeader";
 import AddBuildWizard from "@/components/AddBuildWizard";
 import {
   getDashboardOverview,
@@ -213,14 +203,6 @@ export default function Dashboard() {
     });
   }, [isHeaderLoading, selectedIngestion]);
 
-  // Only gates whether the nav link is rendered — /admin/* is enforced by
-  // require_admin on the backend, so hiding it is convenience, not security.
-  const [isAdmin, setIsAdmin] = useState(false);
-  useEffect(() => {
-    const role = (localStorage.getItem("role") || "").toLowerCase();
-    setIsAdmin(role === "admin" || role === "cto");
-  }, []);
-
   // A must-change-password session can't reach anything else on the backend
   // (see credential_change_middleware) - every panel on this page would 403
   // and render as a broken dashboard instead of explaining why. Checked here
@@ -247,11 +229,6 @@ export default function Dashboard() {
       .catch(() => {});
   }, [router]);
 
-  const handleLogout = () => {
-    localStorage.clear();
-    window.location.href = "/";
-  };
-
   return (
     <div className="relative min-h-screen overflow-hidden bg-[var(--background)] text-[var(--foreground)] selection:bg-cyan-500/30 font-sans">
       <div className="pointer-events-none absolute inset-0 dashboard-mesh" />
@@ -260,68 +237,50 @@ export default function Dashboard() {
       <div className="pointer-events-none absolute top-[30%] right-[6%] h-80 w-80 rounded-full bg-blue-500/10 blur-3xl motion-blob-slow" />
       <div className="pointer-events-none absolute bottom-[-80px] left-[28%] h-72 w-72 rounded-full bg-emerald-500/10 blur-3xl motion-blob-fast" />
 
-      {/* ══════════ HEADER ══════════ */}
-      <motion.header
-        initial={{ opacity: 0, y: -20 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={{ duration: 0.45, ease: [0.22, 1, 0.36, 1] }}
-        className="bg-white/90 border-slate-200 shadow-[0_4px_30px_rgba(15,23,42,0.08)] dark:bg-black/80 dark:border-white/[0.06] dark:shadow-[0_4px_30px_rgba(0,0,0,0.5)] backdrop-blur-xl border-b sticky top-0 z-50"
-      >
-        <div className="max-w-[1600px] mx-auto px-6 py-3.5 flex flex-col md:flex-row justify-between items-center gap-4">
-          {/* left: logo */}
-          <BrandHeading label="Dashboard" />
-
-          {/* right: selectors + status + actions */}
-          <div className="flex items-center gap-3 flex-wrap justify-end">
+      {/* ══════════ HEADER ══════════
+          Nav, account menu and chrome all live in <AppHeader/>; this page
+          only supplies the context that is specific to it. The connection
+          state is a bare dot rather than the "Connected" pill it used to be
+          — it is ambient status, not a control, and the pill cost ~100px on
+          a row that has to stay one line. */}
+      <AppHeader
+        label="Dashboard"
+        controls={
+          <>
             <IngestionSelector />
             <ProjectSelector />
             <RoleSelector />
             {canIngest && (
-            <div className="relative">
-              <button onClick={() => setIsAddBuildOpen(true)} className={NAV_ACTION}>
-                <Plus className="w-3.5 h-3.5" />
-                Add New Build
-              </button>
+              <div className="relative shrink-0">
+                <button onClick={() => setIsAddBuildOpen(true)} className={NAV_ACTION}>
+                  <Plus className="w-3.5 h-3.5" />
+                  New Build
+                </button>
 
-              <AddBuildWizard
-                isOpen={isAddBuildOpen}
-                onClose={() => setIsAddBuildOpen(false)}
-                // Switching the build already changes the gallery's SWR key,
-                // which refetches it — no remount needed on top of that.
-                onSuccess={(id) => setSelectedIngestion(id)}
-              />
-            </div>
-            )}
-
-            {/* connection status */}
-            {backendConnected ? (
-              <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-emerald-500/[0.08] border border-emerald-500/20">
-                <Wifi className="w-3 h-3 text-emerald-400" />
-                <span className="text-[10px] text-emerald-400 uppercase tracking-wider font-semibold">Connected</span>
-              </div>
-            ) : (
-              <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-red-500/[0.08] border border-red-500/20">
-                <WifiOff className="w-3 h-3 text-red-400" />
-                <span className="text-[10px] text-red-400 uppercase tracking-wider font-semibold">Offline</span>
+                <AddBuildWizard
+                  isOpen={isAddBuildOpen}
+                  onClose={() => setIsAddBuildOpen(false)}
+                  // Switching the build already changes the gallery's SWR key,
+                  // which refetches it — no remount needed on top of that.
+                  onSuccess={(id) => setSelectedIngestion(id)}
+                />
               </div>
             )}
 
-            {/* Nav proper. One shared style — the page you are on is the
-                only item that takes the brand accent. */}
-            <nav className="flex items-center gap-1">
-              <NavLink href="/dashboard" icon={LayoutDashboard} label="Dashboard" active />
-              <NavLink href="/runs/live" icon={Radio} label="Live Runs" />
-              <NavLink href="/build-trends" icon={TrendingUp} label="Build Trends" />
-              {isAdmin && <NavLink href="/admin" icon={Shield} label="Admin" />}
-              <NavLink href="/account" icon={UserCog} label="Account" />
-              <button onClick={handleLogout} className={NAV_DANGER}>
-                <LogOut className="w-3.5 h-3.5" />
-                Logout
-              </button>
-            </nav>
-          </div>
-        </div>
-      </motion.header>
+            <span
+              title={backendConnected ? "Connected to the Sentinel API" : "Cannot reach the Sentinel API"}
+              className="flex shrink-0 items-center gap-1.5 px-1"
+            >
+              {backendConnected ? (
+                <Wifi className="h-3.5 w-3.5 text-emerald-500" />
+              ) : (
+                <WifiOff className="h-3.5 w-3.5 animate-pulse text-red-500" />
+              )}
+              <span className="sr-only">{backendConnected ? "Connected" : "Offline"}</span>
+            </span>
+          </>
+        }
+      />
 
       {/* ══════════ MAIN CONTENT ══════════ */}
       <div className="relative z-10 max-w-[1600px] mx-auto px-6 py-8">

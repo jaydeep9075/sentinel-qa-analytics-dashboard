@@ -1,9 +1,34 @@
 import logging
+from typing import Optional
+
 import litellm
 from . import config, state
 from . import app_settings, token_usage_store
 
 logger = logging.getLogger(__name__)
+
+# Substrings identifying models that emit private reasoning tokens against the
+# same max_tokens budget as their visible reply.
+_REASONING_MODEL_MARKERS = (
+    "gemini-2.5",
+    "gemini-3",
+    "o1",
+    "o3",
+    "o4",
+    "gpt-5",
+    "claude-opus-4",
+    "claude-sonnet-4",
+    "claude-opus-5",
+    "claude-sonnet-5",
+    "claude-fable-5",
+    "deepseek-r",
+    "qwq",
+)
+
+# Floor for those models: enough for a long think plus a full answer. Chosen to
+# clear the ~2k reasoning tokens Gemini 2.5 Pro spends on this app's largest
+# prompt with room to spare.
+_REASONING_MIN_BUDGET = 8000
 
 
 class LLMNotConfiguredError(Exception):
@@ -55,7 +80,7 @@ class LLMClient:
             model=model_str,
             messages=[{"role": "user", "content": prompt}],
             temperature=temperature,
-            max_tokens=max_tokens,
+            max_tokens=self._token_budget(model_str, max_tokens),
         )
         api_key = settings.get("api_key") or ""
         api_base = settings.get("api_base") or ""
@@ -66,6 +91,66 @@ class LLMClient:
         elif (settings.get("provider") or "").strip().lower() == "ollama":
             kwargs["api_base"] = config.OLLAMA_URL
         return kwargs
+
+    def _token_budget(self, model_str: str, max_tokens: int) -> int:
+        """Reserve room for a reasoning model's private thinking tokens.
+
+        On reasoning models (Gemini 2.5, o-series, Claude with extended
+        thinking) max_tokens caps thinking AND visible output together. Callers
+        here size max_tokens for the answer they expect - 2000 for a JSON
+        routing decision, say - but Gemini 2.5 Pro routinely spends 1000-2000
+        tokens thinking before it writes anything. When thinking exhausts the
+        budget the API returns finish_reason="length" with empty content and
+        no error, which surfaced to users as "AI service unavailable" on
+        roughly one chat message in three.
+
+        Raising the ceiling costs nothing when the model does not use it -
+        billing is on tokens produced, not on the cap.
+        """
+        if max_tokens >= _REASONING_MIN_BUDGET:
+            return max_tokens
+        model = (model_str or "").lower()
+        if any(marker in model for marker in _REASONING_MODEL_MARKERS):
+            return _REASONING_MIN_BUDGET
+        return max_tokens
+
+    def _content_or_none(self, response, model_str: str) -> Optional[str]:
+        """Unwrap the message content, distinguishing "empty" from "truncated".
+
+        An empty completion is not automatically a service failure, and the
+        two cases need different fixes: a truncated one means the token budget
+        was too small for this prompt, which is actionable and belongs in the
+        log with that name on it.
+        """
+        try:
+            choice = response.choices[0]
+        except (AttributeError, IndexError, TypeError):
+            logger.error(f"LLM returned no choices (model={model_str})")
+            return None
+
+        content = getattr(getattr(choice, "message", None), "content", None)
+        if content:
+            return content
+
+        finish_reason = getattr(choice, "finish_reason", "") or "unknown"
+        reasoning_tokens = getattr(
+            getattr(getattr(response, "usage", None), "completion_tokens_details", None),
+            "reasoning_tokens",
+            None,
+        )
+        if finish_reason == "length":
+            logger.error(
+                f"LLM returned empty content: {model_str} hit its token cap "
+                f"before writing a reply"
+                + (f" ({reasoning_tokens} tokens spent reasoning)" if reasoning_tokens else "")
+                + ". Raise max_tokens for this call or switch to a non-reasoning model."
+            )
+        else:
+            logger.error(
+                f"LLM returned empty content (model={model_str}, "
+                f"finish_reason={finish_reason})"
+            )
+        return None
 
     def _record_usage(self, response, model_str: str, user_id: str, workspace_id: str) -> None:
         usage = getattr(response, "usage", None)
@@ -129,7 +214,7 @@ class LLMClient:
             kwargs = self._build_kwargs(prompt, temperature, max_tokens, settings)
             response = litellm.completion(**kwargs)
             self._record_usage(response, model_str, user_id, workspace_id)
-            return response.choices[0].message.content
+            return self._content_or_none(response, model_str)
         except LLMNotConfiguredError as e:
             logger.warning(f"LLM not configured: {e}")
             return None
@@ -155,7 +240,7 @@ class LLMClient:
             kwargs = self._build_kwargs(prompt, temperature, max_tokens, settings)
             response = await litellm.acompletion(**kwargs)
             self._record_usage(response, model_str, user_id, workspace_id)
-            return response.choices[0].message.content
+            return self._content_or_none(response, model_str)
         except LLMNotConfiguredError as e:
             logger.warning(f"LLM not configured: {e}")
             return None

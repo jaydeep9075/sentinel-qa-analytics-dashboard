@@ -135,7 +135,7 @@ def _cmd_list_users(store: UserStore, args: argparse.Namespace) -> int:
         print(
             f"\n{len(pending)} account(s) awaiting approval. Approve with:\n"
             f"  python -m services.admin_users approve --username <name> "
-            f"--workspace <workspace> --role qa-engineer"
+            f"--workspace <workspace> --role sdet"
         )
     return 0
 

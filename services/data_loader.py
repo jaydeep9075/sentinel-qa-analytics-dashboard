@@ -77,6 +77,49 @@ def _browser_to_platform(browser: str) -> str:
     return "mobile" if any(k in b for k in _MOBILE_BROWSER_KEYWORDS) else "desktop"
 
 
+def _worker_identity(row_like, labels_blob=None) -> tuple:
+    """Pull (worker, host) out of a test record.
+
+    Playwright/Allure tag every result with the CI machine ("host") and the
+    worker process that ran it ("thread"). That pair is the only thing in the
+    data that reveals how much of the suite ran in parallel - without it the
+    dashboard can only add every test duration together and report a
+    "runtime" that no wall clock ever measured.
+
+    Two shapes are in the wild: newer ingestions flatten the Allure labels
+    into labels_host/labels_thread columns, older ones keep the whole label
+    map as a JSON string in `labels`. Both are read here so historical builds
+    get an accurate runtime too, not just freshly ingested ones.
+    """
+    def _pick(key):
+        for name in (f"labels_{key}", key):
+            val = row_like.get(name) if hasattr(row_like, "get") else None
+            if val is not None and str(val).strip() and str(val) != "nan":
+                return str(val).strip()
+        return ""
+
+    worker, host = _pick("thread"), _pick("host")
+    if worker and host:
+        return worker, host
+
+    if isinstance(labels_blob, str) and labels_blob.strip():
+        try:
+            labels = json.loads(labels_blob)
+        except Exception:
+            labels = None
+        if isinstance(labels, dict):
+            worker = worker or str(labels.get("thread", "") or "").strip()
+            host = host or str(labels.get("host", "") or "").strip()
+    elif isinstance(labels_blob, dict):
+        worker = worker or str(labels_blob.get("thread", "") or "").strip()
+        host = host or str(labels_blob.get("host", "") or "").strip()
+
+    # A worker id already embeds its host; falling back to the host alone
+    # still separates machines, which is the coarser but still-correct
+    # parallelism signal.
+    return worker or host, host
+
+
 # ── SQL helpers ───────────────────────────────────────────────────────────────
 
 def sanitize_sql(q: str) -> str:
@@ -440,6 +483,7 @@ def _flatten_legacy(df: pd.DataFrame) -> list:
             if isinstance(err, dict):
                 err = err.get("message", "")
             browser = t.get("browser", "")
+            worker, host = _worker_identity(t, t.get("labels"))
             rows.append({
                 "result_id":     result_id,
                 "test_name":     t.get("full_title", t.get("name", "")),
@@ -455,6 +499,8 @@ def _flatten_legacy(df: pd.DataFrame) -> list:
                 "module_name":   t.get("module_name", "unknown"),
                 "platform_type": _browser_to_platform(browser) if browser else t.get("platform_type", "desktop"),
                 "browser":       browser or "GoogleChrome",
+                "worker":        worker,
+                "host":          host,
             })
     return rows
 
@@ -497,6 +543,7 @@ def _flatten_normalized(df: pd.DataFrame) -> list:
 
         browser       = str(row.get("browser", "") or "GoogleChrome")
         platform_type = _browser_to_platform(browser) if browser else str(row.get("platform_type", "desktop") or "desktop")
+        worker, host  = _worker_identity(row, row.get("labels") if "labels" in df.columns else None)
 
         rows.append({
             "result_id":     row.get("id"),
@@ -511,6 +558,8 @@ def _flatten_normalized(df: pd.DataFrame) -> list:
             "module_name":   str(row.get("module_name",  "unknown") or "unknown"),
             "platform_type": platform_type,
             "browser":       browser,
+            "worker":        worker,
+            "host":          host,
         })
     return rows
 

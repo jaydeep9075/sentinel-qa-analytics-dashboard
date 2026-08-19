@@ -4,6 +4,7 @@ import Link from "next/link";
 import { motion } from "framer-motion";
 import { Eye, EyeOff, ArrowRight, CheckCircle2, Clock } from "lucide-react";
 import BrandLogo from "@/components/BrandLogo";
+import { BRAND_NAME, BRAND_TAGLINE } from "@/lib/brand";
 
 const API = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
@@ -87,8 +88,11 @@ export default function RegisterPage() {
             <BrandLogo size={46} />
             <div>
               <h2 className="text-2xl font-bold text-slate-900 dark:text-white">Request Access</h2>
-              <p className="text-slate-500 dark:text-white/30 text-xs tracking-wide">
-                Create a Sentinel Analytics account
+              <p className="text-slate-500 dark:text-white/40 text-xs tracking-wide">
+                Create a {BRAND_NAME} account
+              </p>
+              <p className="mt-0.5 text-slate-400 dark:text-white/25 text-[11px] leading-snug">
+                {BRAND_TAGLINE}
               </p>
             </div>
           </div>

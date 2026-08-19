@@ -66,7 +66,7 @@ def _load_seed_users(seed_path: str) -> dict:
         if not isinstance(raw, dict):
             continue
         username = str(raw.get("username", "")).strip().lower()
-        role = str(raw.get("role", "qa-engineer")).strip() or "qa-engineer"
+        role = str(raw.get("role", "sdet")).strip() or "sdet"
         if not username:
             continue
 
@@ -524,20 +524,31 @@ async def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(s
         workspace_id: str = _normalize_workspace(payload.get("workspace_id"))
         if username is None or role is None:
             raise HTTPException(status_code=401, detail="Invalid token")
-        if config.AUTH_BACKEND == "db" and get_user_store().get_user(username) is None:
-            # The account this token names no longer exists under this
-            # username - renamed away (change_own_username re-issues a
-            # token, but the OLD one is still cryptographically valid until
-            # it expires) or deleted. Without this check the stale token
-            # would otherwise keep authenticating successfully for the rest
-            # of its 24h lifetime: credential_change_middleware's fresh
-            # must-change-password check ALSO silently treats "no such row"
-            # as "nothing required" (see UserStore.get_must_change_password),
-            # so nothing else catches this. That would quietly defeat the
-            # entire point of forcing bootstrap admin/admin off its default
-            # identity - a token obtained during that default-credential
-            # window would keep working under the old name regardless.
-            raise HTTPException(status_code=401, detail="Invalid token")
+        if config.AUTH_BACKEND == "db":
+            stored = get_user_store().get_user(username)
+            if stored is None:
+                # The account this token names no longer exists under this
+                # username - renamed away (change_own_username re-issues a
+                # token, but the OLD one is still cryptographically valid until
+                # it expires) or deleted. Without this check the stale token
+                # would otherwise keep authenticating successfully for the rest
+                # of its 24h lifetime: credential_change_middleware's fresh
+                # must-change-password check ALSO silently treats "no such row"
+                # as "nothing required" (see UserStore.get_must_change_password),
+                # so nothing else catches this. That would quietly defeat the
+                # entire point of forcing bootstrap admin/admin off its default
+                # identity - a token obtained during that default-credential
+                # window would keep working under the old name regardless.
+                raise HTTPException(status_code=401, detail="Invalid token")
+            # Prefer the STORED role and workspace over the token's copy.
+            # The claims are a snapshot from login and go stale the moment an
+            # admin edits the account: until this, a role change (or a demotion)
+            # did nothing until that person's token expired up to 24h later,
+            # and they kept seeing the old role reported back to them by
+            # /auth/permissions. The row is already being read here for the
+            # existence check above, so this costs no extra query.
+            role = str(stored.get("role") or role)
+            workspace_id = _normalize_workspace(stored.get("workspace_id") or workspace_id)
         return {"username": username, "role": role, "workspace_id": workspace_id}
     except JWTError:
         raise HTTPException(status_code=401, detail="Invalid token")

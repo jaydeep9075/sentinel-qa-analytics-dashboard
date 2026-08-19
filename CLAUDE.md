@@ -198,7 +198,7 @@ reintroduce Playwright-specific wording into the UI or the schemas.
   password reset (`POST /admin/users/{u}/password`) can set the same flag via `force_change`
   (default true).
 - **Roles vs. permissions**: `services/permissions.py` is the source of truth for what a role
-  (`admin`/`cto`/`qa-manager`/`qa-engineer`/`developer`/`viewer`) may do — `data.view`,
+  (`admin`/`cto`/`qa-manager`/`sdet`) may do — `data.view`,
   `data.ingest`, `data.delete`, `usage.view_own`/`usage.view_all`, `users.manage`,
   `settings.manage`, `audit.view`. `admin`/`cto` are wildcard-everything. `require_permission()`
   is a FastAPI dependency factory; `GET /auth/permissions` is what the frontend gates on instead

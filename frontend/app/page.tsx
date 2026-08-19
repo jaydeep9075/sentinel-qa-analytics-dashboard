@@ -9,6 +9,8 @@ import {
 } from "framer-motion";
 import { useEffect, useState } from "react";
 import BrandLogo from "@/components/BrandLogo";
+import TestrigWordmark from "@/components/TestrigWordmark";
+import { BRAND_TAGLINE } from "@/lib/brand";
 import {
   MessageSquare,
   BarChart3,
@@ -434,9 +436,9 @@ export default function LandingPage() {
         <div className="mx-auto flex max-w-7xl items-center justify-between px-6 py-4">
           <div className="flex items-center gap-2">
             <BrandLogo size={34} />
-            <span className="text-lg font-bold tracking-tight">
-              <span className="text-cyan-400">Sentinel</span>{" "}
-              <span className="font-normal text-slate-500 dark:text-white/70">Analytics</span>
+            <span className="flex items-baseline gap-1.5 text-lg font-bold tracking-tight">
+              <TestrigWordmark className="text-[13px]" />
+              <span className="text-cyan-400">Sentinel</span>
             </span>
           </div>
           <div className="hidden items-center gap-7 text-sm text-slate-500 dark:text-white/50 lg:flex">
@@ -914,12 +916,16 @@ export default function LandingPage() {
         <div className="mx-auto flex max-w-6xl flex-col items-center justify-between gap-6 px-6 md:flex-row">
           <div className="flex items-center gap-2">
             <BrandLogo size={26} />
-            <span className="text-sm font-semibold text-slate-600 dark:text-white/60">
-              Sentinel Analytics
-            </span>
+            <div>
+              <p className="flex items-baseline gap-1.5 text-sm font-semibold text-slate-600 dark:text-white/60">
+                <TestrigWordmark className="text-[11px]" />
+                <span>Sentinel</span>
+              </p>
+              <p className="text-xs text-slate-500 dark:text-white/35">{BRAND_TAGLINE}</p>
+            </div>
           </div>
           <div className="flex flex-wrap items-center justify-center gap-6 text-xs text-slate-600 dark:text-white/40">
-            <span>© {new Date().getFullYear()} Sentinel — Testrig Technologies Pvt. Ltd.</span>
+            <span>© {new Date().getFullYear()} Testrig Sentinel — Testrig Technologies Pvt. Ltd.</span>
             <a href="#" className="transition-colors hover:text-cyan-400">Privacy</a>
             <a href="#" className="transition-colors hover:text-cyan-400">Terms</a>
           </div>
@@ -949,30 +955,33 @@ const solutions = [
   "Anyone with a login can self-serve, so analysis stops being a bottleneck.",
 ];
 
+/* The four roles Sentinel actually ships accounts for. Each card names the
+   role, the one question that role opens the dashboard to answer, and what
+   they get instead of the work they do today. */
 const audiences = [
   {
-    icon: <Users className="h-5 w-5 text-cyan-500" />,
-    title: "QA Leads & Test Managers",
-    desc: "Know where quality actually stands across suites and builds without spending the morning in spreadsheets.",
-    win: "Reporting time collapses to a question",
+    icon: <Briefcase className="h-5 w-5 text-cyan-500" />,
+    title: "CTO",
+    desc: "“Are we safe to ship?” — release risk and quality trend in plain language, no deck required.",
+    win: "A defensible go / no-go in one screen",
   },
   {
     icon: <Target className="h-5 w-5 text-cyan-500" />,
-    title: "Engineering Managers",
-    desc: "See which areas are burning the team's time, and which failures are worth acting on before the deadline.",
-    win: "Effort goes where it changes the outcome",
+    title: "QA Lead",
+    desc: "“Where is quality actually weak?” — the modules dragging the pass rate down, ranked by impact.",
+    win: "Effort goes where it changes the number",
+  },
+  {
+    icon: <Users className="h-5 w-5 text-cyan-500" />,
+    title: "Test Manager",
+    desc: "“What do I report this week?” — coverage, pass rate and regressions across builds, on demand.",
+    win: "Reporting time collapses to a question",
   },
   {
     icon: <Rocket className="h-5 w-5 text-cyan-500" />,
-    title: "Release & Delivery Owners",
-    desc: "Walk into the go / no-go meeting with a defensible position and the evidence already attached.",
-    win: "Ship decisions stop being a gut call",
-  },
-  {
-    icon: <Briefcase className="h-5 w-5 text-cyan-500" />,
-    title: "Product & Leadership",
-    desc: "A plain-language read on release risk and quality trends, without asking anyone to build a deck for it.",
-    win: "Status without chasing people",
+    title: "SDET",
+    desc: "“Why did this fail?” — the failing tests, their errors, the flaky ones and the slowest ones.",
+    win: "Straight to the test worth debugging",
   },
 ];
 

@@ -3,18 +3,8 @@
 import { useState, useEffect } from "react";
 import Link from "next/link";
 import dynamic from "next/dynamic";
-import {
-  TrendingUp,
-  LayoutDashboard,
-  LogOut,
-  ChevronDown,
-  BarChart3,
-  AlertTriangle,
-  Radio,
-  UserCog,
-} from "lucide-react";
-import BrandHeading from "@/components/BrandHeading";
-import { NavLink, NAV_DANGER } from "@/components/HeaderNav";
+import { ChevronDown, BarChart3, AlertTriangle, LayoutDashboard } from "lucide-react";
+import AppHeader from "@/components/AppHeader";
 
 const BuildTrendCharts = dynamic(() => import("@/components/BuildTrendCharts"), { 
   ssr: false,
@@ -109,11 +99,6 @@ export default function BuildTrends() {
     ? chartData.reduce((sum, b) => sum + b.failed, 0) / chartData.length
     : 0;
 
-  const handleLogout = () => {
-    localStorage.clear();
-    window.location.href = "/";
-  };
-
   if (loading) {
     return (
       <div className="min-h-screen bg-[var(--background)] text-[var(--foreground)] flex items-center justify-center">
@@ -145,24 +130,7 @@ export default function BuildTrends() {
   return (
     <div className="min-h-screen bg-[var(--background)] text-[var(--foreground)]">
       {/* ══════════ HEADER ══════════ */}
-      <header className="bg-white/90 border-slate-200 shadow-[0_4px_30px_rgba(15,23,42,0.08)] dark:bg-black/80 dark:border-white/[0.06] dark:shadow-[0_4px_30px_rgba(0,0,0,0.5)] backdrop-blur-xl border-b sticky top-0 z-50">
-        <div className="max-w-[1600px] mx-auto px-6 py-3.5 flex flex-wrap justify-between items-center gap-4">
-          {/* This header used to label itself "Sentinel Dashboard" while
-              rendering the trends page, and hand-rolled the mark instead of
-              using BrandHeading. */}
-          <BrandHeading label="Build Trends" />
-          <nav className="flex items-center gap-1">
-            <NavLink href="/dashboard" icon={LayoutDashboard} label="Dashboard" />
-            <NavLink href="/runs/live" icon={Radio} label="Live Runs" />
-            <NavLink href="/build-trends" icon={TrendingUp} label="Build Trends" active />
-            <NavLink href="/account" icon={UserCog} label="Account" />
-            <button onClick={handleLogout} className={NAV_DANGER}>
-              <LogOut className="w-3.5 h-3.5" />
-              Logout
-            </button>
-          </nav>
-        </div>
-      </header>
+      <AppHeader label="Build Trends" nav="home" />
 
       {/* ══════════ MAIN ══════════ */}
       <main className="max-w-[1600px] mx-auto px-6 py-8">

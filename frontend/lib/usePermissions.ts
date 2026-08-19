@@ -7,9 +7,20 @@ export type Permissions = {
   role: string;
   is_admin: boolean;
   permissions: string[];
+  /** Identity, so the header's account menu doesn't need a second request. */
+  username: string;
+  full_name: string;
+  workspace_id: string;
 };
 
-const EMPTY: Permissions = { role: "", is_admin: false, permissions: [] };
+const EMPTY: Permissions = {
+  role: "",
+  is_admin: false,
+  permissions: [],
+  username: "",
+  full_name: "",
+  workspace_id: "",
+};
 
 // Module-level, keyed by token: every mount of this hook across the app
 // (dashboard, IngestionSelector, ...) shares one fetch instead of each
@@ -25,6 +36,10 @@ async function fetchPermissions(token: string): Promise<Permissions> {
     inflight = fetch(`${API}/auth/permissions`, { headers: { Authorization: `Bearer ${token}` } })
       .then((r) => (r.ok ? r.json() : EMPTY))
       .catch(() => EMPTY)
+      // Spread over EMPTY: an older backend that predates the identity
+      // fields returns only the three permission keys, and the menu reads
+      // `permissions.username` unconditionally.
+      .then((data: Partial<Permissions>) => ({ ...EMPTY, ...data }))
       .then((data: Permissions) => {
         cache = { token, data };
         inflight = null;

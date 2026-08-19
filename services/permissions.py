@@ -54,12 +54,20 @@ ALL_PERMISSIONS = (
 
 _WILDCARD = frozenset({"*"})
 
-# Every role the system understands. Kept here (not just in the frontend's
+# Every role an admin may ASSIGN. Kept here (not just in the frontend's
 # ROLES array) so admin_create_user / admin_update_user can reject a typo'd
 # role at the API boundary instead of silently creating an account with a
 # role string that matches nothing in this table and therefore has NO
 # permissions - which would look like a bug, not a rejected request.
-KNOWN_ROLES = ("admin", "cto", "qa-manager", "qa-engineer", "developer", "viewer")
+KNOWN_ROLES = ("admin", "cto", "qa-manager", "sdet")
+
+# Roles that were assignable in an earlier version. They are no longer
+# offered in the UI and cannot be assigned any more (they are not in
+# KNOWN_ROLES), but accounts created before the change still carry them in
+# the user store - so they keep resolving to a permission set here rather
+# than failing closed and locking those people out until an admin gets
+# around to re-assigning them.
+LEGACY_ROLES = ("qa-engineer", "developer", "viewer")
 
 ROLE_PERMISSIONS: dict[str, frozenset[str]] = {
     # Full administrative control. cto is a second admin-equivalent role
@@ -74,8 +82,11 @@ ROLE_PERMISSIONS: dict[str, frozenset[str]] = {
     # is admin-only (see PERM_USAGE_VIEW_ALL) - non-admin roles have no usage
     # permission at all, not even their own, by design.
     "qa-manager": frozenset({PERM_DATA_VIEW, PERM_DATA_INGEST, PERM_DATA_DELETE}),
+    # Writes and owns the automation itself - same data rights as the
+    # manager, different job. Replaces the old "qa-engineer" role.
+    "sdet": frozenset({PERM_DATA_VIEW, PERM_DATA_INGEST, PERM_DATA_DELETE}),
+    # --- retired roles (see LEGACY_ROLES): resolvable, not assignable ---
     "qa-engineer": frozenset({PERM_DATA_VIEW, PERM_DATA_INGEST, PERM_DATA_DELETE}),
-    # Consumes the analysis; doesn't own the pipeline that produces it.
     "developer": frozenset({PERM_DATA_VIEW}),
     "viewer": frozenset({PERM_DATA_VIEW}),
 }

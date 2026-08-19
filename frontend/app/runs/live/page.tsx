@@ -2,9 +2,8 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { Loader2, Plug, Radio, LayoutDashboard, TrendingUp } from "lucide-react";
-import BrandHeading from "@/components/BrandHeading";
-import { NavLink } from "@/components/HeaderNav";
+import { Loader2, Plug, Radio } from "lucide-react";
+import AppHeader from "@/components/AppHeader";
 import ConnectRepoPanel, { ConnectionInfo } from "@/components/ConnectRepoPanel";
 import {
   API_BASE,
@@ -94,16 +93,7 @@ export default function LiveRunsListPage() {
       <div className="pointer-events-none absolute top-[30%] right-[6%] h-80 w-80 rounded-full bg-blue-500/10 blur-3xl motion-blob-slow" />
       <div className="pointer-events-none absolute bottom-[-80px] left-[28%] h-72 w-72 rounded-full bg-emerald-500/10 blur-3xl motion-blob-fast" />
 
-      <header className="sticky top-0 z-50 border-b border-slate-200 bg-white/90 shadow-[0_4px_30px_rgba(15,23,42,0.08)] backdrop-blur-xl dark:border-white/[0.06] dark:bg-black/80 dark:shadow-[0_4px_30px_rgba(0,0,0,0.5)]">
-        <div className="mx-auto flex max-w-[1600px] flex-wrap items-center justify-between gap-3 px-4 py-3 sm:gap-4 sm:px-6 sm:py-3.5">
-          <BrandHeading label="Live Runs" />
-          <nav className="flex items-center gap-1">
-            <NavLink href="/dashboard" icon={LayoutDashboard} label="Dashboard" />
-            <NavLink href="/runs/live" icon={Radio} label="Live Runs" active />
-            <NavLink href="/build-trends" icon={TrendingUp} label="Build Trends" />
-          </nav>
-        </div>
-      </header>
+      <AppHeader label="Live Runs" nav="home" />
 
       <div className="relative z-10 mx-auto max-w-3xl px-4 py-6 sm:px-6 sm:py-8">
         <div className="mb-6 flex flex-wrap items-center justify-between gap-2">

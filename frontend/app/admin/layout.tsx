@@ -3,7 +3,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter, usePathname } from "next/navigation";
 import Link from "next/link";
 import { ArrowLeft, Bell, Gauge, KeyRound, ScrollText, Settings as SettingsIcon, Users } from "lucide-react";
-import BrandHeading from "@/components/BrandHeading";
+import AppHeader from "@/components/AppHeader";
 
 const API = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
@@ -181,17 +181,23 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
 
   return (
     <div className="min-h-screen bg-[var(--background)] text-[var(--foreground)]">
-      <header className="bg-white/90 border-slate-200 shadow-[0_4px_30px_rgba(15,23,42,0.08)] dark:bg-black/80 dark:border-white/[0.06] dark:shadow-[0_4px_30px_rgba(0,0,0,0.5)] backdrop-blur-xl border-b sticky top-0 z-50">
-        <div className="max-w-6xl mx-auto px-6 py-3.5 flex flex-wrap items-center justify-between gap-4">
-          <BrandHeading
-            label="Admin Console"
-            subtitle={
-              <Link href="/dashboard" className="inline-flex items-center gap-1.5 text-xs text-slate-500 dark:text-white/40 hover:text-cyan-500">
-                <ArrowLeft className="w-3.5 h-3.5" /> Back to dashboard
-              </Link>
-            }
-          />
-          <nav className="flex items-center gap-1 flex-wrap">
+      {/* Two rows on purpose: the top one is the app's own navigation and
+          identity, identical to every other page; the strip below it moves
+          between sections *of the admin console*. Cramming both into one
+          row is what made this header wrap, and it also flattened two
+          different levels of navigation into one undifferentiated list. */}
+      <AppHeader
+        label="Admin Console"
+        maxWidth="max-w-6xl"
+        nav="none"
+        subtitle={
+          <Link href="/dashboard" className="inline-flex items-center gap-1.5 text-xs text-slate-500 dark:text-white/40 hover:text-cyan-500">
+            <ArrowLeft className="w-3.5 h-3.5" /> Back to dashboard
+          </Link>
+        }
+        controls={<NotificationBell />}
+        below={
+          <nav className="no-scrollbar flex items-center gap-1 overflow-x-auto py-2">
             {TABS.map((tab) => {
               const active = tab.href === "/admin" ? pathname === "/admin" : pathname.startsWith(tab.href);
               const Icon = tab.icon;
@@ -199,21 +205,22 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
                 <Link
                   key={tab.href}
                   href={tab.href}
-                  className={`flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-semibold transition-all ${
+                  aria-current={active ? "page" : undefined}
+                  className={`flex shrink-0 items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-semibold transition-all ${
                     active
-                      ? "bg-cyan-500/10 text-cyan-500 border border-cyan-500/25"
-                      : "text-slate-500 dark:text-white/50 border border-transparent hover:bg-slate-100 dark:hover:bg-white/[0.05]"
+                      ? "border-cyan-500/25 bg-cyan-500/10 text-cyan-600 dark:text-cyan-400"
+                      : "border-transparent text-slate-500 hover:bg-slate-100 dark:text-white/50 dark:hover:bg-white/[0.05]"
                   }`}
                 >
-                  <Icon className="w-3.5 h-3.5" />
+                  <Icon className="h-3.5 w-3.5" />
                   {tab.label}
                 </Link>
               );
             })}
           </nav>
-          <NotificationBell />
-        </div>
-      </header>
+        }
+      />
+
       <main className="max-w-6xl mx-auto px-6 py-8">{children}</main>
     </div>
   );

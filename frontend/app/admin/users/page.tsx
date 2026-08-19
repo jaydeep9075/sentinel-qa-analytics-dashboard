@@ -4,20 +4,11 @@ import { useRouter } from "next/navigation";
 import { Check, KeyRound, RefreshCw, ShieldAlert, Trash2, UserPlus, X } from "lucide-react";
 import PageTransition from "@/components/PageTransition";
 import { SkeletonRows } from "@/components/Skeleton";
+import { ASSIGNABLE_ROLES, formatRoleLabel, isRetiredRole } from "@/lib/roles";
 
 const API = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
-const ROLES = ["admin", "cto", "qa-manager", "qa-engineer", "developer", "viewer"];
-
-function formatRoleLabel(role: string): string {
-  const normalized = String(role || "").trim().toLowerCase();
-  if (!normalized) return "";
-  if (normalized === "cto") return "CTO";
-  return normalized
-    .split("-")
-    .map((part) => (part ? `${part[0].toUpperCase()}${part.slice(1)}` : part))
-    .join(" ");
-}
+const ROLES = [...ASSIGNABLE_ROLES];
 
 type User = {
   username: string;
@@ -219,7 +210,7 @@ function PendingRow({
   onReject: (u: string, b: Record<string, unknown>, m: string) => Promise<boolean>;
 }) {
   const [workspace, setWorkspace] = useState(user.requested_workspace || workspaces[0] || "default");
-  const [role, setRole] = useState("qa-engineer");
+  const [role, setRole] = useState("sdet");
 
   return (
     <div className="flex flex-wrap items-center gap-3 p-4 rounded-xl border border-amber-500/25 bg-amber-500/[0.04]">
@@ -284,6 +275,7 @@ function UserRow({
 }) {
   const [workspace, setWorkspace] = useState(user.workspace_id);
   const [tokenLimit, setTokenLimit] = useState(String(user.token_limit || 0));
+  const retired = isRetiredRole(user.role);
 
   useEffect(() => setWorkspace(user.workspace_id), [user.workspace_id]);
   useEffect(() => setTokenLimit(String(user.token_limit || 0)), [user.token_limit]);
@@ -325,12 +317,27 @@ function UserRow({
       </td>
       <td className="px-4 py-3">
         <select
-          value={user.role || "viewer"}
+          value={retired ? "" : (user.role || "sdet").toLowerCase()}
           disabled={isSelf}
-          title={isSelf ? "Use another admin account to change your own role" : undefined}
+          title={
+            isSelf
+              ? "Use another admin account to change your own role"
+              : retired
+                ? `"${user.role}" is a retired role — pick a current one`
+                : undefined
+          }
           onChange={(e) => onPatch(user.username, { role: e.target.value }, `Updated ${user.username}.`)}
-          className="px-2 py-1.5 rounded-lg bg-white dark:bg-black/50 border border-slate-300 dark:border-white/10 text-sm disabled:opacity-50"
+          className={`px-2 py-1.5 rounded-lg bg-white dark:bg-black/50 border text-sm disabled:opacity-50 ${
+            retired
+              ? "border-amber-500/50 text-amber-600 dark:text-amber-400"
+              : "border-slate-300 dark:border-white/10"
+          }`}
         >
+          {retired && (
+            <option value="" disabled>
+              {formatRoleLabel(user.role)} — retired
+            </option>
+          )}
           {ROLES.map((r) => (
             <option key={r} value={r}>
               {formatRoleLabel(r)}
@@ -428,7 +435,7 @@ function CreateUserForm({
     password: "",
     email: "",
     full_name: "",
-    role: "qa-engineer",
+    role: "sdet",
     workspace_id: workspaces[0] || "default",
     token_limit: "",
     must_change_password: true,

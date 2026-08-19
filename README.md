@@ -6,7 +6,7 @@ Sentinel QA Analytics Dashboard is an intelligent analytics platform for Quality
 
 ### Key Capabilities
 
-- **JWT Authentication**: Login-protected dashboard and API; role-aware sessions (CTO, QA Engineer)
+- **JWT Authentication**: Login-protected dashboard and API; role-aware sessions (CTO, QA Manager, SDET)
 - **Allure Ingestion**: Import `allure-results` directories via `config2.json`, CLI, or the dashboard “Add Build” flow
 - **Build Trend Analysis**: Compare pass rates, durations, and regressions across builds at `/build-trends`
 - **Persona-Driven AI Insights**: Context-aware natural language queries tailored by role (`roles/`) and project (`projects/`)
@@ -205,7 +205,7 @@ allowedDevOrigins: ['your.server.ip'],
 
 ## Roles & Projects
 
-- **`roles/`** — Markdown persona instructions (`cto.md`, `qa-engineer.md`) loaded by `RoleManager` and sent to the LLM via the `x-role` header.
+- **`roles/`** — Markdown persona instructions (`cto.md`, `qa-manager.md`, `sdet.md`) loaded by `RoleManager` and sent to the LLM via the `x-role` header.
 - **`projects/`** — Per-project context (e.g. FSA, HSA, WDH) with optional embeddings; selected via `x-project` on chat/chart requests.
 
 Use the dashboard **Role** and **Project** selectors to scope AI responses.
@@ -279,7 +279,7 @@ POST /auth/login?username=aditya&password=Pass@123
 ```http
 POST /chat
 x-ingestion-id: ingestion_20260506_110116
-x-role: qa-engineer
+x-role: sdet
 x-project: FSA
 Content-Type: application/json
 

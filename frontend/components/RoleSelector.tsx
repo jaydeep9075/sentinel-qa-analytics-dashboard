@@ -1,17 +1,22 @@
 "use client";
 import { useRB } from "@/lib/RBContext";
 import { Users, ChevronDown } from "lucide-react";
+import { formatRoleLabel } from "@/lib/roles";
 
 export default function RoleSelector() {
   const { roles, selectedRole, setSelectedRole, loading, canSwitchRole } = useRB();
 
-  if (loading) return <div className="text-[10px] text-slate-500 dark:text-white/20 uppercase tracking-widest">Loading roles...</div>;
+  if (loading) return null;
   if (roles.length === 0) return null;
+  // Only the wildcard roles may switch persona (see RBContext.canSwitchRole).
+  // For everyone else this used to render at 40% opacity and inert — a
+  // permanently disabled dropdown teaches nothing and costs the header
+  // ~110px. Their role is shown in the account menu instead, where it is
+  // information rather than a broken control.
+  if (!canSwitchRole) return null;
 
   const handleChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
-    if (canSwitchRole) {
-      setSelectedRole(e.target.value);
-    }
+    setSelectedRole(e.target.value);
   };
 
   return (
@@ -20,15 +25,12 @@ export default function RoleSelector() {
       <select
         value={selectedRole || ""}
         onChange={handleChange}
-        disabled={!canSwitchRole}
-        className={`appearance-none bg-white border border-slate-300 rounded-lg px-3 py-1.5 pr-8 text-xs text-slate-700 hover:border-amber-500/30 focus:outline-none focus:border-amber-500/40 focus:ring-1 focus:ring-amber-500/20 transition-all cursor-pointer dark:bg-white/[0.03] dark:border-white/[0.08] dark:text-white/60 dark:hover:border-amber-500/20 dark:focus:border-amber-500/30 ${
-          !canSwitchRole ? "opacity-40 cursor-not-allowed" : ""
-        }`}
+        title="Answer style: which role the chat and chart suggestions are written for"
+        className="appearance-none bg-white border border-slate-300 rounded-lg px-3 py-1.5 pr-8 text-xs text-slate-700 hover:border-amber-500/30 focus:outline-none focus:border-amber-500/40 focus:ring-1 focus:ring-amber-500/20 transition-all cursor-pointer dark:bg-white/[0.03] dark:border-white/[0.08] dark:text-white/60 dark:hover:border-amber-500/20 dark:focus:border-amber-500/30"
       >
-        <option value="" className="bg-white text-slate-700 dark:bg-black dark:text-white">No Role</option>
         {roles.map((r) => (
           <option key={r} value={r} className="bg-white text-slate-700 dark:bg-black dark:text-white">
-            {r.toUpperCase()}
+            {formatRoleLabel(r)}
           </option>
         ))}
       </select>

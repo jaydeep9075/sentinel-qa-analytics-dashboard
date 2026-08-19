@@ -184,7 +184,7 @@ def test_admin_issued_temporary_password_is_still_a_hard_lock(client):
         json={
             "username": "tempuser",
             "password": "Interim!2026",
-            "role": "viewer",
+            "role": "sdet",
             "workspace_id": "default",
             "must_change_password": True,
         },

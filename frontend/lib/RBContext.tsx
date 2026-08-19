@@ -1,6 +1,7 @@
 "use client";
 import { createContext, useContext, useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
+import { usePermissions } from "./usePermissions";
 
 interface RBContextType {
   selectedRole: string | null;
@@ -16,6 +17,34 @@ interface RBContextType {
 
 const RBContext = createContext<RBContextType | undefined>(undefined);
 const RB_CACHE_KEY = "qa_cache:rb_context:v1";
+
+/**
+ * The chat persona - which role the assistant *writes for* - is stored under
+ * its own key.
+ *
+ * It used to share `localStorage.role` with the account role written at
+ * login, so picking "QA_Manager" in the dashboard's answer-style dropdown
+ * silently rewrote the signed-in account's role: an admin would come back to
+ * the header showing them as a QA_Manager, and anything reading that key saw
+ * a role the server had never granted. Two different things, two keys.
+ */
+const ANSWER_STYLE_KEY = "answerStyle";
+
+/**
+ * The answer style to start on.
+ *
+ * The account's own role when it has a persona file in roles/*.md - so an
+ * SDET reads SDET-shaped answers without ever opening the dropdown. `admin`
+ * has no persona file (an administrator is an account type, not a voice the
+ * assistant writes in), so an admin starts on the first available persona
+ * and can switch. There is no "unset" state: every session gets a concrete
+ * style, because "no style" only ever meant "whatever the model felt like".
+ */
+function defaultAnswerStyleFor(accountRole: string | null, available: string[]): string | null {
+  const normalized = String(accountRole || "").trim().toLowerCase();
+  if (normalized && available.includes(normalized)) return normalized;
+  return available[0] ?? null;
+}
 
 type RBCacheShape = {
   roles: string[];
@@ -57,15 +86,24 @@ export function RBProvider({ children }: { children: React.ReactNode }) {
   const [roles, setRoles] = useState<string[]>([]);
   const [projects, setProjects] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
-  const [userRole, setUserRole] = useState<string | null>(null);
+  const [storedUserRole, setStoredUserRole] = useState<string | null>(null);
+  // /auth/permissions is authoritative for the account role. localStorage is
+  // only the instant-on fallback for the first paint, and older builds of
+  // this app wrote the chat persona into that same key - so where the two
+  // disagree, the server wins.
+  const { permissions } = usePermissions();
+  const userRole = permissions.role || storedUserRole;
 
   useEffect(() => {
-    // Get the actual logged‑in user’s role from localStorage (set during login)
+    // The account role, written at login. Read-only here.
     const storedRole = localStorage.getItem("role");
-    setUserRole(storedRole);
-    // Initial selected role = user’s own role
-    if (storedRole) {
-      setSelectedRole(storedRole);
+    setStoredUserRole(storedRole);
+    // The answer style: an explicit earlier choice if there is one, else the
+    // account's own role - so an SDET reads SDET-shaped answers without ever
+    // touching the dropdown, and an admin starts with no persona at all.
+    const savedStyle = localStorage.getItem(ANSWER_STYLE_KEY);
+    if (savedStyle) {
+      setSelectedRole(savedStyle);
     }
 
     const cached = readRBCache();
@@ -104,8 +142,17 @@ export function RBProvider({ children }: { children: React.ReactNode }) {
         const rolesData = await rolesRes.json();
         const projectsData = await projectsRes.json();
 
-        setRoles(rolesData.roles || []);
+        const availableRoles: string[] = rolesData.roles || [];
+        setRoles(availableRoles);
         setProjects(projectsData.projects || []);
+
+        // Resolve the answer style against the personas that actually exist.
+        // Done here rather than on mount because roles/*.md is server-side:
+        // until this response lands there is no list to pick a default from.
+        setSelectedRole((current) => {
+          if (current && availableRoles.includes(current)) return current;
+          return defaultAnswerStyleFor(localStorage.getItem("role"), availableRoles);
+        });
 
         const savedProject = localStorage.getItem("selectedProject");
         let resolvedProject: string | null = null;
@@ -136,7 +183,8 @@ export function RBProvider({ children }: { children: React.ReactNode }) {
 
   const handleSetSelectedRole = (role: string) => {
     setSelectedRole(role);
-    localStorage.setItem("role", role);
+    // ANSWER_STYLE_KEY, never "role" - see the note on the constant.
+    localStorage.setItem(ANSWER_STYLE_KEY, role);
   };
 
   const handleSetSelectedProject = (project: string) => {
@@ -144,8 +192,11 @@ export function RBProvider({ children }: { children: React.ReactNode }) {
     localStorage.setItem("selectedProject", project);
   };
 
-  // Only CTO can switch roles
-  const canSwitchRole = userRole === "cto";
+  // Who may answer as somebody else. This is the LLM chat persona (roles/*.md),
+  // not the account role — switching it changes how answers are written, not
+  // what the account may do. The two wildcard-permission roles get it; a
+  // QA_Manager or SDET reads answers written for their own role.
+  const canSwitchRole = userRole === "cto" || userRole === "admin";
 
   return (
     <RBContext.Provider

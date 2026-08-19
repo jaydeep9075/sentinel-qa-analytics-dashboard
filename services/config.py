@@ -345,8 +345,9 @@ AUTH_ALLOW_SELF_REGISTRATION = _get_bool("AUTH_ALLOW_SELF_REGISTRATION", True)
 # reach the login page can read that workspace's builds.
 AUTH_AUTO_APPROVE_REGISTRATION = _get_bool("AUTH_AUTO_APPROVE_REGISTRATION", False)
 # Role and workspace given to an approved registration when the admin doesn't
-# specify. `viewer` is the least-privileged role the dashboard understands.
-AUTH_DEFAULT_ROLE = (os.getenv("AUTH_DEFAULT_ROLE") or "viewer").strip().lower() or "viewer"
+# specify. `sdet` is the least-privileged assignable role the dashboard
+# understands (see services.permissions.KNOWN_ROLES).
+AUTH_DEFAULT_ROLE = (os.getenv("AUTH_DEFAULT_ROLE") or "sdet").strip().lower() or "sdet"
 
 # --- First-run bootstrap admin ---------------------------------------------
 # Creates one admin ONLY when the users table is completely empty, so a fresh

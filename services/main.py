@@ -276,6 +276,22 @@ _QA_SCHEMA_TABLES = {"flattened_tests", "module_metrics", "project_metrics"}
 _NUMERIC_TYPE_HINTS = ("INT", "DOUBLE", "FLOAT", "DECIMAL", "REAL", "NUMERIC")
 
 
+# How many chat/chart suggestions an ingestion offers. Four, not eight: these
+# are a starting nudge for someone who hasn't thought of a question yet, and a
+# long list reads as a form to fill in - it pushes the answer area off the
+# panel and costs LLM tokens generating chips nobody clicks. The frontend
+# (lib/roleSuggestions.ts MAX_SUGGESTIONS) renders exactly this many.
+SUGGESTION_COUNT = 4
+
+
+def _trim_suggestions(payload: dict) -> dict:
+    """Cap both lists at SUGGESTION_COUNT, keeping the shape callers expect."""
+    return {
+        "chat": list(payload.get("chat", []))[:SUGGESTION_COUNT],
+        "chart": list(payload.get("chart", []))[:SUGGESTION_COUNT],
+    }
+
+
 def _schema_driven_fallback_suggestions(schema_profile: Optional[dict]) -> Optional[dict]:
     """Generate simple suggestions directly from the real ingested schema,
     with no LLM call â€” the no-LLM safety net for non-QA datasets (CSV/PDF/
@@ -320,17 +336,17 @@ def _schema_driven_fallback_suggestions(schema_profile: Optional[dict]) -> Optio
 
     chat = list(dict.fromkeys(chat))
     chart = list(dict.fromkeys(chart))
-    if len(chat) < 4 or len(chart) < 4:
+    if len(chat) < SUGGESTION_COUNT or len(chart) < SUGGESTION_COUNT:
         return None
 
-    while len(chat) < 8:
-        chat.append(chat[len(chat) % len(chat)])
-    while len(chart) < 8:
-        chart.append(chart[len(chart) % len(chart)])
-    return {"chat": chat[:8], "chart": chart[:8]}
+    return {"chat": chat[:SUGGESTION_COUNT], "chart": chart[:SUGGESTION_COUNT]}
 
 
 def _fallback_suggestions(role_id: Optional[str], schema_profile: Optional[dict] = None) -> dict:
+    return _trim_suggestions(_fallback_suggestions_full(role_id, schema_profile))
+
+
+def _fallback_suggestions_full(role_id: Optional[str], schema_profile: Optional[dict] = None) -> dict:
     tables = schema_profile.get("tables", {}) if isinstance(schema_profile, dict) else {}
     looks_like_qa_schema = bool(_QA_SCHEMA_TABLES & set(tables.keys()))
     if not looks_like_qa_schema:
@@ -396,18 +412,14 @@ def _normalize_suggestions(payload: dict, role_id: Optional[str], schema_profile
     if not isinstance(chat, list) or not isinstance(chart, list):
         return fallback
 
-    chat_clean = [str(x).strip() for x in chat if str(x).strip()][:8]
-    chart_clean = [str(x).strip() for x in chart if str(x).strip()][:8]
-    if len(chat_clean) < 4 or len(chart_clean) < 4:
+    chat_clean = [str(x).strip() for x in chat if str(x).strip()][:SUGGESTION_COUNT]
+    chart_clean = [str(x).strip() for x in chart if str(x).strip()][:SUGGESTION_COUNT]
+    if len(chat_clean) < SUGGESTION_COUNT or len(chart_clean) < SUGGESTION_COUNT:
         return fallback
 
-    while len(chat_clean) < 8:
-        chat_clean.append(fallback["chat"][len(chat_clean)])
-    while len(chart_clean) < 8:
-        chart_clean.append(fallback["chart"][len(chart_clean)])
     chat_clean = _repair_truncated_first_item(chat_clean, fallback["chat"])
     chart_clean = _repair_truncated_first_item(chart_clean, fallback["chart"])
-    return {"chat": chat_clean[:8], "chart": chart_clean[:8]}
+    return {"chat": chat_clean[:SUGGESTION_COUNT], "chart": chart_clean[:SUGGESTION_COUNT]}
 
 
 def _sanitize_suggestion_item(text: str) -> str:
@@ -472,7 +484,7 @@ def _repair_truncated_first_item(items: list[str], fallback_items: list[str]) ->
 
     repaired = [_sanitize_suggestion_item(x) for x in items if _sanitize_suggestion_item(x)]
     if not repaired:
-        return list(fallback_items[:8])
+        return list(fallback_items[:SUGGESTION_COUNT])
 
     if _looks_truncated_item(repaired[0]):
         split_head = _split_truncated_item(repaired[0])
@@ -481,9 +493,12 @@ def _repair_truncated_first_item(items: list[str], fallback_items: list[str]) ->
         else:
             repaired[0] = split_head
 
-    while len(repaired) < 8:
+    # Top up from the fallback only while it still has an entry to give -
+    # the fallback is now capped at SUGGESTION_COUNT, so indexing past its
+    # end is a real possibility rather than a theoretical one.
+    while len(repaired) < SUGGESTION_COUNT and len(repaired) < len(fallback_items):
         repaired.append(fallback_items[len(repaired)])
-    return repaired[:8]
+    return repaired[:SUGGESTION_COUNT]
 
 
 def _strip_code_fences(text: str) -> str:
@@ -562,13 +577,11 @@ def _salvage_suggestions_payload(
         return None
 
     fallback = _fallback_suggestions(role_id, schema_profile)
+    # _repair_truncated_first_item already tops both lists up from the
+    # fallback and caps them at SUGGESTION_COUNT.
     chat = _repair_truncated_first_item(chat, fallback["chat"])
     chart = _repair_truncated_first_item(chart, fallback["chart"])
-    while len(chat) < 8:
-        chat.append(fallback["chat"][len(chat)])
-    while len(chart) < 8:
-        chart.append(fallback["chart"][len(chart)])
-    return {"chat": chat[:8], "chart": chart[:8]}
+    return {"chat": chat, "chart": chart}
 
 
 def _parse_suggestions_payload(
@@ -602,7 +615,7 @@ def _build_retry_suggestion_prompt(
 
     return (
         "Return ONLY valid minified JSON.\n"
-        "Strict schema: {\"chat\":[8 strings],\"chart\":[8 strings]}.\n"
+        f"Strict schema: {{\"chat\":[{SUGGESTION_COUNT} strings],\"chart\":[{SUGGESTION_COUNT} strings]}}.\n"
         "Do not output markdown, code fences, or extra keys.\n"
         "Each suggestion must be <= 16 words and actionable.\n"
         "No test IDs, no file paths, no stack traces.\n"
@@ -676,7 +689,16 @@ _EMPTY_INSIGHTS = {
     "pass_rate": 0.0,
     "blast_radius": {"impacted": 0, "total": 0, "top_area": "", "top_area_failures": 0},
     "top_failure": {"signature": "", "count": 0, "share": 0.0},
-    "runtime": {"total_seconds": 0.0, "avg_seconds": 0.0, "failed_seconds": 0.0, "slowest_area": ""},
+    "runtime": {
+        "wall_clock_seconds": 0.0,
+        "wall_clock_estimated": False,
+        "total_seconds": 0.0,
+        "avg_seconds": 0.0,
+        "failed_seconds": 0.0,
+        "slowest_area": "",
+        "workers": 0,
+        "hosts": 0,
+    },
     "coverage": {"skipped": 0, "skipped_rate": 0.0},
 }
 
@@ -732,6 +754,82 @@ def _failure_signature(error: str) -> str:
     head = first_line.split(":", 1)[0].strip() if ":" in first_line else first_line
     signature = head if 4 <= len(head) <= 80 else first_line
     return signature[:120]
+
+
+def _wall_clock_runtime(
+    test_table: str, duration_expr: str, columns: set, cumulative_seconds: float
+) -> dict:
+    """How long the suite actually took, as opposed to how much test time it burned.
+
+    Summing every test's duration answers "how many machine-hours did this
+    cost", which is a real number but not the one anyone means by "suite
+    runtime" - a 610-test Playwright run spread over 46 CI machines reported
+    38.5h that way while the pipeline finished in well under an hour.
+
+    Tests on one worker are strictly sequential, and workers run concurrently,
+    so the run cannot finish before the busiest worker does: max(sum(duration)
+    per worker) is the critical path. It is a floor rather than the exact
+    pipeline time - it excludes queueing, container startup and any worker
+    idle time between tests - so it is reported as an estimate. Where the data
+    carries no worker identity at all there is nothing to divide by, and the
+    cumulative total is returned unchanged rather than invented.
+    """
+    worker_col = next((c for c in ("worker", "labels_thread", "thread") if c in columns), None)
+    host_col = next((c for c in ("host", "labels_host") if c in columns), None)
+    if not worker_col:
+        return {}
+
+    try:
+        with state._duck_query_lock:
+            row = state.duck_conn.execute(
+                f"""
+                SELECT
+                  MAX(worker_seconds) AS critical_path,
+                  COUNT(*)            AS workers
+                FROM (
+                  SELECT SUM({duration_expr}) AS worker_seconds
+                  FROM {test_table}
+                  WHERE {worker_col} IS NOT NULL
+                    AND TRIM(CAST({worker_col} AS VARCHAR)) <> ''
+                  GROUP BY CAST({worker_col} AS VARCHAR)
+                )
+                """
+            ).fetchone()
+    except Exception as e:
+        logger.warning(f"Insights: wall-clock query failed: {e}")
+        return {}
+
+    critical_path = float(row[0] or 0) if row else 0.0
+    workers = int(row[1] or 0) if row else 0
+    if workers <= 0 or critical_path <= 0:
+        return {}
+
+    hosts = 0
+    if host_col:
+        try:
+            with state._duck_query_lock:
+                hosts = int(
+                    state.duck_conn.execute(
+                        f"""
+                        SELECT COUNT(DISTINCT CAST({host_col} AS VARCHAR))
+                        FROM {test_table}
+                        WHERE {host_col} IS NOT NULL
+                          AND TRIM(CAST({host_col} AS VARCHAR)) <> ''
+                        """
+                    ).fetchone()[0]
+                    or 0
+                )
+        except Exception as e:
+            logger.warning(f"Insights: host-count query failed: {e}")
+
+    # A single worker means the suite ran serially - the cumulative sum IS the
+    # wall clock, and calling that an estimate would be needlessly hedged.
+    return {
+        "wall_clock_seconds": round(critical_path, 2),
+        "wall_clock_estimated": workers > 1,
+        "workers": workers,
+        "hosts": hosts,
+    }
 
 
 def _get_insights_payload(normalized_ingestion_id: str) -> dict:
@@ -806,12 +904,18 @@ def _get_insights_payload(normalized_ingestion_id: str) -> dict:
         "skipped": skipped,
         "skipped_rate": round((skipped / total) * 100, 1),
     }
+    cumulative_seconds = round(float(totals[4] or 0), 2)
     payload["runtime"] = {
-        "total_seconds": round(float(totals[4] or 0), 2),
+        "wall_clock_seconds": cumulative_seconds,
+        "wall_clock_estimated": False,
+        "total_seconds": cumulative_seconds,
         "avg_seconds": round(float(totals[5] or 0), 3),
         "failed_seconds": round(float(totals[6] or 0), 2),
         "slowest_area": "",
+        "workers": 0,
+        "hosts": 0,
     }
+    payload["runtime"].update(_wall_clock_runtime(test_table, duration_expr, columns, cumulative_seconds))
 
     if area_col:
         try:
@@ -1294,10 +1398,33 @@ async def whoami(current_user: dict = Depends(get_current_user)):
 
 @app.get("/auth/permissions")
 async def auth_permissions(current_user: dict = Depends(get_current_user)):
-    """What THIS account's role may do. The frontend gates buttons and nav
-    links on this instead of hardcoding role-name comparisons in components,
-    so a new role only has to be added in permissions.py to work everywhere."""
-    return permissions.permissions_payload(current_user)
+    """What THIS account's role may do, plus who it belongs to. The frontend
+    gates buttons and nav links on the permission list instead of hardcoding
+    role-name comparisons in components, so a new role only has to be added
+    in permissions.py to work everywhere.
+
+    The identity fields ride along because the header's account menu needs a
+    name and a workspace to show next to the role, and this is a call the
+    frontend already makes on every page - a second round trip to /auth/me
+    just to label an avatar would be one request per navigation for three
+    strings that are already in hand here."""
+    payload = permissions.permissions_payload(current_user)
+    username = str(current_user.get("username") or "")
+    full_name = ""
+    try:
+        # Only the db backend stores a display name; the token never carries
+        # one. A failure here must not take down permission resolution - the
+        # menu falls back to the username, which is always present.
+        stored = auth_module.get_user_store().get_user(username) or {}
+        full_name = str(stored.get("full_name") or "")
+    except Exception:
+        logger.debug("Could not read full_name for '%s'", username, exc_info=True)
+    return {
+        **payload,
+        "username": username,
+        "full_name": full_name,
+        "workspace_id": current_user.get("workspace_id") or "",
+    }
 
 
 @app.post("/auth/account/password")
@@ -2557,7 +2684,7 @@ async def role_suggestions(
     if _entry is not None:
         state.set_active_ingestion(normalized_ingestion_id, _entry["duck_conn"], _entry["lance_db"], _entry["embedder"])
 
-    role_id = str(x_role or current_user.get("role") or "qa-engineer").strip()
+    role_id = str(x_role or current_user.get("role") or "sdet").strip()
     project_id = str(x_project or "all").strip()
 
     suggestions_cache_key = f"{normalized_ingestion_id}:{role_id}:{project_id}"

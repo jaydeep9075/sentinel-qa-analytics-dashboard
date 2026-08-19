@@ -18,6 +18,9 @@ interface BrandLogoProps {
 /**
  * The Sentinel mark. Every header, auth card and landing nav renders this one
  * component, so the logo can only ever change in a single place.
+ *
+ * The company name is set in type next to it by <TestrigWordmark/> rather
+ * than shown as a second image — one mark per header.
  */
 export default function BrandLogo({ className = "", size = 32 }: BrandLogoProps) {
   return (

@@ -8,6 +8,7 @@ import { useRB } from "@/lib/RBContext";
 import { useIngestion } from "@/lib/IngestionContext";
 import { generateChart, submitFeedback } from "@/lib/api";
 import { useSuggestions } from "@/lib/SuggestionsContext";
+import { MAX_SUGGESTIONS } from "@/lib/roleSuggestions";
 
 export default function FloatingChart() {
   const { selectedRole, selectedProject } = useRB();
@@ -20,7 +21,7 @@ export default function FloatingChart() {
   const [recentPrompts, setRecentPrompts] = useState<string[]>([]);
   const [styleFeedback, setStyleFeedback] = useState("");
 
-  const suggestions = sharedSuggestions.chart;
+  const suggestions = sharedSuggestions.chart.slice(0, MAX_SUGGESTIONS);
 
   const handleGenerateChart = async (prompt: string) => {
     const trimmedPrompt = String(prompt || "").trim();

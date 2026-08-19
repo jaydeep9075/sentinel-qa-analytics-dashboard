@@ -1,0 +1,5 @@
+# Holds a live bearer token — never commit.
+.driver-state.json
+# Driver output: server logs and screenshots, regenerated on every run.
+logs/
+shots/

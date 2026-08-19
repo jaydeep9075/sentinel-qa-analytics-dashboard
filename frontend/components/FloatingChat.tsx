@@ -1,55 +1,106 @@
 // components/FloatingChat.tsx
 "use client";
 
-import { useState, useEffect } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
-import { MessageCircle, X, Send, Sparkles, Copy, RotateCw, Check, ThumbsUp, ThumbsDown, SlidersHorizontal } from "lucide-react";
+import {
+  MessageCircle,
+  X,
+  Send,
+  Sparkles,
+  Copy,
+  RotateCw,
+  Check,
+  ThumbsUp,
+  ThumbsDown,
+  SlidersHorizontal,
+  Database,
+  ArrowDown,
+  Trash2,
+} from "lucide-react";
 import { useRB } from "@/lib/RBContext";
 import { useIngestion } from "@/lib/IngestionContext";
 import { sendChatMessage, submitFeedback } from "@/lib/api";
 import ReactMarkdown from "react-markdown";
 import { useSuggestions } from "@/lib/SuggestionsContext";
+import { MAX_SUGGESTIONS } from "@/lib/roleSuggestions";
+import { formatRoleLabel } from "@/lib/roles";
 import ThinkingIndicator from "./ThinkingIndicator";
 import BrandLogo from "./BrandLogo";
 
+type ChatMessage = { role: "user" | "ai"; content: string };
+
 export default function FloatingChat() {
   const { selectedRole, selectedProject } = useRB();
-  const { selectedIngestion } = useIngestion();
+  const { selectedIngestion, selectedBuildLabel } = useIngestion();
   const { suggestions: sharedSuggestions } = useSuggestions();
   const [isOpen, setIsOpen] = useState(false);
-  const [messages, setMessages] = useState<
-    { role: "user" | "ai"; content: string }[]
-  >([]);
+  const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [customQuestion, setCustomQuestion] = useState("");
-  const [expandedAnswers, setExpandedAnswers] = useState<Record<number, boolean>>({});
   const [copiedMessageIndex, setCopiedMessageIndex] = useState<number | null>(null);
   const [regeneratingIndex, setRegeneratingIndex] = useState<number | null>(null);
   const [feedbackStatus, setFeedbackStatus] = useState<Record<number, string>>({});
-  const LONG_ANSWER_THRESHOLD = 420;
+  const [isPinnedToBottom, setIsPinnedToBottom] = useState(true);
 
-  function formatRoleLabel(role: string): string {
-    const normalized = String(role || "").trim().toLowerCase();
-    if (!normalized) return "QA Engineer";
-    if (normalized === "cto") return "CTO";
-    return normalized
-      .split("-")
-      .map((part) => (part ? `${part[0].toUpperCase()}${part.slice(1)}` : part))
-      .join(" ");
-  }
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLTextAreaElement>(null);
 
-  const suggestions = sharedSuggestions.chat;
+  // The answer style, not the signed-in account's role - those are two
+  // different things and used to be conflated.
+  const roleLabel = formatRoleLabel(selectedRole || "");
+  const buildLabel = selectedBuildLabel || selectedIngestion || "";
+  // Suggestions are a starting nudge, not a permanent menu: once the
+  // conversation has begun they disappear so the answer owns the panel.
+  const suggestions = sharedSuggestions.chat.slice(0, MAX_SUGGESTIONS);
+  const showSuggestions = messages.length === 0 && !isLoading;
+  const isBusy = isLoading || regeneratingIndex !== null;
+  const canSend = Boolean(selectedIngestion) && !isBusy;
+
+  // ── scrolling ──────────────────────────────────────────────────────────
+  // A chat panel that does not follow the answer is the single thing that
+  // makes one feel broken, so the list sticks to the bottom while the user
+  // is already there — and stops sticking the moment they scroll up to read
+  // something, rather than yanking them back down mid-sentence.
+  const scrollToBottom = useCallback((behavior: ScrollBehavior = "smooth") => {
+    const el = scrollRef.current;
+    if (!el) return;
+    el.scrollTo({ top: el.scrollHeight, behavior });
+  }, []);
+
+  const handleScroll = useCallback(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    const distanceFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
+    setIsPinnedToBottom(distanceFromBottom < 80);
+  }, []);
+
+  useLayoutEffect(() => {
+    if (!isOpen) return;
+    if (isPinnedToBottom) scrollToBottom(messages.length <= 1 ? "auto" : "smooth");
+    // isPinnedToBottom is read, not tracked: re-running when the user scrolls
+    // away would immediately scroll them back.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [messages, isLoading, isOpen, scrollToBottom]);
 
   useEffect(() => {
-    if (!isOpen) {
-      setMessages([]);
-      setCustomQuestion("");
-      setExpandedAnswers({});
+    if (isOpen) {
+      setIsPinnedToBottom(true);
+      // Focus after the open animation so the panel doesn't jump.
+      const t = setTimeout(() => inputRef.current?.focus(), 250);
+      return () => clearTimeout(t);
     }
   }, [isOpen]);
 
-  const toggleExpandAnswer = (idx: number) => {
-    setExpandedAnswers((prev) => ({ ...prev, [idx]: !prev[idx] }));
+  // Closing the panel is not the same as ending the conversation — a
+  // question asked, the panel closed to look at a chart, then reopened, used
+  // to come back to an empty window. The thread now survives; "New chat"
+  // below is the explicit way to drop it.
+  const clearConversation = () => {
+    setMessages([]);
+    setCustomQuestion("");
+    setFeedbackStatus({});
+    inputRef.current?.focus();
   };
 
   const handleCopy = async (content: string, idx: number) => {
@@ -72,7 +123,7 @@ export default function FloatingChat() {
   };
 
   const handleRegenerate = async (aiIndex: number) => {
-    if (!selectedIngestion || isLoading) return;
+    if (!selectedIngestion || isBusy) return;
     const question = findRelatedUserQuestion(aiIndex);
     if (!question) return;
 
@@ -102,7 +153,7 @@ export default function FloatingChat() {
     feedbackType: "down" | "improve",
     notes: string,
   ) => {
-    if (!selectedIngestion || isLoading) return;
+    if (!selectedIngestion || isBusy) return;
     const question = findRelatedUserQuestion(aiIndex);
     const previous = messages[aiIndex]?.content || "";
     if (!question) return;
@@ -194,13 +245,14 @@ export default function FloatingChat() {
       setMessages([
         {
           role: "ai",
-          content: "⚠️ No ingestion selected. Please choose a test build first.",
+          content: "⚠️ No build selected. Please choose a test build from the top bar first.",
         },
       ]);
       setIsOpen(true);
       return;
     }
 
+    setIsPinnedToBottom(true);
     setIsLoading(true);
     setMessages((prev) => [...prev, { role: "user", content: question }]);
 
@@ -226,12 +278,33 @@ export default function FloatingChat() {
     }
   };
 
+  const submitCurrentInput = () => {
+    const question = customQuestion.trim();
+    if (!question || !canSend) return;
+    setCustomQuestion("");
+    sendQuestion(question);
+  };
+
   const handleCustomSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (customQuestion.trim()) {
-      sendQuestion(customQuestion.trim());
-      setCustomQuestion("");
+    submitCurrentInput();
+  };
+
+  // Enter sends, Shift+Enter breaks the line — the convention every chat
+  // product shares, and the reason the input is a textarea rather than the
+  // single-line <input> it used to be.
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    if (e.key === "Enter" && !e.shiftKey) {
+      e.preventDefault();
+      submitCurrentInput();
     }
+  };
+
+  const handleInputChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
+    setCustomQuestion(e.target.value);
+    const el = e.target;
+    el.style.height = "auto";
+    el.style.height = `${Math.min(el.scrollHeight, 132)}px`;
   };
 
   return (
@@ -258,217 +331,321 @@ export default function FloatingChat() {
           animate={{ opacity: 1 }}
           exit={{ opacity: 0 }}
           transition={{ duration: 0.2 }}
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm"
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4 backdrop-blur-sm"
+          onClick={() => setIsOpen(false)}
         >
           <motion.div
             initial={{ opacity: 0, y: 24, scale: 0.95 }}
             animate={{ opacity: 1, y: 0, scale: 1 }}
             exit={{ opacity: 0, y: 24, scale: 0.95 }}
             transition={{ type: "spring", stiffness: 300, damping: 28 }}
-            className="relative bg-white border border-slate-200 dark:bg-black dark:border-white/[0.08] rounded-2xl w-full max-w-2xl h-[620px] flex flex-col shadow-[0_0_40px_rgba(15,23,42,0.15)] dark:shadow-[0_0_60px_rgba(0,0,0,0.8),0_0_30px_rgba(0,240,255,0.05)] overflow-hidden">
+            onClick={(e) => e.stopPropagation()}
+            className="relative flex h-[min(760px,88vh)] w-full max-w-3xl flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-[0_0_40px_rgba(15,23,42,0.15)] dark:border-white/[0.08] dark:bg-black dark:shadow-[0_0_60px_rgba(0,0,0,0.8),0_0_30px_rgba(0,240,255,0.05)]">
             <div className="pointer-events-none absolute -top-20 right-12 h-40 w-40 rounded-full bg-cyan-500/10 blur-3xl" />
             <div className="pointer-events-none absolute bottom-20 -left-16 h-40 w-40 rounded-full bg-blue-500/10 blur-3xl" />
-            {/* header */}
-            <div className="flex items-center justify-between px-5 py-4 border-b border-slate-200 bg-slate-50 dark:border-white/[0.06] dark:bg-white/[0.02]">
-              <h2 className="text-base font-semibold text-slate-900 dark:text-white flex items-center gap-2">
-                <BrandLogo size={26} />
-                <span>
-                  Sentinel{" "}
-                  <span className="text-slate-500 dark:text-white/50 font-normal">QA Assistant</span>
-                </span>
-              </h2>
-              <button
-                onClick={() => setIsOpen(false)}
-                className="text-slate-400 hover:text-slate-700 dark:text-white/30 dark:hover:text-white hover:bg-slate-200 dark:hover:bg-white/[0.06] p-1.5 rounded-lg transition-all"
-              >
-                <X className="w-5 h-5" />
-              </button>
-            </div>
 
-            {/* messages */}
-            <div className="relative z-10 flex-1 overflow-y-auto p-5 space-y-4 custom-scrollbar">
-              {messages.length === 0 ? (
-                <div className="text-center text-slate-500 dark:text-white/25 mt-12">
-                  <Sparkles className="w-8 h-8 mx-auto mb-3 text-cyan-500/40" />
-                  <p className="text-sm">
-                    Ask a question about the test results.
-                  </p>
-                  <p className="text-[10px] mt-2 uppercase tracking-widest text-slate-400 dark:text-white/15">
-                      Role: {formatRoleLabel(selectedRole || "")}
+            {/* ── header ─────────────────────────────────────────────────
+                The build being answered about is the one piece of context
+                that changes what every reply means, so it is stated here as
+                a highlighted chip rather than left to be remembered from a
+                dropdown in another part of the page. */}
+            <div className="relative z-20 flex shrink-0 flex-wrap items-center justify-between gap-3 border-b border-slate-200 bg-slate-50 px-5 py-3.5 dark:border-white/[0.06] dark:bg-white/[0.02]">
+              <div className="flex min-w-0 items-center gap-3">
+                <BrandLogo size={26} />
+                <div className="min-w-0">
+                  <h2 className="truncate text-sm font-semibold text-slate-900 dark:text-white">
+                    Testrig Sentinel{" "}
+                    <span className="font-normal text-slate-500 dark:text-white/50">QA Assistant</span>
+                  </h2>
+                  <p className="mt-0.5 flex flex-wrap items-center gap-1.5 text-[11px] leading-none">
+                    {buildLabel ? (
+                      <span
+                        title={selectedIngestion || undefined}
+                        className="inline-flex max-w-[220px] items-center gap-1.5 rounded-full border border-cyan-500/30 bg-cyan-500/10 px-2 py-1 font-semibold text-cyan-700 dark:text-cyan-300"
+                      >
+                        <Database className="h-3 w-3 shrink-0" />
+                        <span className="truncate">{buildLabel}</span>
+                      </span>
+                    ) : (
+                      <span className="inline-flex items-center gap-1.5 rounded-full border border-amber-500/30 bg-amber-500/10 px-2 py-1 font-semibold text-amber-600 dark:text-amber-400">
+                        <Database className="h-3 w-3" />
+                        No build selected
+                      </span>
+                    )}
+                    {roleLabel && (
+                      <span
+                        title="Answer style — the role these answers are written for. Change it from the dashboard header."
+                        className="rounded-full border border-slate-200 px-2 py-1 font-medium text-slate-500 dark:border-white/10 dark:text-white/45"
+                      >
+                        Style: {roleLabel}
+                      </span>
+                    )}
                   </p>
                 </div>
-              ) : (
-                messages.map((msg, idx) => (
-                  <div
-                    key={idx}
-                    className={`flex ${
-                      msg.role === "user" ? "justify-end" : "justify-start"
-                    }`}
-                  >
-                    <div
-                      className={`max-w-[80%] rounded-2xl px-4 py-2.5 text-sm ${
-                        msg.role === "user"
-                          ? "bg-gradient-to-r from-cyan-500 to-blue-600 text-white rounded-tr-sm shadow-[0_0_15px_rgba(0,240,255,0.1)]"
-                          : "bg-slate-100 text-slate-700 border border-slate-200 dark:bg-white/[0.04] dark:text-white/75 dark:border-cyan-500/20 rounded-tl-sm"
-                      }`}
-                    >
-                      {msg.role === "ai" ? (
-                        <>
-                          <div
-                            className={`relative ${
-                              msg.content.length > LONG_ANSWER_THRESHOLD && !expandedAnswers[idx]
-                                ? "max-h-44 overflow-hidden"
-                                : ""
-                            }`}
-                          >
-                            <ReactMarkdown
-                              components={{
-                                p: ({ children }) => (
-                                  <p className="my-1">{children}</p>
-                                ),
-                                ul: ({ children }) => (
-                                  <ul className="list-disc pl-5 my-1">
-                                    {children}
-                                  </ul>
-                                ),
-                                ol: ({ children }) => (
-                                  <ol className="list-decimal pl-5 my-1">
-                                    {children}
-                                  </ol>
-                                ),
-                                li: ({ children }) => (
-                                  <li className="my-0.5">{children}</li>
-                                ),
-                              }}
-                            >
-                              {msg.content}
-                            </ReactMarkdown>
-                            {msg.content.length > LONG_ANSWER_THRESHOLD && !expandedAnswers[idx] && (
-                              <div className="pointer-events-none absolute inset-x-0 bottom-0 h-10 bg-gradient-to-t from-slate-100 to-transparent dark:from-[#121212]" />
-                            )}
-                          </div>
-                          {msg.content.length > LONG_ANSWER_THRESHOLD && (
-                            <button
-                              type="button"
-                              onClick={() => toggleExpandAnswer(idx)}
-                              className="mt-2 text-[11px] font-semibold text-cyan-600 hover:text-cyan-700 dark:text-cyan-300 dark:hover:text-cyan-200"
-                            >
-                              {expandedAnswers[idx] ? "Show less" : "Read more"}
-                            </button>
-                          )}
-                          <div className="mt-2 flex items-center gap-2">
-                            <button
-                              type="button"
-                              onClick={() => handleCopy(msg.content, idx)}
-                              className="inline-flex items-center gap-1 rounded-md border border-slate-300 px-2 py-1 text-[11px] font-semibold text-slate-600 hover:bg-slate-200 dark:border-white/10 dark:text-white/70 dark:hover:bg-white/10"
-                            >
-                              {copiedMessageIndex === idx ? (
-                                <Check className="h-3 w-3" />
-                              ) : (
-                                <Copy className="h-3 w-3" />
-                              )}
-                              {copiedMessageIndex === idx ? "Copied" : "Copy"}
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => handleRegenerate(idx)}
-                              disabled={isLoading || regeneratingIndex === idx || !selectedIngestion}
-                              className="inline-flex items-center gap-1 rounded-md border border-cyan-500/25 px-2 py-1 text-[11px] font-semibold text-cyan-600 hover:bg-cyan-500/10 disabled:opacity-50 dark:text-cyan-300"
-                            >
-                              <RotateCw className={`h-3 w-3 ${regeneratingIndex === idx ? "animate-spin" : ""}`} />
-                              Regenerate
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => handleFeedback(idx, "up")}
-                              className="inline-flex items-center gap-1 rounded-md border border-emerald-500/25 px-2 py-1 text-[11px] font-semibold text-emerald-600 hover:bg-emerald-500/10 dark:text-emerald-300"
-                            >
-                              <ThumbsUp className="h-3 w-3" />
-                              Good
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => handleFeedback(idx, "down", true)}
-                              className="inline-flex items-center gap-1 rounded-md border border-red-500/25 px-2 py-1 text-[11px] font-semibold text-red-600 hover:bg-red-500/10 dark:text-red-300"
-                            >
-                              <ThumbsDown className="h-3 w-3" />
-                              Not good
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => handleFeedback(idx, "improve", true)}
-                              className="inline-flex items-center gap-1 rounded-md border border-amber-500/30 px-2 py-1 text-[11px] font-semibold text-amber-600 hover:bg-amber-500/10 dark:text-amber-300"
-                            >
-                              <SlidersHorizontal className="h-3 w-3" />
-                              Tune
-                            </button>
-                          </div>
-                          {feedbackStatus[idx] && (
-                            <p className="mt-1 text-[10px] font-semibold text-emerald-500">
-                              {feedbackStatus[idx]}
-                            </p>
-                          )}
-                        </>
-                      ) : (
-                        msg.content
-                      )}
-                    </div>
-                  </div>
-                ))
-              )}
-              {isLoading && (
-                <ThinkingIndicator
-                  label={
-                    regeneratingIndex !== null
-                      ? "Rewriting that answer with your feedback…"
-                      : undefined
-                  }
-                />
-              )}
-            </div>
-
-            {/* bottom panel */}
-            <div className="px-5 py-4 border-t border-slate-200 bg-slate-50 dark:border-white/[0.06] dark:bg-white/[0.01] space-y-3">
-              {/* suggested questions – now role‑based */}
-              <div className="flex flex-wrap gap-1.5">
-                {suggestions.map((q, i) => (
-                  <button
-                    key={i}
-                    onClick={() => sendQuestion(q)}
-                    disabled={isLoading || !selectedIngestion}
-                    className="text-[11px] bg-white border border-slate-200 hover:bg-cyan-500/[0.1] hover:border-cyan-500/20 rounded-full px-3 py-1.5 text-slate-600 hover:text-cyan-700 dark:bg-white/[0.03] dark:border-white/[0.06] dark:text-white/40 dark:hover:text-cyan-400 transition-all disabled:opacity-30"
-                  >
-                    {q}
-                  </button>
-                ))}
               </div>
 
-              {/* custom input */}
-              <form onSubmit={handleCustomSubmit} className="flex gap-2">
-                <input
-                  type="text"
+              <div className="flex items-center gap-1.5">
+                {messages.length > 0 && (
+                  <button
+                    onClick={clearConversation}
+                    disabled={isBusy}
+                    title="Start a new conversation"
+                    className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 px-2.5 py-1.5 text-[11px] font-semibold text-slate-600 transition-colors hover:bg-slate-200 disabled:opacity-40 dark:border-white/10 dark:text-white/60 dark:hover:bg-white/[0.06]"
+                  >
+                    <Trash2 className="h-3.5 w-3.5" />
+                    New chat
+                  </button>
+                )}
+                <button
+                  onClick={() => setIsOpen(false)}
+                  aria-label="Close chat"
+                  className="rounded-lg p-1.5 text-slate-400 transition-all hover:bg-slate-200 hover:text-slate-700 dark:text-white/30 dark:hover:bg-white/[0.06] dark:hover:text-white"
+                >
+                  <X className="h-5 w-5" />
+                </button>
+              </div>
+            </div>
+
+            {/* ── conversation ─────────────────────────────────────────── */}
+            <div className="relative z-10 min-h-0 flex-1">
+              <div
+                ref={scrollRef}
+                onScroll={handleScroll}
+                className="custom-scrollbar h-full overflow-y-auto overscroll-contain px-5 py-5"
+              >
+              {messages.length === 0 ? (
+                <div className="flex h-full flex-col items-center justify-center px-6 text-center">
+                  <Sparkles className="mb-3 h-8 w-8 text-cyan-500/40" />
+                  <p className="text-sm font-medium text-slate-700 dark:text-white/70">
+                    Ask a question about this build&apos;s test results.
+                  </p>
+                  <p className="mt-1.5 text-xs text-slate-500 dark:text-white/35">
+                    {buildLabel
+                      ? `Answers are drawn from ${buildLabel}${roleLabel ? `, written for ${roleLabel}` : ""}.`
+                      : "Select a test build from the top bar to begin."}
+                  </p>
+
+                  {showSuggestions && suggestions.length > 0 && (
+                    <div className="mt-6 flex w-full max-w-lg flex-col gap-2">
+                      {suggestions.map((q, i) => (
+                        <button
+                          key={i}
+                          onClick={() => sendQuestion(q)}
+                          disabled={!canSend}
+                          className="w-full rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-left text-[13px] text-slate-600 transition-all hover:border-cyan-500/30 hover:bg-cyan-500/[0.06] hover:text-cyan-700 disabled:opacity-30 dark:border-white/[0.07] dark:bg-white/[0.02] dark:text-white/55 dark:hover:border-cyan-500/25 dark:hover:text-cyan-300"
+                        >
+                          {q}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              ) : (
+                <div className="space-y-4">
+                  {messages.map((msg, idx) => (
+                    <div
+                      key={idx}
+                      className={`flex ${msg.role === "user" ? "justify-end" : "justify-start"}`}
+                    >
+                      <div
+                        className={`rounded-2xl px-4 py-2.5 text-sm ${
+                          msg.role === "user"
+                            ? "max-w-[85%] whitespace-pre-wrap break-words rounded-tr-sm bg-gradient-to-r from-cyan-500 to-blue-600 text-white shadow-[0_0_15px_rgba(0,240,255,0.1)]"
+                            : "w-full max-w-[92%] break-words rounded-tl-sm border border-slate-200 bg-slate-100 text-slate-700 dark:border-cyan-500/20 dark:bg-white/[0.04] dark:text-white/75"
+                        }`}
+                      >
+                        {msg.role === "ai" ? (
+                          <>
+                            {/* No collapse here any more: the panel scrolls,
+                                so a long answer is read by scrolling it, not
+                                by hunting for a "Read more" button that hid
+                                the part the question was about. */}
+                            <div className="prose-sm max-w-none">
+                              <ReactMarkdown
+                                components={{
+                                  p: ({ children }) => <p className="my-1.5">{children}</p>,
+                                  ul: ({ children }) => (
+                                    <ul className="my-1.5 list-disc space-y-0.5 pl-5">{children}</ul>
+                                  ),
+                                  ol: ({ children }) => (
+                                    <ol className="my-1.5 list-decimal space-y-0.5 pl-5">{children}</ol>
+                                  ),
+                                  li: ({ children }) => <li className="my-0.5">{children}</li>,
+                                  strong: ({ children }) => (
+                                    <strong className="font-semibold text-slate-900 dark:text-white">
+                                      {children}
+                                    </strong>
+                                  ),
+                                  h3: ({ children }) => (
+                                    <h3 className="mb-1 mt-3 font-semibold text-slate-900 dark:text-white">
+                                      {children}
+                                    </h3>
+                                  ),
+                                  code: ({ children }) => (
+                                    <code className="rounded bg-slate-200/70 px-1 py-0.5 font-mono text-[12px] text-cyan-700 dark:bg-white/10 dark:text-cyan-300">
+                                      {children}
+                                    </code>
+                                  ),
+                                  pre: ({ children }) => (
+                                    <pre className="my-2 overflow-x-auto rounded-lg bg-slate-200/60 p-3 text-[12px] dark:bg-black/50">
+                                      {children}
+                                    </pre>
+                                  ),
+                                  table: ({ children }) => (
+                                    <div className="my-2 overflow-x-auto">
+                                      <table className="w-full text-left text-[12px]">{children}</table>
+                                    </div>
+                                  ),
+                                  th: ({ children }) => (
+                                    <th className="border-b border-slate-300 px-2 py-1 font-semibold dark:border-white/10">
+                                      {children}
+                                    </th>
+                                  ),
+                                  td: ({ children }) => (
+                                    <td className="border-b border-slate-200/70 px-2 py-1 dark:border-white/[0.06]">
+                                      {children}
+                                    </td>
+                                  ),
+                                }}
+                              >
+                                {msg.content}
+                              </ReactMarkdown>
+                            </div>
+
+                            <div className="mt-2.5 flex flex-wrap items-center gap-1.5 border-t border-slate-200/70 pt-2 dark:border-white/[0.06]">
+                              <button
+                                type="button"
+                                onClick={() => handleCopy(msg.content, idx)}
+                                className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-[11px] font-semibold text-slate-500 transition-colors hover:bg-slate-200 hover:text-slate-800 dark:text-white/45 dark:hover:bg-white/10 dark:hover:text-white"
+                              >
+                                {copiedMessageIndex === idx ? (
+                                  <Check className="h-3 w-3" />
+                                ) : (
+                                  <Copy className="h-3 w-3" />
+                                )}
+                                {copiedMessageIndex === idx ? "Copied" : "Copy"}
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => handleRegenerate(idx)}
+                                disabled={isBusy || !selectedIngestion}
+                                className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-[11px] font-semibold text-slate-500 transition-colors hover:bg-cyan-500/10 hover:text-cyan-700 disabled:opacity-40 dark:text-white/45 dark:hover:text-cyan-300"
+                              >
+                                <RotateCw className={`h-3 w-3 ${regeneratingIndex === idx ? "animate-spin" : ""}`} />
+                                Regenerate
+                              </button>
+                              <span className="mx-0.5 h-3 w-px bg-slate-300 dark:bg-white/10" />
+                              <button
+                                type="button"
+                                onClick={() => handleFeedback(idx, "up")}
+                                title="Good answer"
+                                className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-[11px] font-semibold text-slate-500 transition-colors hover:bg-emerald-500/10 hover:text-emerald-600 dark:text-white/45 dark:hover:text-emerald-300"
+                              >
+                                <ThumbsUp className="h-3 w-3" />
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => handleFeedback(idx, "down", true)}
+                                title="Not good — tell us why and we'll retry"
+                                className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-[11px] font-semibold text-slate-500 transition-colors hover:bg-red-500/10 hover:text-red-600 dark:text-white/45 dark:hover:text-red-300"
+                              >
+                                <ThumbsDown className="h-3 w-3" />
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => handleFeedback(idx, "improve", true)}
+                                className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-[11px] font-semibold text-slate-500 transition-colors hover:bg-amber-500/10 hover:text-amber-600 dark:text-white/45 dark:hover:text-amber-300"
+                              >
+                                <SlidersHorizontal className="h-3 w-3" />
+                                Tune
+                              </button>
+                            </div>
+                            {feedbackStatus[idx] && (
+                              <p className="mt-1 text-[10px] font-semibold text-emerald-500">
+                                {feedbackStatus[idx]}
+                              </p>
+                            )}
+                          </>
+                        ) : (
+                          msg.content
+                        )}
+                      </div>
+                    </div>
+                  ))}
+
+                  {isLoading && (
+                    <ThinkingIndicator
+                      label={
+                        regeneratingIndex !== null
+                          ? "Rewriting that answer with your feedback…"
+                          : undefined
+                      }
+                    />
+                  )}
+                </div>
+              )}
+              </div>
+
+              {/* Jump-to-latest, shown only when the user has scrolled away
+                  from the newest message. */}
+              <AnimatePresence>
+                {!isPinnedToBottom && messages.length > 0 && (
+                  <motion.button
+                    initial={{ opacity: 0, y: 6 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    exit={{ opacity: 0, y: 6 }}
+                    onClick={() => {
+                      setIsPinnedToBottom(true);
+                      scrollToBottom();
+                    }}
+                    className="absolute bottom-3 left-1/2 z-20 flex -translate-x-1/2 items-center gap-1.5 rounded-full border border-slate-200 bg-white px-3 py-1.5 text-[11px] font-semibold text-slate-600 shadow-lg dark:border-white/10 dark:bg-[#111] dark:text-white/70"
+                  >
+                    <ArrowDown className="h-3 w-3" />
+                    Jump to latest
+                  </motion.button>
+                )}
+              </AnimatePresence>
+            </div>
+
+            {/* ── composer ─────────────────────────────────────────────── */}
+            <div className="relative z-10 shrink-0 border-t border-slate-200 bg-slate-50 px-5 py-3.5 dark:border-white/[0.06] dark:bg-white/[0.01]">
+              <form onSubmit={handleCustomSubmit} className="flex items-end gap-2">
+                <textarea
+                  ref={inputRef}
+                  rows={1}
                   value={customQuestion}
-                  onChange={(e) => setCustomQuestion(e.target.value)}
-                  placeholder="Or type your own question..."
-                  className="flex-1 bg-white border border-slate-300 rounded-xl px-4 py-2.5 text-sm text-slate-800 placeholder:text-slate-400 focus:outline-none focus:border-cyan-500/30 focus:ring-1 focus:ring-cyan-500/20 focus:shadow-[0_0_12px_rgba(0,240,255,0.06)] transition-all dark:bg-white/[0.03] dark:border-white/[0.08] dark:text-white dark:placeholder:text-white/20"
-                  disabled={isLoading || !selectedIngestion}
+                  onChange={handleInputChange}
+                  onKeyDown={handleKeyDown}
+                  placeholder={
+                    selectedIngestion
+                      ? `Ask about ${buildLabel}…`
+                      : "Select a test build from the top bar first…"
+                  }
+                  className="max-h-[132px] flex-1 resize-none rounded-xl border border-slate-300 bg-white px-4 py-2.5 text-sm leading-relaxed text-slate-800 transition-all placeholder:text-slate-400 focus:border-cyan-500/30 focus:shadow-[0_0_12px_rgba(0,240,255,0.06)] focus:outline-none focus:ring-1 focus:ring-cyan-500/20 disabled:opacity-60 dark:border-white/[0.08] dark:bg-white/[0.03] dark:text-white dark:placeholder:text-white/20"
+                  disabled={!canSend}
                 />
                 <button
                   type="submit"
-                  disabled={
-                    !customQuestion.trim() || isLoading || !selectedIngestion
-                  }
-                  className="bg-gradient-to-r from-cyan-500 to-blue-600 hover:from-cyan-400 hover:to-blue-500 disabled:opacity-30 rounded-xl px-4 py-2.5 shadow-[0_0_15px_rgba(0,240,255,0.15)] hover:shadow-[0_0_25px_rgba(0,240,255,0.3)] transition-all"
+                  disabled={!customQuestion.trim() || !canSend}
+                  aria-label="Send"
+                  className="rounded-xl bg-gradient-to-r from-cyan-500 to-blue-600 px-4 py-2.5 shadow-[0_0_15px_rgba(0,240,255,0.15)] transition-all hover:from-cyan-400 hover:to-blue-500 hover:shadow-[0_0_25px_rgba(0,240,255,0.3)] disabled:opacity-30"
                 >
-                  <Send className="w-4 h-4 text-white" />
+                  <Send className="h-4 w-4 text-white" />
                 </button>
               </form>
 
-              {!selectedIngestion && (
-                <p className="text-[10px] text-red-400/70 text-center uppercase tracking-wider">
-                  ⚠️ Please select an ingestion (test build) from the top bar.
-                </p>
-              )}
+              <p className="mt-2 text-center text-[10px] text-slate-400 dark:text-white/25">
+                {selectedIngestion ? (
+                  <>
+                    <kbd className="font-sans font-semibold">Enter</kbd> to send ·{" "}
+                    <kbd className="font-sans font-semibold">Shift + Enter</kbd> for a new line
+                  </>
+                ) : (
+                  <span className="font-semibold uppercase tracking-wider text-red-400/80">
+                    ⚠️ Select a test build from the top bar to start chatting
+                  </span>
+                )}
+              </p>
             </div>
           </motion.div>
         </motion.div>

@@ -54,7 +54,7 @@ Generated ingestion outputs.
   - summary.json, summary.md: build-level summaries.
 
 ### roles/
-Role prompt files (for example cto, qa-engineer).
+Role prompt files (for example cto, sdet).
 
 ### projects/
 Project-specific context packages and optional embeddings.

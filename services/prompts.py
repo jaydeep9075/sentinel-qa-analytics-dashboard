@@ -384,7 +384,7 @@ the profile.
 
 OUTPUT RULES:
 1. Return ONLY valid JSON.
-2. Provide exactly 8 chat suggestions and 8 chart suggestions.
+2. Provide exactly 4 chat suggestions and 4 chart suggestions - the four most useful, not a long menu.
 3. Suggestions must be grounded in the actual schema above, tailored to this role's priorities.
 4. Avoid duplicates and vague phrases.
 5. Each suggestion should be one concise sentence.
