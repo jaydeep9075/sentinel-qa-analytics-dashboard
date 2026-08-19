@@ -371,6 +371,53 @@ def user_has_default_password(username: str) -> bool:
         return False
 
 
+def credential_change_is_forced(
+    username: str, must_change_password: Optional[bool] = None
+) -> bool:
+    """Is this account HARD-LOCKED to the credential-change screen?
+
+    One rule, one place. Both the login response and
+    main.credential_change_middleware have to agree on this or the account
+    ends up in the worst of both worlds - waved through the login screen and
+    then 403'd by every panel it lands on.
+
+    True only for a forced change the account cannot satisfy by merely being
+    on the shipped default: an admin-issued reset with force_change, or an
+    operator-supplied BOOTSTRAP_ADMIN_PASSWORD with
+    BOOTSTRAP_ADMIN_FORCE_PASSWORD_CHANGE on.
+
+    The built-in "admin"/"admin" pair is deliberately excluded: it is a SOFT
+    prompt (login returns default_password_prompt and the UI offers "Change
+    now / Remind later"), not a lock. Deciding that from the STORED HASH is
+    what lets the flag stay untouched in the database - the previous version
+    cleared must_change_password on the first default-password login, which
+    is a write on the login path. That flag is policy an admin may have set
+    deliberately, and a login is not entitled to throw it away.
+
+    The hash test is exact rather than approximate: every route that sets a
+    password (register_user, change_own_password, admin_reset_password,
+    _bootstrap_admin_if_empty for a non-default value) enforces
+    config.MIN_PASSWORD_LENGTH, and the built-in default is shorter than it.
+    So a stored hash matching the default can ONLY be the untouched bootstrap
+    credential - never an admin-chosen temporary password that happens to
+    collide with it.
+
+    Pass `must_change_password` when the caller already has the row (the login
+    path) to save a read. Omit it to have the flag read fresh from the store,
+    which is what the middleware needs: an admin can set it on an
+    already-logged-in session, and the JWT is a snapshot from login time that
+    would never see the change.
+    """
+    uname = str(username or "").strip().lower()
+    if not uname:
+        return False
+    if must_change_password is None:
+        must_change_password = get_user_store().get_must_change_password(uname)
+    if not must_change_password:
+        return False
+    return not user_has_default_password(uname)
+
+
 def change_own_password(username: str, current_password: str, new_password: str) -> None:
     """Self-service password change. Raises AuthError on any failure.
 

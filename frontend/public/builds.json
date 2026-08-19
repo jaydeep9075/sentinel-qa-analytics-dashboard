@@ -1,278 +1,114 @@
 {
   "builds": [
     {
-      "build_id": "run_f6ce7163c2f1",
-      "ingested_at": "2026-08-10T13:40:10.375153+00:00",
-      "total_records_ingested": 2,
+      "build_id": "ingestion_20260818_185212",
+      "ingested_at": "2026-08-18T18:52:32.149463+00:00",
+      "total_records_ingested": 0,
       "metrics": {
-        "total_tests": 2,
-        "executed_tests": 2,
+        "total_tests": 0,
+        "executed_tests": 0,
         "skipped_tests": 0,
-        "passed": 2,
+        "passed": 0,
         "failed": 0,
-        "pass_rate": 100,
-        "module_count": 1,
-        "avg_duration_sec": 137.41,
-        "total_duration_sec": 274.82,
+        "pass_rate": 0,
+        "module_count": 0,
+        "avg_duration_sec": 0,
+        "total_duration_sec": 0,
         "most_common_error": "",
-        "slowest_tests": [
-          {
-            "name": "TS_39.2-LogInTestinNewPages @login-new-pages",
-            "duration_sec": 138.13
-          },
-          {
-            "name": "TS_39.1-LogInTest @fsa-storefront @login",
-            "duration_sec": 136.69
-          }
-        ],
-        "modules": {
-          "unknown": {
-            "project_name": "unknown",
-            "platform_type": "desktop",
-            "tests_per_module": 2,
-            "passed": 2,
-            "failed": 0,
-            "skipped": 0,
-            "pending": 0,
-            "unknown": 0,
-            "pass_rate": 100,
-            "total_execution_time_sec": 274.82,
-            "avg_execution_time_sec": 137.41
-          }
-        },
+        "slowest_tests": [],
+        "modules": {},
         "projects": {}
       },
-      "tables": [
-        "documents",
-        "ingestion_schema_profiles",
-        "sources",
-        "structured_test_results"
-      ],
+      "tables": [],
       "parser_insights": {
-        "total_sources": 1,
-        "strategies": {
-          "native-structured": 1
-        },
-        "avg_confidence": 1,
+        "total_sources": 0,
+        "strategies": {},
+        "avg_confidence": 0,
         "ai_fallback_used": 0
       },
       "ingestion_report": {
-        "build_id": "run_f6ce7163c2f1",
-        "overall_status": "completed",
-        "started_at": "2026-08-10T13:40:03.392137+00:00",
-        "finished_at": "2026-08-10T13:40:10.281833+00:00",
+        "build_id": "ingestion_20260818_185212",
+        "overall_status": "failed",
+        "started_at": "2026-08-18T18:52:13.000251+00:00",
+        "finished_at": "2026-08-18T18:52:32.114735+00:00",
         "datasets": {
-          "test_results": {
-            "status": "completed",
-            "rows_stored": 2,
-            "documents_stored": 2,
+          "Testresults (1)": {
+            "status": "failed",
+            "rows_stored": 0,
+            "documents_stored": 0,
             "duplicates_skipped": 0,
             "records_failed": 0,
-            "tables": [
-              "structured_test_results"
-            ],
-            "parser_strategy": "native-structured",
-            "parser_confidence": 1,
+            "tables": [],
+            "parser_strategy": null,
+            "parser_confidence": null,
             "schema_changes": [],
-            "error": null,
-            "source_type": "live_run"
+            "error": "Invalid table name (\"structured_Testresults (1)\"): Table names can only contain alphanumeric characters, underscores, hyphens, and periods",
+            "source_type": "file"
           }
         },
         "warnings": [],
         "totals": {
-          "rows_stored": 2,
-          "documents_stored": 2,
+          "rows_stored": 0,
+          "documents_stored": 0,
           "duplicates_skipped": 0,
           "records_failed": 0,
-          "datasets_failed": 0
+          "datasets_failed": 1
         }
       }
     },
     {
-      "build_id": "run_7080641af627",
-      "ingested_at": "2026-07-30T09:40:26.622964+00:00",
-      "total_records_ingested": 4,
+      "build_id": "ingestion_20260818_185122",
+      "ingested_at": "2026-08-18T18:51:40.786659+00:00",
+      "total_records_ingested": 0,
       "metrics": {
-        "total_tests": 4,
-        "executed_tests": 4,
+        "total_tests": 0,
+        "executed_tests": 0,
         "skipped_tests": 0,
-        "passed": 4,
+        "passed": 0,
         "failed": 0,
-        "pass_rate": 100,
-        "module_count": 1,
-        "avg_duration_sec": 162.07,
-        "total_duration_sec": 648.3,
+        "pass_rate": 0,
+        "module_count": 0,
+        "avg_duration_sec": 0,
+        "total_duration_sec": 0,
         "most_common_error": "",
-        "slowest_tests": [
-          {
-            "name": "TS_37.2-AddToCartWithPDP @add-product-from-product-page",
-            "duration_sec": 169.74
-          },
-          {
-            "name": "TS_37.1-AddToCartWithPLP @add-product-plp",
-            "duration_sec": 165.61
-          },
-          {
-            "name": "TS_37.3-AddToCartWithQuickView @add-product-quick-view",
-            "duration_sec": 163.03
-          },
-          {
-            "name": "TS_37.4-AddToCartWithSaveItemForLater @save-item-for-later",
-            "duration_sec": 149.92
-          }
-        ],
-        "modules": {
-          "unknown": {
-            "project_name": "unknown",
-            "platform_type": "desktop",
-            "tests_per_module": 4,
-            "passed": 4,
-            "failed": 0,
-            "skipped": 0,
-            "pending": 0,
-            "unknown": 0,
-            "pass_rate": 100,
-            "total_execution_time_sec": 648.3,
-            "avg_execution_time_sec": 162.07
-          }
-        },
+        "slowest_tests": [],
+        "modules": {},
         "projects": {}
       },
-      "tables": [
-        "documents",
-        "ingestion_schema_profiles",
-        "sources",
-        "structured_test_results"
-      ],
+      "tables": [],
       "parser_insights": {
-        "total_sources": 1,
-        "strategies": {
-          "native-structured": 1
-        },
-        "avg_confidence": 1,
+        "total_sources": 0,
+        "strategies": {},
+        "avg_confidence": 0,
         "ai_fallback_used": 0
       },
       "ingestion_report": {
-        "build_id": "run_7080641af627",
-        "overall_status": "completed",
-        "started_at": "2026-07-30T09:40:16.608079+00:00",
-        "finished_at": "2026-07-30T09:40:26.511624+00:00",
+        "build_id": "ingestion_20260818_185122",
+        "overall_status": "failed",
+        "started_at": "2026-08-18T18:51:22.864351+00:00",
+        "finished_at": "2026-08-18T18:51:40.753287+00:00",
         "datasets": {
-          "test_results": {
-            "status": "completed",
-            "rows_stored": 4,
-            "documents_stored": 4,
+          "Testresults (1)": {
+            "status": "failed",
+            "rows_stored": 0,
+            "documents_stored": 0,
             "duplicates_skipped": 0,
             "records_failed": 0,
-            "tables": [
-              "structured_test_results"
-            ],
-            "parser_strategy": "native-structured",
-            "parser_confidence": 1,
+            "tables": [],
+            "parser_strategy": null,
+            "parser_confidence": null,
             "schema_changes": [],
-            "error": null,
-            "source_type": "live_run"
+            "error": "Invalid table name (\"structured_Testresults (1)\"): Table names can only contain alphanumeric characters, underscores, hyphens, and periods",
+            "source_type": "file"
           }
         },
         "warnings": [],
         "totals": {
-          "rows_stored": 4,
-          "documents_stored": 4,
+          "rows_stored": 0,
+          "documents_stored": 0,
           "duplicates_skipped": 0,
           "records_failed": 0,
-          "datasets_failed": 0
-        }
-      }
-    },
-    {
-      "build_id": "run_5e01f6934347",
-      "ingested_at": "2026-07-28T07:22:26.198173+00:00",
-      "total_records_ingested": 3,
-      "metrics": {
-        "total_tests": 3,
-        "executed_tests": 3,
-        "skipped_tests": 0,
-        "passed": 3,
-        "failed": 0,
-        "pass_rate": 100,
-        "module_count": 1,
-        "avg_duration_sec": 136.21,
-        "total_duration_sec": 408.62,
-        "most_common_error": "",
-        "slowest_tests": [
-          {
-            "name": "TS_2-RegisterUserWithEmailListChecked @register-user",
-            "duration_sec": 190.53
-          },
-          {
-            "name": "TS_3-RegisterUserWithoutEmailListChecked @register-user",
-            "duration_sec": 123.14
-          },
-          {
-            "name": "TS_1-ForgotPasswordModal @password-reset",
-            "duration_sec": 94.95
-          }
-        ],
-        "modules": {
-          "unknown": {
-            "project_name": "unknown",
-            "platform_type": "desktop",
-            "tests_per_module": 3,
-            "passed": 3,
-            "failed": 0,
-            "skipped": 0,
-            "pending": 0,
-            "unknown": 0,
-            "pass_rate": 100,
-            "total_execution_time_sec": 408.62,
-            "avg_execution_time_sec": 136.21
-          }
-        },
-        "projects": {}
-      },
-      "tables": [
-        "documents",
-        "ingestion_schema_profiles",
-        "sources",
-        "structured_test_results"
-      ],
-      "parser_insights": {
-        "total_sources": 1,
-        "strategies": {
-          "native-structured": 1
-        },
-        "avg_confidence": 1,
-        "ai_fallback_used": 0
-      },
-      "ingestion_report": {
-        "build_id": "run_5e01f6934347",
-        "overall_status": "completed",
-        "started_at": "2026-07-28T07:22:18.054940+00:00",
-        "finished_at": "2026-07-28T07:22:26.131188+00:00",
-        "datasets": {
-          "test_results": {
-            "status": "completed",
-            "rows_stored": 3,
-            "documents_stored": 3,
-            "duplicates_skipped": 0,
-            "records_failed": 0,
-            "tables": [
-              "structured_test_results"
-            ],
-            "parser_strategy": "native-structured",
-            "parser_confidence": 1,
-            "schema_changes": [],
-            "error": null,
-            "source_type": "live_run"
-          }
-        },
-        "warnings": [],
-        "totals": {
-          "rows_stored": 3,
-          "documents_stored": 3,
-          "duplicates_skipped": 0,
-          "records_failed": 0,
-          "datasets_failed": 0
+          "datasets_failed": 1
         }
       }
     },
@@ -2826,5 +2662,5 @@
       ]
     }
   ],
-  "cache_key": "C:\\Users\\JAIDEEP JOSHI\\Desktop\\ai_dashboard\\sentinel-qa-analytics-dashboard\\data\\ingestion_20260423_111619\\summary.json:1783933236539.8853:4847|C:\\Users\\JAIDEEP JOSHI\\Desktop\\ai_dashboard\\sentinel-qa-analytics-dashboard\\data\\ingestion_20260428_113234\\summary.json:1783951450143.4998:14546|C:\\Users\\JAIDEEP JOSHI\\Desktop\\ai_dashboard\\sentinel-qa-analytics-dashboard\\data\\ingestion_20260506_104014\\summary.json:1783951450455.537:14546|C:\\Users\\JAIDEEP JOSHI\\Desktop\\ai_dashboard\\sentinel-qa-analytics-dashboard\\data\\ingestion_20260506_110116\\summary.json:1783951450575.7954:14546|C:\\Users\\JAIDEEP JOSHI\\Desktop\\ai_dashboard\\sentinel-qa-analytics-dashboard\\data\\ingestion_20260709_110143\\summary.json:1783951450783.6526:14575|C:\\Users\\JAIDEEP JOSHI\\Desktop\\ai_dashboard\\sentinel-qa-analytics-dashboard\\data\\ingestion_20260720_065915\\summary.json:1784530818540.6035:26201|C:\\Users\\JAIDEEP JOSHI\\Desktop\\ai_dashboard\\sentinel-qa-analytics-dashboard\\data\\run_5e01f6934347\\summary.json:1785223346196.198:2357|C:\\Users\\JAIDEEP JOSHI\\Desktop\\ai_dashboard\\sentinel-qa-analytics-dashboard\\data\\run_7080641af627\\summary.json:1785404426623.0195:2489|C:\\Users\\JAIDEEP JOSHI\\Desktop\\ai_dashboard\\sentinel-qa-analytics-dashboard\\data\\run_f6ce7163c2f1\\summary.json:1786369210366.043:2223"
+  "cache_key": "C:\\Users\\JAIDEEP JOSHI\\Desktop\\ai_dashboard\\sentinel-qa-analytics-dashboard\\data\\ingestion_20260423_111619\\summary.json:1783933236539.8853:4847|C:\\Users\\JAIDEEP JOSHI\\Desktop\\ai_dashboard\\sentinel-qa-analytics-dashboard\\data\\ingestion_20260428_113234\\summary.json:1783951450143.4998:14546|C:\\Users\\JAIDEEP JOSHI\\Desktop\\ai_dashboard\\sentinel-qa-analytics-dashboard\\data\\ingestion_20260506_104014\\summary.json:1783951450455.537:14546|C:\\Users\\JAIDEEP JOSHI\\Desktop\\ai_dashboard\\sentinel-qa-analytics-dashboard\\data\\ingestion_20260506_110116\\summary.json:1783951450575.7954:14546|C:\\Users\\JAIDEEP JOSHI\\Desktop\\ai_dashboard\\sentinel-qa-analytics-dashboard\\data\\ingestion_20260709_110143\\summary.json:1783951450783.6526:14575|C:\\Users\\JAIDEEP JOSHI\\Desktop\\ai_dashboard\\sentinel-qa-analytics-dashboard\\data\\ingestion_20260720_065915\\summary.json:1784530818540.6035:26201|C:\\Users\\JAIDEEP JOSHI\\Desktop\\ai_dashboard\\sentinel-qa-analytics-dashboard\\data\\ingestion_20260818_185122\\summary.json:1787079100790.749:1562|C:\\Users\\JAIDEEP JOSHI\\Desktop\\ai_dashboard\\sentinel-qa-analytics-dashboard\\data\\ingestion_20260818_185212\\summary.json:1787079152151.0457:1562"
 }

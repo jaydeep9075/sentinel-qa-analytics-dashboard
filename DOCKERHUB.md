@@ -223,7 +223,7 @@ you actually want to change it.
 
 ## 5. Connecting a Playwright project (live test run streaming)
 
-Sentinel ships its own Playwright reporter, `@sentinel/playwright`, that
+Sentinel ships its own reporter package, `sentinel-qa-reporter` (Playwright + Cypress), that
 streams a run live to the dashboard (`/runs/live`) as it executes — pass/fail
 per test, console logs, and an optional live browser screenshot feed — then
 folds it into normal build history when the run finishes. This section is
@@ -236,7 +236,7 @@ the **Docker-specific** part; the full walkthrough (installing the reporter,
 | Piece | Runs where | Talks to |
 |---|---|---|
 | Your Playwright test process | Your host (npx playwright test) — **not** inside a container | Launches a local Chromium |
-| `@sentinel/playwright` reporter | Same Node process as the test | HTTP → Sentinel backend; CDP → the local Chromium it just launched |
+| `sentinel-qa-reporter` reporter | Same Node process as the test | HTTP → Sentinel backend; CDP → the local Chromium it just launched |
 | Sentinel backend | Docker container | Receives the reporter's HTTP calls, published on `${BACKEND_PORT}` |
 
 Because the reporter runs on your host, not inside Docker, the live browser

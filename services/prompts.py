@@ -1,8 +1,10 @@
 """
-prompts.py — LLM prompts for chat and chart generation.
+prompts.py — LLM prompts for chat and chart SQL generation.
 
-KEY FIX: Chart type is now STRICTLY enforced via a dedicated per-type code template.
-The LLM receives the exact Plotly pattern it must use — no room to substitute chart types.
+The LLM's job in the chart path is SQL only. Chart form, measure, dimension,
+top-N, filters and all rendering are decided deterministically in
+services/chart_spec.py and services/chart_builder.py; CHART_SQL_PROMPT receives
+that parse as hard directives so the query and the picture agree.
 
 Schema (column shape is fixed; actual project/module/browser VALUES are
 whatever was ingested — see services/schema_context.py for live introspection):
@@ -169,6 +171,16 @@ FROM flattened_tests WHERE status IN ('passed','failed')
 1. Data question about counts, rates, comparisons, filters, or anything the
    tables/columns above can express (tests, metrics, pass rates, failures,
    modules, etc.) → action="sql"
+1b. A question with SEVERAL DISTINCT PARTS that one query cannot answer well —
+   e.g. "how does mobile compare to desktop, and which modules regressed?", or
+   "give me the overall pass rate plus the worst 5 modules plus the slowest
+   tests" → action="sql_multi", with "data" as a LIST of {{"label": "...",
+   "sql": "SELECT ..."}} objects, one per part, max 4. Use this instead of
+   contorting everything into one CTE, and instead of answering only the part
+   that fits a single query. Each label should name the sub-question it
+   answers ("Mobile vs desktop pass rate", "Modules below 80%"). Prefer a
+   single "sql" when one query genuinely answers the whole question — a
+   two-query plan for a one-query question just costs time.
 2. Free-text search over unstructured content — the user wants to find or
    understand something inside error messages, logs, or descriptions that
    isn't a clean column filter (e.g. "find tests with errors mentioning
@@ -192,42 +204,117 @@ RESPONSE_QUALITY_HINTS:
 - Use aliases for clarity (e.g., AS total_failures, AS pct_failed)
 - Order results in ways that reveal patterns (DESC for impact metrics)
 
-Return ONLY this JSON (no markdown, no explanation):
-{{"action":"sql","data":"SELECT ..."}} OR {{"action":"vector","data":"search phrase"}} OR {{"action":"answer","data":"plain text"}}"""
+Return ONLY this JSON (no markdown, no explanation), in one of these shapes:
+{{"action":"sql","data":"SELECT ..."}}
+{{"action":"sql_multi","data":[{{"label":"...","sql":"SELECT ..."}},{{"label":"...","sql":"SELECT ..."}}]}}
+{{"action":"vector","data":"search phrase"}}
+{{"action":"answer","data":"plain text"}}"""
 
 
 # ---------------------------------------------------------------------------
 # CHAT – ANSWER PROMPT
 # ---------------------------------------------------------------------------
 
-CHAT_ANSWER_PROMPT = """You are a concise QA analytics assistant. Answer directly using the data below.
-Your goal is to provide clear, actionable insights that help the user understand their test data quickly.
+CHAT_ANSWER_PROMPT = """You are a senior QA analyst. Answer the question from the data below.
 
 USER QUESTION: {user_message}
 
 USER FEEDBACK PREFERENCES:
 {feedback_hints}
 
-DATA ({row_count} rows):
+WHOLE-RESULT FACTS (computed over ALL {row_count} rows — these are exact):
+{dataset_facts}
+
+SAMPLE ROWS (may be a subset of the full result):
 {data_json}
 
-RESPONSE GUIDELINES:
-- Start with the most important insight directly (no preamble)
-- Use emojis strategically: 📊 for metrics, ✅ for pass, ❌ for fail, ⚠️ for warnings, 🎯 for targets
-- Numbers: **bold** format with units (e.g., "**347 tests**, **82% pass rate**")
-- Lists: numbered (1, 2, 3...), max 30 items; if more, show top 10 and append "... and 20 more items"
-- Always include context: project_name, module_name, platform_type when available
-- Pass rates: show as "**XX%**" with brief verdict (e.g., "strong", "concerning", "critical")
-- Key stats: highlight outliers or unexpected patterns (e.g., "unusually slow test: 45s")
-- Keep response under 250 words unless the user asks for extensive detail
-- Be specific: avoid vague phrases like "seems to", "appears to" - use data-backed language
-- Never invent or extrapolate data not in the provided JSON
-- If data has obvious gaps or limitations, briefly note them (e.g., "skipped tests not shown in data")
+=== HOW TO ANSWER ===
 
-ANSWER FORMAT EXAMPLES:
-- Single metric: "📊 **347 failed tests** across 12 modules. Highest impact: Checkout module with 89 failures."
-- Comparison: "Mobile has **15% lower pass rate** (78% vs 93% on desktop). Key issue: Login flow on iOS."
-- Trend: "**12 slowest tests** average 28 seconds each. Test setup_user_session_with_analytics dominates at 45s."
+Structure, in this order, omitting any part the data doesn't support:
+1. **The answer.** One sentence that directly answers what was asked, leading
+   with the number or name that IS the answer. No preamble, no restating the
+   question.
+2. **The evidence.** The two or three figures that back it up. Name the
+   entities (module, project, platform) — "Checkout on mobile", never "one
+   module".
+3. **What stands out.** An outlier, a concentration, a gap worth knowing —
+   only if the data actually shows one. Skip it rather than manufacture it.
+4. **What to do.** One concrete next step, only when the data implies one.
+
+=== ACCURACY RULES (these override style) ===
+- Every number you write must appear in, or be directly computed from, the data
+  above. Never estimate, round to a "nicer" number, or infer a trend from a
+  single snapshot.
+- For anything about the WHOLE result (totals, "which is worst", "how many in
+  all"), use the WHOLE-RESULT FACTS section. The sample rows may be a subset —
+  never count them and present that count as the total.
+- If the data doesn't answer the question, say exactly that and say what IS in
+  the data. A clear "the data doesn't show X" beats a confident wrong answer.
+- Don't describe a percentage difference as a percentage: a move from 78% to
+  93% is **15 percentage points**, not 15%.
+- If a figure is scoped (one project, one platform, executed tests only), say
+  so — an unscoped-sounding number the reader applies globally is a wrong
+  answer even when the arithmetic is right.
+
+=== STYLE ===
+- **Bold** every figure, with its unit: "**347 tests**", "**82.4%**", "**12.3s**".
+- Emojis only as section markers where they earn it: 📊 metrics, ✅ healthy,
+  ❌ failing, ⚠️ needs attention. Never more than one per line.
+- Lists: numbered, at most 10 entries; if there are more, show the top 10 and
+  write "…and N more".
+- Under 200 words unless the user asked for depth. Cut adjectives before facts.
+- No hedging ("seems", "appears", "might suggest") when the data is definite.
+
+=== EXAMPLES ===
+Single metric:
+"📊 **347 tests failed** across **12 modules**. Checkout accounts for **89** of
+them — 26% of all failures, more than the next three modules combined."
+
+Comparison:
+"Mobile trails desktop by **15.2 percentage points** (**78.2%** vs **93.4%**).
+The gap is concentrated in Login: **41** of mobile's **62** failures. ⚠️ Worth
+checking the iOS viewport setup before the next run."
+
+No answer available:
+"The data doesn't include execution timestamps, so I can't show a trend over
+time. I can show current pass rate by module or by platform instead."
+
+Answer:"""
+
+
+CHAT_MULTI_ANSWER_PROMPT = """You are a senior QA analyst. The question below needed
+several queries. Each labelled block is one part of it.
+
+USER QUESTION: {user_message}
+
+USER FEEDBACK PREFERENCES:
+{feedback_hints}
+
+RESULTS:
+{result_blocks}
+
+=== HOW TO ANSWER ===
+- Answer the question as ONE coherent response, not a list of query dumps. The
+  labels are for you, not the reader — don't echo them as headings unless they
+  genuinely help.
+- Address every part of the question. If a block returned nothing, say that
+  part is unavailable; never quietly drop it or fill it with a guess.
+- Connect the parts where the data connects them ("mobile's gap is almost
+  entirely the two modules in the second result"). That relationship is the
+  reason the question needed several queries, and it is the most valuable
+  thing you can add.
+- Each block's WHOLE-RESULT FACTS are exact and computed over every row; the
+  row samples may be partial. Take totals and extremes from the facts.
+- Never mix numbers between blocks — each figure belongs to the block it came
+  from, and mislabelling which platform or module a number describes is the
+  main failure mode here.
+- Don't call a difference between two percentages a percentage: use
+  "percentage points".
+
+=== STYLE ===
+- Lead with the single most important finding across all parts.
+- **Bold** every figure with its unit. Emojis sparingly: 📊 ✅ ❌ ⚠️.
+- Under 300 words. Numbered lists capped at 10 entries.
 
 Answer:"""
 
@@ -240,21 +327,29 @@ DRAFT_ANSWER: {draft_answer}
 DATA ({row_count} rows):
 {data_json}
 
-VALIDATION CHECKLIST:
-1. Every quantitative claim (numbers, percentages, counts) is exact and matches the data
-2. Every entity mentioned (project, module, test, platform) exists in the data
-3. Any comparison or ordering (highest, lowest, fastest, slowest) is correct
-4. The response answers the user's actual question (not related questions)
-5. No speculation, extrapolation, or data not in the provided JSON
-6. Percentages are calculated correctly if shown (e.g., failed/total * 100)
-7. The response provides actionable insight, not just facts
-8. Grammar, clarity, and professional tone are maintained
+VALIDATION CHECKLIST (check each against the data, in order):
+1. Every number, percentage and count in the answer appears in the data or is
+   correctly computed from it. Re-derive each one; do not assume.
+2. Every entity named (project, module, test, platform, browser) exists in the data.
+3. Every superlative and ordering claim (highest, lowest, most, slowest, "leads",
+   "worst") is actually true of the data — this is the most common error.
+4. The answer addresses the question that was asked, not an adjacent one.
+5. Nothing is extrapolated beyond the rows provided. If the data is a subset,
+   the answer must not present its figures as totals.
+6. A difference between two percentages is stated in **percentage points**,
+   not as a percentage.
+7. Any scope the figures carry (one project, one platform, executed tests only)
+   is stated — an unscoped-sounding number that is actually scoped is an error
+   even when the arithmetic is right.
+8. No hedging where the data is definite; no false confidence where it isn't.
 
 CORRECTION STRATEGY:
-- If is_valid=false, fix ONLY the errors. Keep any correct statements.
-- Simplify vague language to data-backed assertions.
-- Add missing context that would make the answer clearer.
-- Preserve the response's structure and tone; just correct facts.
+- If is_valid=false, fix ONLY the errors. Keep every correct statement verbatim.
+- Preserve the answer's structure, formatting and tone — you are correcting
+  facts, not rewriting.
+- If a claim cannot be supported by the data at all, delete it rather than
+  softening it into a vaguer version of the same wrong claim.
+- Never add new claims of your own that the data does not support.
 
 Return ONLY valid JSON:
 {{"is_valid": true, "corrected_answer": ""}}
@@ -341,6 +436,15 @@ project_metrics:
 USER REQUEST: "{user_prompt}"
 REQUESTED CHART TYPE: {chart_type}
 
+=== PARSED INTENT — YOUR SQL MUST SATISFY EVERY LINE ===
+These were extracted deterministically from the user's wording. They are not
+suggestions: the renderer builds the chart from this same parse, so SQL that
+ignores a line here produces a chart that answers a different question than
+was asked (a "top 5" with no LIMIT, a measure the chart can't find, an
+unrequested filter). If a directive names a column that does not exist in this
+dataset, pick the closest real column rather than dropping the directive.
+{spec_directives}
+
 PATTERNS BY CHART TYPE:
 
 [bar / grouped_bar]
@@ -383,19 +487,38 @@ PATTERNS BY CHART TYPE:
   -- mobile vs desktop split
   SELECT platform_type, COUNT(*) AS count FROM flattened_tests GROUP BY platform_type
 
-[line]
-  -- NOTE: line charts need an x-axis with ordered values.
-  -- Use duration bucketed, or if build_id/executed_at vary use that.
-  -- Duration over time: ordered by duration
-  SELECT test_name, ROUND(duration, 2) AS duration_sec,
-         ROW_NUMBER() OVER (ORDER BY duration) AS test_index
-  FROM flattened_tests WHERE duration IS NOT NULL AND duration > 0
-  ORDER BY duration LIMIT 30
+[line / area]
+  -- A line chart needs a genuinely ORDERED x axis. Use executed_at or
+  -- build_id when they vary. Never order by a name alphabetically and present
+  -- it as a trend — alphabetical order is not time, and a chart that implies
+  -- it is is simply wrong. If no ordered column exists, return a plain
+  -- aggregate and let the renderer draw it as a bar instead.
+  SELECT DATE_TRUNC('day', executed_at) AS day,
+         ROUND(SUM(CASE WHEN status='passed' THEN 1.0 ELSE 0 END)*100.0/COUNT(*), 1) AS pass_rate,
+         COUNT(*) AS total_tests
+  FROM flattened_tests WHERE executed_at IS NOT NULL
+  GROUP BY day ORDER BY day
 
-  -- pass rate trend by module (alphabetical as proxy)
-  SELECT module_name, ROUND(pass_rate, 1) AS pass_rate
-  FROM module_metrics WHERE project_name IS NOT NULL
-  ORDER BY module_name LIMIT 20
+[stacked_bar]
+  -- one categorical axis + one series column + one measure
+  SELECT module_name, platform_type, failed AS failure_count
+  FROM module_metrics WHERE failed > 0 ORDER BY failure_count DESC
+
+[histogram / box]
+  -- raw per-row values, NOT pre-aggregated — the renderer does the bucketing
+  SELECT test_name, module_name, platform_type, ROUND(duration, 2) AS duration_sec
+  FROM flattened_tests WHERE duration IS NOT NULL AND duration > 0
+
+[gauge]
+  -- exactly one row, one number
+  SELECT ROUND(SUM(CASE WHEN status='passed' THEN 1.0 ELSE 0 END)*100.0/COUNT(*), 2) AS pass_rate
+  FROM flattened_tests WHERE status IN ('passed','failed')
+
+[treemap / sunburst / funnel / radar]
+  -- one categorical column + one numeric column (a second categorical column
+  -- becomes the parent level for treemap/sunburst)
+  SELECT project_name, module_name, failed AS failure_count
+  FROM module_metrics WHERE failed > 0 ORDER BY failure_count DESC
 
 [heatmap]
   -- project × module failures
@@ -423,270 +546,29 @@ PATTERNS BY CHART TYPE:
 RULES:
 1. Return ONLY raw SQL — no markdown, no semicolon at end
 2. Use ILIKE for string matching
-3. Max 25 rows for readability
+3. Honour the row limit stated in PARSED INTENT above; if none was stated, keep
+   the result under 100 rows (the renderer ranks and truncates for readability,
+   but it can only truncate rows the query actually returned)
 4. Handle NULLs with IS NOT NULL
-5. Prefer module_metrics / project_metrics for aggregated charts
-6. If request is impossible → SELECT status, COUNT(*) AS count FROM flattened_tests GROUP BY status
+5. Prefer module_metrics / project_metrics for aggregated charts; use
+   flattened_tests when the chart needs per-test rows (histogram, box, scatter
+   of individual tests)
+6. Alias every computed column to a clear name (AS pass_rate, AS failure_count) —
+   the renderer resolves the measure by column name
+7. If the request is genuinely impossible against these tables →
+   SELECT status, COUNT(*) AS count FROM flattened_tests GROUP BY status
 
 SQL:"""
 
 
 # ---------------------------------------------------------------------------
-# CHART – CODE PROMPT (STRICT TYPE ENFORCEMENT)
+# NOTE: the Plotly-code prompt and the per-type code templates that used to
+# live here are gone. Charts are now built deterministically in
+# services/chart_builder.py from services/chart_spec.py's parse — see the
+# handlers.py module docstring for why. detect_chart_type() moved to
+# chart_spec.parse(), which returns the measure, dimension, top-N and filters
+# alongside the chart type instead of only the type.
 # ---------------------------------------------------------------------------
-# This is NOT a generic "generate any chart" prompt.
-# We inject the EXACT Plotly template for the detected chart type.
-# The LLM only fills in column names and title — it cannot change the chart type.
-
-CHART_CODE_PROMPT = """You are a Plotly Python expert. Generate chart code for this EXACT chart type.
-
-USER REQUEST: "{user_prompt}"
-
-USER FEEDBACK PREFERENCES:
-{feedback_hints}
-
-⚠️ MANDATORY CHART TYPE: {chart_type}
-You MUST use ONLY the chart pattern shown below. Do NOT substitute a different chart type.
-If the user asked for a line chart, generate a LINE chart.
-If the user asked for a pie chart, generate a PIE chart.
-Generating the wrong chart type is a critical failure.
-
-DATA (variable `data` is already defined as list of dicts):
-{data_sample}
-
-COLUMNS AVAILABLE: {columns}
-
-=== REQUIRED CHART PATTERN FOR: {chart_type} ===
-{chart_template}
-
-=== STRICT RULES ===
-1. Use EXACTLY the chart pattern above — same chart type, same function
-2. `data` is already defined as a Python list of dicts — DO NOT reassign it
-3. Always start with: import pandas as pd; df = pd.DataFrame(data)
-4. Final figure MUST be stored in variable named `fig`
-5. FORBIDDEN kwargs: hovertemplate, customdata, piecolorway, Blues_d, Blues_r, width=, height=, template=
-6. DO NOT include any fig.update_layout() call — caller applies all layout/theme
-7. Use color='platform_type' when platform_type column exists
-8. Use color='project_name' when project_name column exists (and no platform_type split needed)
-9. Long axis labels: fig.update_xaxes(tickangle=-35) or fig.update_yaxes(automargin=True)
-10. ALLOWED discrete colors only: ['#6C8BFF','#22C55E','#F59E0B','#EF4444','#A855F7','#06B6D4','#EC4899']
-11. ALLOWED color scales only: 'Viridis', 'RdYlGn', 'Plasma', 'Reds', 'Blues'
-
-Return ONLY Python code. No markdown fences. No explanation. No comments."""
-
-
-# ---------------------------------------------------------------------------
-# CHART TYPE TEMPLATES — injected into CHART_CODE_PROMPT at runtime
-# ---------------------------------------------------------------------------
-
-CHART_TEMPLATES = {
-    "bar": """
-import pandas as pd
-import plotly.express as px
-df = pd.DataFrame(data)
-# Determine x and y from available columns
-x_col = next((c for c in ['module_name','project_name','status','browser'] if c in df.columns), df.columns[0])
-y_col = next((c for c in ['failure_count','failed','pass_rate','total_tests','count','duration_sec'] if c in df.columns), df.columns[-1])
-color_col = 'platform_type' if 'platform_type' in df.columns else ('project_name' if 'project_name' in df.columns else None)
-fig = px.bar(
-    df, x=x_col, y=y_col,
-    color=color_col,
-    title="{title}",
-    barmode='group',
-    color_discrete_sequence=['#6C8BFF','#22C55E','#F59E0B','#EF4444','#A855F7','#06B6D4']
-)
-fig.update_traces(textfont_size=11, textangle=0, textposition='outside', cliponaxis=False)
-fig.update_xaxes(tickangle=-35)
-""",
-
-    "horizontal_bar": """
-import pandas as pd
-import plotly.express as px
-df = pd.DataFrame(data)
-x_col = next((c for c in ['duration_sec','failure_count','failed','count','total_tests'] if c in df.columns), df.columns[-1])
-y_col = next((c for c in ['test_name','module_name','project_name'] if c in df.columns), df.columns[0])
-color_col = 'platform_type' if 'platform_type' in df.columns else ('project_name' if 'project_name' in df.columns else None)
-# Sort descending by value for readability
-df = df.sort_values(x_col, ascending=True)
-fig = px.bar(
-    df, x=x_col, y=y_col, orientation='h',
-    color=color_col,
-    title="{title}",
-    color_discrete_sequence=['#6C8BFF','#22C55E','#F59E0B','#EF4444','#A855F7','#06B6D4']
-)
-fig.update_traces(textfont_size=10, textposition='outside', cliponaxis=False)
-fig.update_yaxes(automargin=True)
-""",
-
-    "pie": """
-import pandas as pd
-import plotly.express as px
-df = pd.DataFrame(data)
-names_col = next((c for c in ['status','platform_type','project_name','module_name'] if c in df.columns), df.columns[0])
-values_col = next((c for c in ['count','total_tests','failed','passed'] if c in df.columns), df.columns[-1])
-fig = px.pie(
-    df, names=names_col, values=values_col,
-    title="{title}",
-    color_discrete_sequence=['#22C55E','#EF4444','#F59E0B','#A855F7','#06B6D4','#6C8BFF','#EC4899']
-)
-fig.update_traces(textposition='inside', textinfo='percent+label', textfont_size=13)
-""",
-
-    "donut": """
-import pandas as pd
-import plotly.express as px
-df = pd.DataFrame(data)
-names_col = next((c for c in ['status','platform_type','project_name','module_name'] if c in df.columns), df.columns[0])
-values_col = next((c for c in ['count','total_tests','failed','passed'] if c in df.columns), df.columns[-1])
-fig = px.pie(
-    df, names=names_col, values=values_col,
-    hole=0.45,
-    title="{title}",
-    color_discrete_sequence=['#22C55E','#EF4444','#F59E0B','#A855F7','#06B6D4','#6C8BFF','#EC4899']
-)
-fig.update_traces(textposition='inside', textinfo='percent+label', textfont_size=13)
-""",
-
-    "line": """
-import pandas as pd
-import plotly.express as px
-df = pd.DataFrame(data)
-x_col = next((c for c in ['test_index','module_name','executed_at','build_id'] if c in df.columns), df.columns[0])
-y_col = next((c for c in ['pass_rate','duration_sec','count','total_tests'] if c in df.columns), df.columns[-1])
-color_col = 'platform_type' if 'platform_type' in df.columns else ('project_name' if 'project_name' in df.columns else None)
-fig = px.line(
-    df, x=x_col, y=y_col,
-    color=color_col,
-    title="{title}",
-    markers=True,
-    color_discrete_sequence=['#6C8BFF','#22C55E','#F59E0B','#EF4444','#A855F7','#06B6D4']
-)
-fig.update_traces(line_width=2.5, marker_size=8)
-fig.update_xaxes(tickangle=-35)
-""",
-
-    "heatmap": """
-import pandas as pd
-import plotly.graph_objects as go
-df = pd.DataFrame(data)
-# Pick row/column axes for pivot
-row_col = next((c for c in ['module_name','project_name'] if c in df.columns), df.columns[0])
-col_col = next((c for c in ['project_name','platform_type','module_name'] if c in df.columns and c != row_col), df.columns[1])
-val_col = next((c for c in ['failures','failed','count','total_tests','pass_rate'] if c in df.columns), df.columns[-1])
-pivot = df.pivot_table(index=row_col, columns=col_col, values=val_col, fill_value=0, aggfunc='sum')
-text_vals = pivot.values.astype(int).astype(str)
-fig = go.Figure(go.Heatmap(
-    z=pivot.values,
-    x=pivot.columns.tolist(),
-    y=pivot.index.tolist(),
-    colorscale='Reds',
-    text=text_vals,
-    texttemplate='%{{text}}',
-    showscale=True
-))
-fig.update_layout(title="{title}")
-""",
-
-    "scatter": """
-import pandas as pd
-import plotly.express as px
-df = pd.DataFrame(data)
-x_col = next((c for c in ['duration_sec','total_tests'] if c in df.columns), df.columns[0])
-y_col = next((c for c in ['pass_rate','failed','passed'] if c in df.columns), df.columns[-1])
-color_col = 'platform_type' if 'platform_type' in df.columns else ('status' if 'status' in df.columns else None)
-hover_col = 'test_name' if 'test_name' in df.columns else ('module_name' if 'module_name' in df.columns else None)
-fig = px.scatter(
-    df, x=x_col, y=y_col,
-    color=color_col,
-    hover_name=hover_col,
-    title="{title}",
-    color_discrete_sequence=['#6C8BFF','#22C55E','#F59E0B','#EF4444','#A855F7','#06B6D4']
-)
-fig.update_traces(marker_size=10, marker_opacity=0.8)
-""",
-
-    "platform_comparison": """
-import pandas as pd
-import plotly.express as px
-df = pd.DataFrame(data)
-x_col = 'platform_type' if 'platform_type' in df.columns else df.columns[0]
-y_col = next((c for c in ['pass_rate','failed','passed','total_tests'] if c in df.columns), df.columns[-1])
-color_map = {'mobile': '#EF4444', 'desktop': '#22C55E'}
-fig = px.bar(
-    df, x=x_col, y=y_col,
-    color=x_col,
-    title="{title}",
-    color_discrete_map=color_map,
-    text_auto=True
-)
-fig.update_traces(textfont_size=13, textposition='outside')
-""",
-}
-
-
-def get_chart_template(chart_type: str, title: str) -> str:
-    """Return the filled-in chart template for the given chart type."""
-    template = CHART_TEMPLATES.get(chart_type, CHART_TEMPLATES["bar"])
-    return template.replace("{title}", title[:60])
-
-
-# ---------------------------------------------------------------------------
-# CHART TYPE DETECTION — deterministic, not LLM-based
-# ---------------------------------------------------------------------------
-
-def detect_chart_type(prompt: str) -> str:
-    """
-    Deterministic chart type detection from the user prompt.
-    Returns one of: bar, horizontal_bar, pie, donut, line, heatmap, scatter, platform_comparison
-    Order matters — more specific patterns checked first.
-    """
-    p = prompt.lower()
-
-    # Line chart — must check BEFORE bar to catch "line chart"
-    if any(k in p for k in ("line chart", "line graph", "trend", "over time", "timeline", "over builds")):
-        return "line"
-
-    # Heatmap
-    if any(k in p for k in ("heatmap", "heat map", "matrix", "grid")):
-        return "heatmap"
-
-    # Scatter
-    if any(k in p for k in ("scatter", "bubble", "dot plot")):
-        return "scatter"
-
-    # Donut (before pie)
-    if "donut" in p or "doughnut" in p:
-        return "donut"
-
-    # Pie
-    if any(k in p for k in ("pie chart", "pie graph", "pie ")):
-        return "pie"
-
-    # Platform comparison (before horizontal/bar)
-    if any(k in p for k in (
-        "mobile vs desktop", "desktop vs mobile", "platform comparison",
-        "compare platform", "platform split", "by platform"
-    )):
-        return "platform_comparison"
-
-    # Horizontal bar — must check BEFORE generic "bar"
-    if any(k in p for k in (
-        "horizontal bar", "horizontal chart", "slowest", "longest",
-        "top offender", "ranked by", "ranking"
-    )):
-        return "horizontal_bar"
-
-    # Bar (default for most data questions)
-    if any(k in p for k in (
-        "bar chart", "bar graph", "column chart", "grouped bar",
-        "stacked bar", "distribution", "breakdown", "count",
-        "failures by", "pass rate by", "per module", "per project",
-        "by module", "by project", "by status"
-    )):
-        return "bar"
-
-    # Final fallback
-    return "bar"
 
 
 # ---------------------------------------------------------------------------

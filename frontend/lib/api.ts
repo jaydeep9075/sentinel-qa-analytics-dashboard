@@ -253,7 +253,31 @@ export async function generateChart(
   if (!res.ok || data.error) {
     throw new Error(data?.error || data?.detail || "Failed to generate chart");
   }
-  return { chart: data.chart };
+  // The freshly-stored chart is now the newest row in this build's history,
+  // so any cached copy of that history is stale by definition. Dropping it
+  // here is what stops a revalidation moments later from replaying a list
+  // that predates the chart the user is currently looking at.
+  invalidateChartHistoryCache(ingestionId);
+  return { chart: data.chart, chartId: data.chart_id as string | undefined };
+}
+
+/** Drop the cached chart history for one build (all sessions). */
+export function invalidateChartHistoryCache(ingestionId: string): void {
+  const scope = String(ingestionId || "").trim();
+  const prefix = `qa_cache:chartHistory:${scope}`;
+
+  for (const key of Array.from(memoryCache.keys())) {
+    if (key.startsWith(prefix)) memoryCache.delete(key);
+  }
+  if (typeof window === "undefined") return;
+  try {
+    for (let i = sessionStorage.length - 1; i >= 0; i -= 1) {
+      const key = sessionStorage.key(i);
+      if (key && key.startsWith(prefix)) sessionStorage.removeItem(key);
+    }
+  } catch {
+    // Ignore storage access errors.
+  }
 }
 
 export async function getChatHistory(sessionId: string, ingestionId: string) {
@@ -282,11 +306,24 @@ export async function getChartHistory(sessionId: string, ingestionId: string) {
 }
 
 export async function deleteChart(chartId: string, ingestionId: string) {
-  const res = await fetch(`${API_BASE}/chart/${chartId}`, {
+  const res = await fetch(`${API_BASE}/chart/${encodeURIComponent(chartId)}`, {
     method: "DELETE",
     headers: { "x-ingestion-id": ingestionId, ...getAuthHeaders() },
   });
-  return res.json();
+  const data = await res.json().catch(() => ({}));
+
+  // The delete endpoint answers failures with 200 + {"error": "..."} rather
+  // than a status code, so `res.ok` alone would report every failure as a
+  // success and the caller would quietly leave the chart on screen.
+  if (!res.ok || data?.error) {
+    throw new Error(data?.error || data?.detail || "Failed to delete chart");
+  }
+
+  // Without this the 10s history cache replays the pre-delete list on the
+  // very next revalidation, so the chart reappears a moment after it is
+  // removed — which is what "delete does nothing" actually looked like.
+  invalidateChartHistoryCache(ingestionId);
+  return data;
 }
 
 export async function ingestFromConfigPath(sourcePath: string) {
@@ -336,19 +373,63 @@ export async function getConnectorOptions(): Promise<{ connectors: ConnectorOpti
   return parseJsonOrThrow<{ connectors: ConnectorOption[] }>(res, "Failed to load connector options");
 }
 
-export async function uploadIngestFile(
+export interface UploadResult {
+  staged_path: string;
+  filename: string;
+  bytes: number;
+}
+
+/**
+ * Uploads a file for ingestion, reporting real byte-level progress.
+ *
+ * Uses XMLHttpRequest rather than fetch because `fetch` still has no
+ * cross-browser upload-progress event - the wizard's progress bar would
+ * otherwise have to be a decorative fake, which is worse than no bar at
+ * all for the multi-hundred-MB archives this endpoint accepts.
+ *
+ * onProgress receives 0..1, or null when the browser reports the transfer
+ * as non-computable (no Content-Length on the request body), so the caller
+ * can fall back to an indeterminate bar instead of showing a stuck 0%.
+ */
+export function uploadIngestFile(
   file: File,
   connectorType: string,
-): Promise<{ staged_path: string; filename: string; bytes: number }> {
+  onProgress?: (fraction: number | null) => void,
+): Promise<UploadResult> {
   const form = new FormData();
   form.append("connector_type", connectorType);
   form.append("file", file);
-  const res = await fetch(`${API_BASE}/ingest/upload-file`, {
-    method: "POST",
-    headers: getAuthHeaders(),
-    body: form,
+
+  return new Promise<UploadResult>((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open("POST", `${API_BASE}/ingest/upload-file`);
+    Object.entries(getAuthHeaders()).forEach(([k, v]) => xhr.setRequestHeader(k, v));
+
+    xhr.upload.onprogress = (e) => {
+      if (!onProgress) return;
+      onProgress(e.lengthComputable && e.total > 0 ? e.loaded / e.total : null);
+    };
+    xhr.onerror = () => reject(new Error("Upload failed — could not reach the server"));
+    xhr.onabort = () => reject(new Error("Upload cancelled"));
+    xhr.onload = () => {
+      let data: Record<string, unknown> = {};
+      try {
+        data = JSON.parse(xhr.responseText) as Record<string, unknown>;
+      } catch {
+        // Non-JSON body (a proxy's HTML 502 page, say) — fall through to the
+        // status-based message below rather than throwing a parse error.
+      }
+      if (xhr.status >= 200 && xhr.status < 300) {
+        onProgress?.(1);
+        resolve(data as unknown as UploadResult);
+        return;
+      }
+      reject(new Error(
+        (data.detail as string) || (data.error as string) || `Upload failed (HTTP ${xhr.status})`,
+      ));
+    };
+    xhr.send(form);
   });
-  return parseJsonOrThrow<{ staged_path: string; filename: string; bytes: number }>(res, "Upload failed");
 }
 
 export interface TestConnectionResult {
@@ -399,6 +480,11 @@ export interface IngestStatus {
   error: string | null;
   started_at: string;
   finished_at: string | null;
+  /** Pipeline stage reported by the ingester. Optional: an older backend,
+   *  or a job whose status file predates phase tracking, omits these. */
+  phase?: "queued" | "connecting" | "fetching" | "processing" | "indexing" | "summarizing" | "completed";
+  phase_detail?: string;
+  rows?: number;
 }
 
 export async function getIngestStatus(buildId: string): Promise<IngestStatus> {
@@ -408,13 +494,43 @@ export async function getIngestStatus(buildId: string): Promise<IngestStatus> {
   return parseJsonOrThrow<IngestStatus>(res, "Failed to fetch ingestion status");
 }
 
+/** Business read of one build, computed server-side from the same
+ *  in-memory aggregates the status block uses (see _get_insights_payload). */
+export interface DashboardInsights {
+  has_data?: boolean;
+  /** Go / no-go call for this build. */
+  readiness?: {
+    verdict?: "ready" | "at_risk" | "blocked" | "unknown";
+    label?: string;
+    detail?: string;
+  };
+  pass_rate?: number;
+  /** How much of the product the failures actually touch. */
+  blast_radius?: {
+    impacted?: number;
+    total?: number;
+    top_area?: string;
+    top_area_failures?: number;
+  };
+  /** The single defect signature that explains the most failures. */
+  top_failure?: { signature?: string; count?: number; share?: number };
+  /** What the suite costs in wall-clock time. */
+  runtime?: {
+    total_seconds?: number;
+    avg_seconds?: number;
+    failed_seconds?: number;
+    slowest_area?: string;
+  };
+  coverage?: { skipped?: number; skipped_rate?: number };
+}
+
 export interface DashboardOverview {
   connected?: boolean;
   ingestion_id?: string;
   status?: {
     has_data?: boolean;
     total_rows?: number;
-    status_summary?: { passed?: number; failed?: number };
+    status_summary?: { passed?: number; failed?: number; skipped?: number };
   };
   quality?: {
     score?: number;
@@ -422,6 +538,7 @@ export interface DashboardOverview {
     guidance?: string[];
     checks?: { name?: string; passed?: boolean; detail?: string }[];
   };
+  insights?: DashboardInsights;
   server_time?: string;
 }
 

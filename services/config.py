@@ -427,7 +427,7 @@ LEGACY_BUILDS_WORKSPACE = (
 ).strip().lower() or DEFAULT_WORKSPACE_ID
 
 # Live test execution (reporter -> backend ingestion)
-# Shared secret the @sentinel/playwright reporter sends as `x-api-key` to
+# Shared secret the sentinel-qa-reporter client sends as `x-api-key` to
 # every /live/* ingestion route (services/live_exec/router.py's
 # require_ingest_key). This used to default to "" (empty), which
 # require_ingest_key treated as "endpoint unauthenticated" - convenient for
@@ -472,6 +472,10 @@ def _resolve_live_ingest_api_key() -> tuple[str, bool]:
 
 
 LIVE_INGEST_API_KEY, _LIVE_INGEST_API_KEY_WAS_GENERATED = _resolve_live_ingest_api_key()
+# Pinned in .env means this process is not the owner of the value: rotating
+# it from the admin UI would write a state file the next restart ignores,
+# which is worse than refusing. See live_exec/router.rotate_ingest_key.
+LIVE_INGEST_API_KEY_FROM_ENV = bool((os.getenv("LIVE_INGEST_API_KEY") or "").strip())
 if LIVE_INGEST_API_KEY and _LIVE_INGEST_API_KEY_WAS_GENERATED:
     logger.warning(
         "LIVE_INGEST_API_KEY was not set - generated one at %s: '%s'. Use this "
@@ -490,6 +494,34 @@ LIVE_RUNS_DIR = DATA_BASE_PATH / "runs"
 # within whichever one instance happened to receive a given request. See
 # services/live_exec/bus.py and screencast.py.
 REDIS_URL = os.getenv("REDIS_URL", "")
+
+# A live run only leaves "running" when the reporter PATCHes it at the end of
+# the Playwright process. If that process dies without getting there - hard
+# kill, crash, laptop sleep, network drop - nothing else ever corrects the row,
+# so the run sits in the Live Runs list as permanently in-progress. This is how
+# long a run may go with no incoming events before it's treated as abandoned
+# and swept (see live_exec/store.reap_stale_runs). It must stay comfortably
+# above the reporter's 1s flush interval and any plausible gap between events -
+# a single slow test still emits step logs, but a run whose only remaining test
+# is a long silent one shouldn't be killed mid-flight, hence minutes not
+# seconds.
+LIVE_RUN_STALE_TIMEOUT_SECONDS = int(os.getenv("LIVE_RUN_STALE_TIMEOUT_SECONDS", "900"))
+
+# Where the pre-built reporter tarball lives, so this backend can hand out
+# its own client package over HTTP.
+#
+# The alternative was "publish to npm and tell people to install from there",
+# which is fine for us and useless for anyone who pulls this Docker image:
+# their teams would be installing OUR published version against THEIR
+# possibly-older backend, and an air-gapped or VPN-only network could not
+# reach npm at all. Serving the tarball the image was built with makes the
+# client version match the server version by construction, needs no registry
+# account, and works anywhere the dashboard itself is reachable - `npm i -D
+# https://<this-host>/live/package/<file>.tgz` is a first-class npm install
+# source, not a workaround.
+LIVE_PACKAGE_DIR = Path(
+    os.getenv("LIVE_PACKAGE_DIR") or (BASE_DIR / "packages" / "dist-pack")
+).expanduser()
 
 # RBA: Projects and roles root directories
 PROJECTS_ROOT = os.getenv("PROJECTS_ROOT", str(BASE_DIR / "projects"))

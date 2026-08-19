@@ -70,6 +70,31 @@ def get_status(build_id: str) -> Optional[dict]:
     return None
 
 
+def set_progress(build_id: str, phase: str, detail: str = "", rows: int = 0) -> None:
+    """Merge a pipeline phase into a running job's status.
+
+    Called from the ingester's worker thread (via the progress_cb it is
+    handed), so it goes through the same lock/file path as _write_status.
+
+    Only a job that is still "running" is touched: a phase update racing
+    with the terminal completed/failed write must never resurrect a
+    finished job as running again, and the ordering between the worker
+    thread and start_ingestion's final write is not guaranteed.
+    """
+    with _lock:
+        current = _jobs.get(build_id)
+    if not current:
+        current = get_status(build_id)
+    if not current or current.get("status") != "running":
+        return
+    _write_status(build_id, {
+        **current,
+        "phase": phase,
+        "phase_detail": detail,
+        "rows": rows,
+    })
+
+
 def forget(build_id: str) -> None:
     """Drop the cached status for a build that no longer exists.
 
@@ -172,6 +197,7 @@ async def start_ingestion(
     _write_status(build_id, {
         "build_id": build_id, "status": "running", "error": None,
         "started_at": started_at, "finished_at": None,
+        "phase": "queued", "phase_detail": "", "rows": 0,
     })
 
     temp_cfg_path = None
@@ -187,10 +213,14 @@ async def start_ingestion(
             embedding_model=app_settings.get_effective_embedding_model(),
         )
 
+        def _on_progress(phase: str, detail: str = "", rows: int = 0) -> None:
+            set_progress(build_id, phase, detail, rows)
+
         try:
             with anyio.fail_after(config.INGEST_TIMEOUT_SECONDS):
                 await anyio.to_thread.run_sync(
-                    ingester.run_ingestion_from_config, temp_cfg_path, build_id
+                    ingester.run_ingestion_from_config, temp_cfg_path, build_id,
+                    _on_progress,
                 )
         except TimeoutError:
             # Note: the worker thread itself cannot be force-killed from here —
@@ -204,6 +234,8 @@ async def start_ingestion(
         _write_status(build_id, {
             "build_id": build_id, "status": "completed", "error": None,
             "started_at": started_at, "finished_at": datetime.now(timezone.utc).isoformat(),
+            "phase": "completed", "phase_detail": "",
+            "rows": (get_status(build_id) or {}).get("rows", 0),
         })
     except Exception as e:
         logger.exception("Ingestion %s failed: %s", build_id, e)

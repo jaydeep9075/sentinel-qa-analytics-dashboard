@@ -57,6 +57,23 @@ RUN set -eux; \
 ENV HF_HOME=/opt/hf-cache
 RUN python -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('all-MiniLM-L6-v2')"
 
+# ---- client reporter tarball -------------------------------------------
+# Built into the image so this backend can hand out its own client package
+# over HTTP (GET /live/package). A team that pulls this image then wires a
+# test repo with `npm i -D https://<their-host>/live/package/<file>.tgz` -
+# no npm account, no registry reachability, and the client version matches
+# the server version by construction. See services/config.LIVE_PACKAGE_DIR.
+FROM node:24-bookworm-slim AS reporter-builder
+WORKDIR /pkg
+COPY packages/sentinel-qa-reporter/package.json packages/sentinel-qa-reporter/tsconfig.json ./
+# --ignore-scripts: @playwright/test is a build-time type dependency here and
+# its postinstall would download browser binaries into a stage that throws
+# them away.
+RUN npm install --no-audit --no-fund --ignore-scripts
+COPY packages/sentinel-qa-reporter/src ./src
+COPY packages/sentinel-qa-reporter/README.md packages/sentinel-qa-reporter/LICENSE ./
+RUN npm run build && npm pack --pack-destination /out
+
 FROM python:3.12-slim-bookworm AS runtime
 
 RUN groupadd --system appuser && useradd --system --gid appuser --home-dir /app --create-home appuser
@@ -114,6 +131,7 @@ USER appuser
 # config, bind-mounted instead - see docker-compose.yml's `ingest` service),
 # auth_seed_users.json, users.db, data/ - all runtime state/secrets per
 # .gitignore, supplied via env_file and volumes, never baked into the image.
+COPY --from=reporter-builder --chown=appuser:appuser /out /app/packages/dist-pack
 COPY --chown=appuser:appuser services ./services
 COPY --chown=appuser:appuser roles ./roles
 COPY --chown=appuser:appuser projects ./projects

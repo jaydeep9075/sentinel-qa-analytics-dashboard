@@ -84,7 +84,7 @@ export default function RegisterPage() {
       >
         <div className="relative bg-white border border-slate-200 dark:bg-white/[0.03] dark:border-white/[0.08] backdrop-blur-2xl rounded-2xl p-8 md:p-10 shadow-[0_0_80px_rgba(0,240,255,0.04)]">
           <div className="flex items-center gap-3 mb-8">
-            <BrandLogo className="px-3 py-2 shadow-[0_0_24px_rgba(0,240,255,0.18)]" />
+            <BrandLogo size={46} />
             <div>
               <h2 className="text-2xl font-bold text-slate-900 dark:text-white">Request Access</h2>
               <p className="text-slate-500 dark:text-white/30 text-xs tracking-wide">

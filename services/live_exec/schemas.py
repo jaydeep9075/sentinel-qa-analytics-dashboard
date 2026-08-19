@@ -19,8 +19,8 @@ TestStatus = Literal["running", "passed", "failed", "skipped", "retried"]
 
 
 class TestInfo(BaseModel):
-    id: str
-    title: str
+    id: str = Field(max_length=2000)
+    title: str = Field(max_length=2000)
     file: Optional[str] = None
     status: Optional[TestStatus] = None
     duration_ms: Optional[int] = None
@@ -37,7 +37,12 @@ class ExecutionEvent(BaseModel):
 
 
 class EventBatch(BaseModel):
-    events: list[ExecutionEvent]
+    # A reporter batches at most a few dozen events per second. A request
+    # carrying tens of thousands is either a client bug or someone probing,
+    # and either way it is a single request that can pin the event loop and
+    # the SQLite writer for seconds. Rejecting it costs a well-behaved
+    # client nothing.
+    events: list[ExecutionEvent] = Field(max_length=2000)
 
 
 class RunCreate(BaseModel):
@@ -51,6 +56,21 @@ class RunCreate(BaseModel):
     commit_sha: Optional[str] = None
     build_url: Optional[str] = None
     worker_count: Optional[int] = None
+    # How many tests the runner resolved before starting. Without it the
+    # dashboard can only count tests it has already seen, so "12 done" has
+    # no denominator and there is no progress bar or ETA to show - which is
+    # the first question anyone watching a run actually asks. Optional so a
+    # framework that cannot know its total up front still reports fine.
+    total_tests: Optional[int] = None
+    # Joins several processes into one run. A suite split with
+    # `--shard=1/4`, or a CI matrix with one job per browser, is four
+    # separate runner processes reporting the same logical run - without a
+    # shared id the dashboard shows four quarter-runs and no total. Runners
+    # send a stable string (the CI build id is the obvious one) and the
+    # store attaches them to the same row. Deliberately opt-in: silently
+    # merging two unrelated jobs that happen to share a build id would be a
+    # worse failure than not merging at all.
+    external_id: Optional[str] = None
     metadata: dict[str, Any] = Field(default_factory=dict)
 
 

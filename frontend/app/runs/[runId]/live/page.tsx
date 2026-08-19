@@ -6,6 +6,7 @@ import Link from "next/link";
 import {
   ArrowLeft,
   CircleDot,
+  ExternalLink,
   Loader2,
   Image as ImageIcon,
   Video,
@@ -13,8 +14,7 @@ import {
   Radio,
 } from "lucide-react";
 import BrandLogo from "@/components/BrandLogo";
-
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+import { API_BASE, elapsedMs, formatDuration, passRate } from "@/lib/liveRuns";
 
 interface TestRow {
   test_id: string;
@@ -51,9 +51,14 @@ interface RunInfo {
   framework?: string;
   ci_provider?: string;
   branch?: string;
+  environment?: string;
+  build_url?: string;
   started_at?: string;
   finished_at?: string;
+  total_tests?: number | null;
 }
+
+const SORT_RANK: Record<string, number> = { failed: 0, running: 1, retried: 2 };
 
 const STATUS_STYLES: Record<string, string> = {
   running: "bg-blue-500/10 text-blue-400 border-blue-500/25 shadow-[0_0_14px_rgba(59,130,246,0.15)]",
@@ -103,8 +108,18 @@ export default function LiveRunPage() {
   // read once from the permanent record instead of over SSE.
   const [historyMode, setHistoryMode] = useState(false);
   const [loading, setLoading] = useState(true);
+  // Drives the elapsed-time readout between SSE events, so a quiet stretch
+  // (one long test, no log output) still visibly progresses instead of
+  // looking frozen.
+  const [now, setNow] = useState(() => Date.now());
   const logEndRef = useRef<HTMLDivElement>(null);
   const token = typeof window !== "undefined" ? localStorage.getItem("token") : null;
+
+  useEffect(() => {
+    if (run && run.status !== "running") return;
+    const t = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(t);
+  }, [run?.status]);
 
   // A finished run's SQLite rows are gone (see LIVE_EXECUTION_WHY_THIS_APPROACH.md),
   // so /live/runs/{id}/stream would 404 forever and EventSource would just
@@ -195,7 +210,11 @@ export default function LiveRunPage() {
 
     source.addEventListener("run.started", (e: MessageEvent) => {
       const data = JSON.parse(e.data);
-      if (data.run) setRun(data.run);
+      // Merge, don't replace: this event carries only what create_run echoes
+      // back (id, name, status, start time), while the snapshot that arrives
+      // first carries the full row - framework, branch, build_url. Replacing
+      // would blank those fields out.
+      if (data.run) setRun((prev) => ({ ...prev, ...data.run }));
     });
 
     source.addEventListener("run.finished", (e: MessageEvent) => {
@@ -300,8 +319,17 @@ export default function LiveRunPage() {
       ? `${API_BASE}/live/history-attachments/${a.id}${token ? `?token=${encodeURIComponent(token)}` : ""}`
       : `${API_BASE}/live/attachments/${a.id}${token ? `?token=${encodeURIComponent(token)}` : ""}`;
 
+  // Failures first, then still-running, then everything else - alphabetical
+  // within each group. A long suite's failures used to be scattered through
+  // a scrolling alphabetical list, which buries the only rows anyone opens
+  // this page to find. Alphabetical order is preserved as the tiebreaker so
+  // the list stays stable rather than reshuffling as results land.
   const testList = useMemo(
-    () => Object.values(tests).sort((a, b) => a.title.localeCompare(b.title)),
+    () =>
+      Object.values(tests).sort((a, b) => {
+        const rank = (t: TestRow) => SORT_RANK[t.status || "running"] ?? 3;
+        return rank(a) - rank(b) || a.title.localeCompare(b.title);
+      }),
     [tests]
   );
 
@@ -313,6 +341,16 @@ export default function LiveRunPage() {
     }
     return c;
   }, [testList]);
+
+  const durationMs = elapsedMs(run, now);
+  const finished = counts.passed + counts.failed + counts.skipped;
+  // The reporter knows the suite size up front; fall back to what we have
+  // actually seen so a framework that cannot report a total still gets a
+  // sensible (if late-growing) denominator rather than a broken bar.
+  const totalTests = run?.total_tests || testList.length || 0;
+  const progressPct = totalTests > 0 ? Math.min(100, Math.round((finished / totalTests) * 100)) : 0;
+  const rate = passRate(counts.passed, counts.failed);
+  const failedTests = useMemo(() => testList.filter((t) => t.status === "failed"), [testList]);
 
   const COUNT_ACCENT: Record<string, string> = {
     running: "text-blue-400",
@@ -332,7 +370,7 @@ export default function LiveRunPage() {
       <header className="sticky top-0 z-50 border-b border-slate-200 bg-white/90 shadow-[0_4px_30px_rgba(15,23,42,0.08)] backdrop-blur-xl dark:border-white/[0.06] dark:bg-black/80 dark:shadow-[0_4px_30px_rgba(0,0,0,0.5)]">
         <div className="mx-auto flex max-w-[1600px] flex-wrap items-center justify-between gap-3 px-4 py-3 sm:gap-4 sm:px-6 sm:py-3.5">
           <div className="flex items-center gap-3">
-            <BrandLogo className="shadow-[0_0_20px_rgba(0,240,255,0.2)]" />
+            <BrandLogo size={34} />
             <div>
               <h1 className="text-base font-bold tracking-tight sm:text-lg">
                 <span className="text-cyan-400">Sentinel</span>{" "}
@@ -366,16 +404,70 @@ export default function LiveRunPage() {
               {historyMode ? "finished · showing permanent record" : connected ? "live" : "reconnecting…"} · {runId}
             </div>
             <h2 className="truncate bg-gradient-to-r from-cyan-400 to-blue-500 bg-clip-text text-xl font-bold text-transparent sm:text-2xl">
-              {run?.name || "playwright run"}
+              {run?.name || "Test run"}
             </h2>
-            <p className="mt-1 text-sm text-slate-500 dark:text-white/40">
-              {run?.framework || "playwright"}
-              {run?.ci_provider ? ` · ${run.ci_provider}` : " · local"}
-              {run?.branch ? ` · ${run.branch}` : ""}
+            <p className="mt-1 flex flex-wrap items-center gap-x-1.5 text-sm text-slate-500 dark:text-white/40">
+              <span>{run?.framework || "unknown framework"}</span>
+              {run?.environment && <span>· {run.environment}</span>}
+              {run?.branch && <span>· {run.branch}</span>}
+              <span>· {run?.ci_provider || "local"}</span>
+              {durationMs !== null && <span>· {formatDuration(durationMs)}</span>}
+              {/* The link back to the pipeline that produced this run. It was
+                  already being captured by the reporter's CI detection and
+                  stored, but never rendered - so the one click that connects a
+                  red run to its build logs did not exist. */}
+              {run?.build_url && (
+                <a
+                  href={run.build_url}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="inline-flex items-center gap-1 font-semibold text-cyan-500 hover:underline dark:text-cyan-400"
+                >
+                  · build <ExternalLink className="h-3 w-3" />
+                </a>
+              )}
             </p>
           </div>
           <StatusBadge status={run?.status} />
         </div>
+
+        {/* Progress against the suite size the runner reported. Counts alone
+            answer "what has happened", not "how much is left" - which is the
+            question someone watching a release actually has. */}
+        {totalTests > 0 && (
+          <div className="mb-4">
+            <div className="mb-1.5 flex items-center justify-between text-xs font-medium text-slate-500 dark:text-white/40">
+              <span className="tabular-nums">
+                {finished} of {totalTests} tests complete
+                {rate !== null && (
+                  <span className={rate === 100 ? "text-emerald-500 dark:text-emerald-400" : ""}>
+                    {" · "}{rate}% pass rate
+                  </span>
+                )}
+              </span>
+              <span className="tabular-nums">{progressPct}%</span>
+            </div>
+            <div className="h-1.5 w-full overflow-hidden rounded-full bg-slate-200 dark:bg-white/[0.08]">
+              {/* Split bar rather than one colour: a run that is 80% done and
+                  20% failing reads very differently from one that is 80% done
+                  and green, and a single-colour bar hides the difference. */}
+              <div className="flex h-full w-full">
+                <div
+                  className="h-full bg-emerald-500 transition-all duration-500"
+                  style={{ width: `${totalTests ? (counts.passed / totalTests) * 100 : 0}%` }}
+                />
+                <div
+                  className="h-full bg-red-500 transition-all duration-500"
+                  style={{ width: `${totalTests ? (counts.failed / totalTests) * 100 : 0}%` }}
+                />
+                <div
+                  className="h-full bg-slate-400 transition-all duration-500 dark:bg-white/20"
+                  style={{ width: `${totalTests ? (counts.skipped / totalTests) * 100 : 0}%` }}
+                />
+              </div>
+            </div>
+          </div>
+        )}
 
         <div className="mb-6 grid grid-cols-2 gap-3 sm:grid-cols-4">
           {(["running", "passed", "failed", "skipped"] as const).map((key) => (
@@ -385,6 +477,44 @@ export default function LiveRunPage() {
             </Card>
           ))}
         </div>
+
+        {/* Why the run is red, without leaving the page. The reporter has
+            always sent each failure's error message and the backend has
+            always stored it, but nothing rendered it - so the dashboard
+            could tell you a run failed and then send you to the CI logs to
+            find out what actually broke. Capped per message because a
+            Playwright assertion diff can run to hundreds of lines; the full
+            text is one click away in the attachments/trace. */}
+        {failedTests.length > 0 && (
+          <Card className="mb-6 border-red-500/25 dark:border-red-500/25">
+            <h3 className="border-b border-slate-200 px-4 py-3 text-xs font-semibold uppercase tracking-widest text-red-500 dark:border-white/[0.08] dark:text-red-400">
+              {failedTests.length} {failedTests.length === 1 ? "failure" : "failures"}
+            </h3>
+            <div className="max-h-[320px] overflow-y-auto">
+              {failedTests.map((t) => (
+                <div
+                  key={t.test_id}
+                  className="border-b border-slate-100 px-4 py-3 last:border-b-0 dark:border-white/[0.04]"
+                >
+                  <div className="truncate text-sm font-semibold text-slate-800 dark:text-white/90">
+                    {t.title}
+                  </div>
+                  {t.file && (
+                    <div className="mt-0.5 truncate font-mono text-[11px] text-slate-400 dark:text-white/25">
+                      {t.file.replace(/\\/g, "/").split("/").slice(-2).join("/")}
+                    </div>
+                  )}
+                  {t.error && (
+                    <pre className="mt-2 max-h-32 overflow-auto whitespace-pre-wrap rounded-lg bg-red-500/[0.06] p-2 font-mono text-[11px] leading-relaxed text-red-600 dark:bg-red-500/[0.08] dark:text-red-300">
+                      {t.error.length > 1200 ? `${t.error.slice(0, 1200)}
+…` : t.error}
+                    </pre>
+                  )}
+                </div>
+              ))}
+            </div>
+          </Card>
+        )}
 
         {!historyMode && Object.keys(frames).length > 0 && (
           <Card className="mb-6 p-4">

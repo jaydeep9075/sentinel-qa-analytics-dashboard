@@ -78,7 +78,7 @@ Visit `http://<the-ip-from-step-2>` in your browser. Log in the same way you do 
 
 ### 5. Point your test runs at it
 
-Anywhere you'd normally run `playwright test` (locally or in CI) with the `@sentinel/playwright` reporter configured, set:
+Anywhere you'd normally run `playwright test` (locally or in CI) with the `sentinel-qa-reporter` reporter configured, set:
 ```bash
 SENTINEL_BASE_URL=http://<the-ip-from-step-2>
 SENTINEL_API_KEY=<whatever you set LIVE_INGEST_API_KEY to in your .env>

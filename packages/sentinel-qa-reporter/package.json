@@ -1,0 +1,89 @@
+{
+  "name": "sentinel-qa-reporter",
+  "version": "1.0.1",
+  "description": "Stream Playwright or Cypress runs to a Sentinel QA Analytics dashboard while they are still running.",
+  "keywords": [
+    "playwright",
+    "cypress",
+    "reporter",
+    "test-reporting",
+    "live",
+    "qa",
+    "sentinel"
+  ],
+  "license": "MIT",
+  "author": "Sentinel QA Analytics",
+  "type": "commonjs",
+  "main": "dist/core/index.js",
+  "types": "dist/core/index.d.ts",
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "exports": {
+    ".": {
+      "types": "./dist/core/index.d.ts",
+      "default": "./dist/core/index.js"
+    },
+    "./playwright": {
+      "types": "./dist/playwright/index.d.ts",
+      "default": "./dist/playwright/index.js"
+    },
+    "./playwright/config": {
+      "types": "./dist/playwright/config.d.ts",
+      "default": "./dist/playwright/config.js"
+    },
+    "./cypress": {
+      "types": "./dist/cypress/index.d.ts",
+      "default": "./dist/cypress/index.js"
+    },
+    "./cypress/support": {
+      "types": "./dist/cypress/support.d.ts",
+      "default": "./dist/cypress/support.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "prepublishOnly": "npm run build",
+    "pack:dist": "npm run build && node -e \"require('fs').mkdirSync('../dist-pack',{recursive:true})\" && npm pack --pack-destination ../dist-pack",
+    "test": "npm run build && node --test --test-force-exit test/*.test.mjs"
+  },
+  "peerDependencies": {
+    "@playwright/test": ">=1.40.0",
+    "cypress": ">=12.0.0"
+  },
+  "peerDependenciesMeta": {
+    "@playwright/test": {
+      "optional": true
+    },
+    "cypress": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.48.0",
+    "@types/node": "^20.14.0",
+    "typescript": "^5.5.4"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "typesVersions": {
+    "*": {
+      "playwright": [
+        "dist/playwright/index.d.ts"
+      ],
+      "playwright/config": [
+        "dist/playwright/config.d.ts"
+      ],
+      "cypress": [
+        "dist/cypress/index.d.ts"
+      ],
+      "cypress/support": [
+        "dist/cypress/support.d.ts"
+      ]
+    }
+  }
+}

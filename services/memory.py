@@ -411,10 +411,15 @@ def store_chart(
     user_id: Optional[str] = None,
     ingestion_id: Optional[str] = None,
     workspace_id: Optional[str] = None,
-):
+) -> Optional[str]:
+    """Persist a chart and return its new id (None if it could not be stored).
+
+    The id matters to the caller: /chart hands it to the browser so the
+    gallery can render the figure immediately and still recognise the same
+    chart when the history list catches up, instead of showing it twice."""
     if state.lance_db is None:
         logger.error("store_chart: state.lance_db is None")
-        return False
+        return None
     try:
         _ensure_chart_table()
         table = state.lance_db.open_table("chart_history")
@@ -433,10 +438,54 @@ def store_chart(
         }
         table.add([record])
         logger.info(f"✅ Stored chart for session {session_id} with ID {record['id']}")
-        return True
+        return record["id"]
     except Exception as e:
         logger.error(f"Error storing chart: {e}")
+        return None
+
+
+def delete_chart(
+    chart_id: str,
+    user_id: Optional[str] = None,
+    workspace_id: Optional[str] = None,
+    ingestion_id: Optional[str] = None,
+    allow_any_owner: bool = False,
+) -> bool:
+    """Remove one chart, scoped to its owner. True if a row was removed.
+
+    Uses LanceDB's native predicate delete rather than the old
+    read-whole-table / drop_table / create_table dance. That rewrite was
+    O(entire history) per click, and — worse — a failure between the drop
+    and the create left the build with no chart_history table at all, so
+    every previously saved chart vanished along with the one being deleted.
+    """
+    if state.lance_db is None or "chart_history" not in state.lance_db.table_names():
         return False
+
+    cid = str(chart_id or "").strip()
+    if not cid:
+        return False
+
+    _ensure_chart_table()
+    table = state.lance_db.open_table("chart_history")
+
+    clauses = [_eq_clause("id", cid)]
+    if not allow_any_owner:
+        clauses.append(_eq_clause("user_id", _norm_user(user_id)))
+        clauses.append(_eq_clause("workspace_id", _norm_workspace(workspace_id)))
+    if ingestion_id:
+        clauses.append(_eq_clause("ingestion_id", _norm_ingestion(ingestion_id)))
+    where = " AND ".join(clauses)
+
+    # Confirm a row is actually in scope first, so "not found" and "not
+    # yours" stay distinguishable to the caller instead of both looking
+    # like a no-op delete.
+    existing = table.search().where(where).limit(1).to_pandas()
+    if existing.empty:
+        return False
+
+    table.delete(where)
+    return True
 
 
 def _upsert_learning_signal(

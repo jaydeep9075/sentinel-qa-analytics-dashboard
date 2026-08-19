@@ -1,11 +1,24 @@
 """
 handlers.py — Chat and chart request handlers.
 
-KEY FIX: Chart type is now deterministic (regex in detect_chart_type),
-NOT decided by the LLM. The LLM only fills in column names for a
-pre-written Plotly template — it cannot substitute a different chart type.
+CHART PIPELINE
+    prompt -> chart_spec.parse()   (deterministic intent: type, measure,
+                                    dimension, breakdown, top-N, filters)
+           -> SQL                  (LLM writes it, spec constrains it; a
+                                    deterministic builder covers the misses)
+           -> chart_spec.reconcile (does the returned data actually support
+                                    the requested form? downgrade if not)
+           -> chart_builder        (themed figure + insight + table view)
+
+The LLM used to write the Plotly code, which was then exec()'d. It no longer
+does: the code it produced was generic (it can't know a pass-rate chart wants a
+95% target line or that 40 categories should lie down), it was the slowest and
+priciest step in the request, and it failed at runtime in ways nothing caught
+until a user saw a broken chart. `chart_builder` covers every case
+deterministically. The LLM keeps SQL, which it is genuinely good at.
 """
 
+import asyncio
 import json
 import re
 import logging
@@ -15,18 +28,19 @@ import numpy as np
 import pandas as pd
 from fastapi.concurrency import run_in_threadpool
 
-from . import config, data_loader, memory, llm_client, state, schema_context
+from . import (
+    config, data_loader, memory, llm_client, state, schema_context,
+    chart_spec as chart_spec_mod, chart_builder,
+)
 from .prompts import (
     CHAT_DECISION_PROMPT,
     CHAT_ANSWER_PROMPT,
+    CHAT_MULTI_ANSWER_PROMPT,
     CHAT_VALIDATION_PROMPT,
     CHAT_RELEASE_VERDICT,
     CHART_SQL_PROMPT,
-    CHART_CODE_PROMPT,
     FALLBACK_SQL_MAP,
     CHART_FALLBACK_SQL_MAP,
-    detect_chart_type,
-    get_chart_template,
 )
 
 def _get_test_results_table() -> str:
@@ -49,6 +63,76 @@ def _get_test_results_table() -> str:
 
 logger = logging.getLogger(__name__)
 _sql_cache: dict = {}
+
+
+# Tasks kept alive for their lifetime: asyncio only holds a weak reference to
+# a bare create_task() result, so a task nobody keeps can be garbage-collected
+# mid-flight and silently never run.
+_background_tasks: set = set()
+
+
+def _persist_in_background(fn, *args, **kwargs) -> None:
+    """Run a persistence write without making the user wait for it.
+
+    Storing the message, updating the learning signals and rebuilding the
+    knowledge graph are all LanceDB writes that the answer does not depend
+    on — but they were being awaited inline, so every chat paid for them
+    before a single word reached the browser (and, being synchronous calls
+    inside an `async def`, they blocked the event loop for every other
+    request while they ran).
+
+    create_task copies the current context, so the ingestion ContextVars set
+    for this request (see state.py) are still correct inside the task.
+    """
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        # No running loop (a direct synchronous call, e.g. from a test or a
+        # script). Deferring is a latency optimisation, never a licence to
+        # drop the write — so do it inline instead.
+        try:
+            fn(*args, **kwargs)
+        except Exception as exc:
+            logger.warning("Inline persistence failed: %s", exc)
+        return
+
+    async def _runner():
+        try:
+            await run_in_threadpool(fn, *args, **kwargs)
+        except Exception as exc:  # never let a bookkeeping write surface as a chat error
+            logger.warning(
+                "Background persistence failed (%s): %s", getattr(fn, "__name__", fn), exc
+            )
+
+    task = asyncio.create_task(_runner())
+    _background_tasks.add(task)
+    task.add_done_callback(_background_tasks.discard)
+
+
+def _feedback_hints(user_id, nid, workspace_id, target_kind, prompt):
+    """Positional-argument wrapper so this can be handed to run_in_threadpool."""
+    return memory.get_feedback_prompt_hints(
+        user_id, nid, workspace_id, target_kind=target_kind, current_prompt=prompt,
+    )
+
+
+def _record_interaction(session_id, user_message, response, user_id, nid,
+                        workspace_id, kind: str = "chat") -> None:
+    """Persist one Q&A turn plus its learning signals, off the critical path."""
+    def _write():
+        memory.store_chat_message(
+            session_id, "user", user_message,
+            user_id=user_id, ingestion_id=nid, workspace_id=workspace_id,
+        )
+        memory.store_chat_message(
+            session_id, "assistant", response,
+            user_id=user_id, ingestion_id=nid, workspace_id=workspace_id,
+        )
+        memory.learn_from_interaction(
+            user_id, nid, session_id, workspace_id, user_message, response, kind=kind
+        )
+
+    _persist_in_background(_write)
 
 
 def _enhance_response_formatting(response: str) -> str:
@@ -104,59 +188,8 @@ def _improve_numeric_formatting(response: str, df: pd.DataFrame) -> str:
 
 
 # ---------------------------------------------------------------------------
-# Layout
-# ---------------------------------------------------------------------------
-
-def _apply_chart_layout(fig):
-    PALETTE = ["#6C8BFF", "#22C55E", "#F59E0B", "#EF4444", "#A855F7", "#06B6D4", "#EC4899"]
-    try:
-        fig.update_xaxes(automargin=True, tickfont=dict(size=12, color="#CBD5E1"))
-        fig.update_yaxes(automargin=True, tickfont=dict(size=12, color="#CBD5E1"))
-        fig.update_traces(
-            marker=dict(line=dict(width=1, color="rgba(15,23,42,0.4)")),
-            selector=dict(type="bar"),
-        )
-    except Exception:
-        pass
-    fig.update_layout(
-        template="plotly",
-        autosize=True,
-        paper_bgcolor="rgba(15,23,42,0)",
-        plot_bgcolor="rgba(15,23,42,0)",
-        font=dict(family="Inter, Segoe UI, Roboto, sans-serif", color="#E2E8F0", size=12),
-        title=dict(font=dict(size=17, color="#F8FAFC"), x=0.5, xanchor="center", y=0.97),
-        margin=dict(l=72, r=38, t=84, b=88),
-        legend=dict(
-            orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1,
-            bgcolor="rgba(15,23,42,0.4)", bordercolor="rgba(148,163,184,0.3)",
-            borderwidth=1, font=dict(color="#CBD5E1", size=11),
-        ),
-        xaxis=dict(
-            showgrid=True, zeroline=False,
-            gridcolor="rgba(148,163,184,0.15)", linecolor="rgba(148,163,184,0.3)",
-            tickfont=dict(color="#CBD5E1", size=12), title_font=dict(color="#E2E8F0", size=13),
-        ),
-        yaxis=dict(
-            showgrid=True, zeroline=False,
-            gridcolor="rgba(148,163,184,0.15)", linecolor="rgba(148,163,184,0.3)",
-            tickfont=dict(color="#CBD5E1", size=12), title_font=dict(color="#E2E8F0", size=13),
-        ),
-        hoverlabel=dict(bgcolor="rgba(15,23,42,0.95)", bordercolor="rgba(148,163,184,0.5)",
-                        font=dict(size=12, color="#F8FAFC")),
-        colorway=PALETTE,
-    )
-    return fig
-
-
-# ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
-
-def _convert_timestamp(obj):
-    if isinstance(obj, dict):  return {k: _convert_timestamp(v) for k, v in obj.items()}
-    if isinstance(obj, list):  return [_convert_timestamp(i) for i in obj]
-    if isinstance(obj, (pd.Timestamp, datetime)): return obj.isoformat()
-    return obj
 
 
 def _sanitize_sql(sql: str) -> str:
@@ -168,6 +201,49 @@ def _sanitize_sql(sql: str) -> str:
 
 def _is_df_usable(df: pd.DataFrame) -> bool:
     return df is not None and not df.empty and not df.dropna(how="all").empty
+
+
+def _extract_json_object(text: str):
+    """Pull the first complete JSON object out of an LLM response.
+
+    The old version used `\\{[^{}]+\\}`, which by construction cannot match any
+    object containing a nested object or array-of-objects — so the moment the
+    model returned a multi-query decision or embedded metadata, parsing fell
+    through to the "does the string contain SELECT?" heuristic and threw the
+    structure away. This scans for balanced braces instead, skipping over
+    braces that appear inside string literals."""
+    if not text:
+        return None
+    cleaned = re.sub(r"```(?:json)?\s*|```", "", text, flags=re.IGNORECASE).strip()
+
+    start = cleaned.find("{")
+    while start != -1:
+        depth = 0
+        in_string = False
+        escaped = False
+        for i in range(start, len(cleaned)):
+            ch = cleaned[i]
+            if in_string:
+                if escaped:
+                    escaped = False
+                elif ch == "\\":
+                    escaped = True
+                elif ch == '"':
+                    in_string = False
+                continue
+            if ch == '"':
+                in_string = True
+            elif ch == "{":
+                depth += 1
+            elif ch == "}":
+                depth -= 1
+                if depth == 0:
+                    try:
+                        return json.loads(cleaned[start:i + 1])
+                    except Exception:
+                        break
+        start = cleaned.find("{", start + 1)
+    return None
 
 
 def _fallback_sql(prompt: str, sql_map: dict) -> str:
@@ -371,6 +447,105 @@ def _prepare_df_for_prompt(df: pd.DataFrame) -> pd.DataFrame:
     return df_safe.where(pd.notna(df_safe), other="")
 
 
+_ANSWER_ROW_CAP = 50
+
+
+def _dataset_facts(df: pd.DataFrame, cap: int = _ANSWER_ROW_CAP) -> str:
+    """Whole-result statistics for the answer prompt.
+
+    Only the first `cap` rows of a result are sent to the LLM, but questions
+    like "how many failures overall?" or "which module is worst?" are about the
+    WHOLE result. Given 400 rows and the first 50, the model either answers
+    from the visible slice (wrong) or hedges (useless). These facts are
+    computed in pandas over every row, so the totals and extremes it quotes are
+    the real ones regardless of how much of the table it can see."""
+    if df is None or df.empty:
+        return ""
+
+    lines: list[str] = [f"Total rows in the full result: {len(df)}"]
+    if len(df) > cap:
+        lines.append(
+            f"IMPORTANT: only the first {cap} rows are shown below. Use the "
+            f"aggregates in this section for any statement about the whole "
+            f"result — never extrapolate from the visible rows."
+        )
+
+    numeric = df.select_dtypes(include=[np.number])
+    for col in list(numeric.columns)[:8]:
+        series = numeric[col].dropna()
+        if series.empty:
+            continue
+        stat = (f"{col}: sum={series.sum():,.2f} avg={series.mean():,.2f} "
+                f"min={series.min():,.2f} max={series.max():,.2f}")
+        # Name the row holding the extreme, which is usually the actual answer
+        # to "which X is worst/best".
+        label_cols = [c for c in ("test_name", "module_name", "project_name",
+                                  "platform_type", "status", "browser", "build_id")
+                      if c in df.columns]
+        if label_cols:
+            try:
+                hi = df.loc[series.idxmax()]
+                lo = df.loc[series.idxmin()]
+                hi_label = " / ".join(str(hi[c]) for c in label_cols[:2])
+                lo_label = " / ".join(str(lo[c]) for c in label_cols[:2])
+                stat += f" | highest: {hi_label} | lowest: {lo_label}"
+            except Exception:
+                pass
+        lines.append(f"- {stat}")
+
+    for col in [c for c in df.columns if c not in numeric.columns][:6]:
+        try:
+            all_counts = df[col].value_counts()
+            # A column where (nearly) every value is distinct — test_name,
+            # error text — has no distribution worth reporting; listing its
+            # first five values at one occurrence each is pure token noise.
+            if all_counts.empty or len(all_counts) > max(1, len(df) * 0.5):
+                continue
+            top = ", ".join(f"{k} ({v})" for k, v in all_counts.head(5).items())
+            suffix = f", …+{len(all_counts) - 5} more" if len(all_counts) > 5 else ""
+            lines.append(f"- {col} distribution: {top}{suffix}")
+        except Exception:
+            continue
+
+    return "\n".join(lines)
+
+
+async def _run_sql_with_repair(llm, sql: str, user_message: str, user_id: str,
+                               workspace_id: str, attempts: int = 2):
+    """Execute SQL, and if DuckDB rejects it, hand the error back to the model
+    to fix. A complex question ("tests failing on mobile but passing on desktop
+    in the checkout module, ranked by duration") is exactly where the first
+    query is most likely to have a small syntax or column error — and where
+    silently falling back to a generic keyword-matched query produces a
+    confident answer to a much simpler question. One repair round-trip is far
+    cheaper than a wrong answer. Returns (df, err, sql)."""
+    df, err = await run_in_threadpool(data_loader.execute_sql, sql)
+    if not err and _is_df_usable(df):
+        return df, None, sql
+
+    for _ in range(attempts):
+        if not err:
+            break  # ran fine but returned nothing — repairing syntax won't help
+        fixed = await llm.agenerate(
+            "The following DuckDB query failed. Return ONLY the corrected SQL "
+            "(no markdown, no explanation), preserving the original intent and "
+            "every filter it applied.\n\n"
+            f"Question: {user_message}\nSQL: {sql}\nError: {err}",
+            temperature=0.0, user_id=user_id, workspace_id=workspace_id,
+        )
+        if not fixed:
+            break
+        candidate = _sanitize_sql(fixed)
+        if not candidate or candidate == sql:
+            break
+        sql = candidate
+        df, err = await run_in_threadpool(data_loader.execute_sql, sql)
+        if not err and _is_df_usable(df):
+            return df, None, sql
+
+    return df, err, sql
+
+
 def _fallback_tabular_response(df: pd.DataFrame) -> str:
     if len(df) == 1 and len(df.columns) == 1:
         return f"📊 **Result:** {df.iloc[0, 0]}"
@@ -381,6 +556,107 @@ def _fallback_tabular_response(df: pd.DataFrame) -> str:
         )
         return f"**Results ({len(df)} rows):**\n{rows_fmt}"
     return f"Found **{len(df)} rows**. Use the chart feature to visualize."
+
+
+_SUPERLATIVE_RE = re.compile(
+    r"\b(highest|lowest|most|least|worst|best|slowest|fastest|top|bottom|"
+    r"leads?|trails?|majority|more than|fewer than|all of|none of|every)\b",
+    re.IGNORECASE,
+)
+
+# Figures the model is entitled to write without them appearing in the data:
+# ordinals and small list positions ("1.", "top 3"), and the percentage-point
+# vocabulary the answer prompt asks for.
+_NUMBER_RE = re.compile(r"\d[\d,]*(?:\.\d+)?")
+
+
+def _numeric_tokens(text: str) -> set:
+    out = set()
+    for raw in _NUMBER_RE.findall(text or ""):
+        try:
+            out.add(round(float(raw.replace(",", "")), 2))
+        except ValueError:
+            continue
+    return out
+
+
+def _grounded_numbers(df: pd.DataFrame, facts: str) -> set:
+    """Every figure a correct answer could legitimately quote.
+
+    Cell values, plus the aggregates already computed over the whole result
+    (`_dataset_facts`), plus the row count and simple derivations of a value
+    the answer is expected to make (a rounded percentage, a difference between
+    two of them)."""
+    grounded = _numeric_tokens(facts)
+    grounded.add(round(float(len(df)), 2))
+
+    numeric = df.select_dtypes(include=[np.number])
+    for col in numeric.columns:
+        for value in numeric[col].dropna().tolist():
+            try:
+                v = float(value)
+            except (TypeError, ValueError):
+                continue
+            grounded.add(round(v, 2))
+            grounded.add(round(v, 1))
+            grounded.add(round(v, 0))
+
+    # String columns can carry numbers too ("2.3s", "build 41").
+    for col in df.columns:
+        if col in numeric.columns:
+            continue
+        try:
+            for value in df[col].dropna().astype(str).head(_ANSWER_ROW_CAP).tolist():
+                grounded |= _numeric_tokens(value)
+        except Exception:
+            continue
+
+    # Differences between any two grounded figures — "mobile trails desktop by
+    # 15.2 points" is arithmetic on data the model was given, not a new claim.
+    base = sorted(grounded)[:120]
+    for i, a in enumerate(base):
+        for b in base[i + 1:]:
+            grounded.add(round(abs(a - b), 2))
+            grounded.add(round(abs(a - b), 1))
+    return grounded
+
+
+def _needs_llm_validation(draft: str, df: pd.DataFrame, facts: str) -> bool:
+    """Decide whether the validation round-trip can be skipped.
+
+    The validation pass is a second full LLM call re-sending the same data,
+    and it was running on every single answer — roughly a third of the wait,
+    spent overwhelmingly on answers that turn out to be fine. This gate keeps
+    the check where it earns its cost and drops it where it cannot help:
+
+    - Any superlative or ordering claim ("worst module", "leads by") goes to
+      the validator. Per CHAT_VALIDATION_PROMPT's own checklist that is the
+      most common error class, and it is not checkable from the numbers alone.
+    - Any figure in the draft that is not present in, or derivable from, the
+      data goes to the validator — that is exactly the hallucinated-number
+      case it exists to catch.
+    - Everything else — an answer whose every figure reconciles against the
+      result and which makes no ranking claim — is returned as written.
+    """
+    text = str(draft or "")
+    if not text.strip():
+        return False
+    if df is None or df.empty:
+        return True
+    if _SUPERLATIVE_RE.search(text):
+        return True
+
+    grounded = _grounded_numbers(df, facts)
+    for value in _numeric_tokens(text):
+        # Small integers are list markers, years, "top 5" — not data claims.
+        if value <= 12 and float(value).is_integer():
+            continue
+        if value in grounded:
+            continue
+        if any(abs(value - g) <= 0.05 for g in grounded):
+            continue
+        return True
+    return False
 
 
 async def _validate_grounded_response(
@@ -617,21 +893,6 @@ def _build_history(session_id: str, user_id: str, ingestion_id: str, limit: int 
     return "\n".join(lines[-20:])
 
 
-def _sanitize_code(code: str) -> str:
-    s = re.sub(r"```python\s*|```", "", code or "", flags=re.IGNORECASE).strip()
-    for bad in ("'Blues_d'", '"Blues_d"', "'Blues_r'", '"Blues_r"'):
-        s = s.replace(bad, "'Blues'")
-    for kw in ("piecolorway", "hovertemplate", "customdata"):
-        s = re.sub(rf",?\s*{kw}\s*=\s*[^,)\n]+", "", s)
-    s = re.sub(r",?\s*width\s*=\s*\d+\s*,?", "", s)
-    s = re.sub(r",?\s*height\s*=\s*\d+\s*,?", "", s)
-    s = re.sub(r",?\s*template\s*=\s*['\"][^'\"]+['\"]\s*,?", "", s)
-    return s
-
-
-def _make_title(prompt: str) -> str:
-    t = prompt.strip().rstrip("?").strip()
-    return (t[:52] + "…") if len(t) > 55 else t
 
 
 def _build_schema_context(schema_summary: dict, max_tables: int = 8, max_columns: int = 25) -> str:
@@ -657,22 +918,6 @@ def _build_schema_context(schema_summary: dict, max_tables: int = 8, max_columns
     return "\n".join(lines)
 
 
-def _is_chart_df_valid_for_type(df: pd.DataFrame, chart_type: str) -> bool:
-    if not _is_df_usable(df):
-        return False
-    num_cols = df.select_dtypes(include="number").columns.tolist()
-    cat_cols = df.select_dtypes(include=["object", "category", "string"]).columns.tolist()
-
-    if chart_type in ("pie", "donut"):
-        return len(num_cols) >= 1 and len(cat_cols) >= 1
-    if chart_type in ("bar", "horizontal_bar", "line", "scatter"):
-        return len(num_cols) >= 1
-    if chart_type == "heatmap":
-        return len(num_cols) >= 1 and len(cat_cols) >= 2
-    if chart_type == "platform_comparison":
-        return "platform_type" in df.columns and len(num_cols) >= 1
-    return len(num_cols) >= 1
-
 
 def _filter_relevant_vector_docs(
     docs: list, relative_margin: float = 1.6, absolute_slack: float = 0.05
@@ -695,6 +940,61 @@ def _filter_relevant_vector_docs(
     ]
 
 
+async def _answer_from_multiple_queries(llm, sql_steps: list, user_message: str,
+                                        augmented_message: str, feedback_hints: str,
+                                        user_id: str, workspace_id: str):
+    """Run each step of a decomposed question and answer from all of them at
+    once. Returns (response, primary_df).
+
+    Every step is labelled so the answering model knows which numbers belong to
+    which sub-question — without labels, several result sets concatenated into
+    one blob is how "mobile pass rate" and "desktop pass rate" get swapped."""
+    blocks: list[str] = []
+    frames: list[pd.DataFrame] = []
+    failures: list[str] = []
+
+    for step in sql_steps[:4]:   # a question needing >4 queries is a report, not a chat turn
+        sql = _sanitize_sql(step["sql"])
+        if not sql:
+            continue
+        df, err, sql = await _run_sql_with_repair(
+            llm, sql, user_message, user_id, workspace_id)
+        if err or not _is_df_usable(df):
+            failures.append(f"{step['label']}: {err or 'no matching rows'}")
+            continue
+        frames.append(df)
+        df_safe = _prepare_df_for_prompt(df)
+        blocks.append(
+            f"--- {step['label']} ({len(df)} rows) ---\n"
+            f"{_dataset_facts(df)}\n"
+            f"Rows:\n{df_safe.head(_ANSWER_ROW_CAP).to_json(orient='records', force_ascii=False)}"
+        )
+
+    if not blocks:
+        detail = "; ".join(failures) if failures else "no data"
+        return (f"📭 I couldn't retrieve data for that question ({detail}). "
+                "Try rephrasing or narrowing it."), pd.DataFrame()
+
+    note = ""
+    if failures:
+        # Say what's missing rather than answering the answerable part as if it
+        # were the whole question.
+        note = ("\n\n[NOTE] These sub-queries returned nothing and must be reported "
+                "as unavailable rather than guessed at: " + "; ".join(failures))
+
+    answer = await llm.agenerate(
+        CHAT_MULTI_ANSWER_PROMPT.format(
+            user_message=augmented_message + note,
+            feedback_hints=feedback_hints or "None",
+            result_blocks="\n\n".join(blocks),
+        ),
+        temperature=0.15, user_id=user_id, workspace_id=workspace_id,
+    )
+    if not answer:
+        return _fallback_tabular_response(frames[0]), frames[0]
+    return answer, frames[0]
+
+
 # ---------------------------------------------------------------------------
 # Chat handler
 # ---------------------------------------------------------------------------
@@ -713,20 +1013,11 @@ async def handle_chat(user_message: str, session_id: str, ingestion_id: str,
     structured_intent = _detect_structured_intent(user_message)
     if structured_intent:
         sql = _build_structured_sql(structured_intent)
-        df, err = data_loader.execute_sql(sql)
+        df, err = await run_in_threadpool(data_loader.execute_sql, sql)
         if not err and _is_df_usable(df):
             response = _format_structured_response(structured_intent, df)
-            memory.store_chat_message(
-                session_id, "user", user_message,
-                user_id=user_id, ingestion_id=nid, workspace_id=workspace_id,
-            )
-            memory.store_chat_message(
-                session_id, "assistant", response,
-                user_id=user_id, ingestion_id=nid, workspace_id=workspace_id,
-            )
-            memory.learn_from_interaction(
-                user_id, nid, session_id, workspace_id, user_message, response, kind="chat"
-            )
+            _record_interaction(session_id, user_message, response,
+                                user_id, nid, workspace_id)
             return response
 
     # Layer 1b: "how are we trending" / "vs the previous build" - answered
@@ -741,31 +1032,35 @@ async def handle_chat(user_message: str, session_id: str, ingestion_id: str,
         else:
             trend_response = _build_history_trend_answer(nid)
             if trend_response:
-                memory.store_chat_message(
-                    session_id, "user", user_message,
-                    user_id=user_id, ingestion_id=nid, workspace_id=workspace_id,
-                )
-                memory.store_chat_message(
-                    session_id, "assistant", trend_response,
-                    user_id=user_id, ingestion_id=nid, workspace_id=workspace_id,
-                )
-                memory.learn_from_interaction(
-                    user_id, nid, session_id, workspace_id, user_message, trend_response, kind="chat"
-                )
+                _record_interaction(session_id, user_message, trend_response,
+                                    user_id, nid, workspace_id)
                 return trend_response
             # Fewer than 2 builds exist yet - nothing to compare, fall
             # through to the normal single-build flow below.
 
     llm = llm_client.LLMClient()
 
-    learning_context = memory.get_learning_context(user_id, nid, workspace_id, user_message, limit=6)
-    related_concepts = memory.get_related_concepts(user_id, nid, workspace_id, user_message, limit=8)
-    feedback_hints = memory.get_feedback_prompt_hints(
-        user_id,
-        nid,
-        workspace_id,
-        target_kind="chat",
-        current_prompt=user_message,
+    # Four independent lookups, none of which needs any of the others: three
+    # LanceDB scans plus the schema summary. Run sequentially on the event
+    # loop they added their full combined latency to every chat AND blocked
+    # every other request for the duration. Gathered in the threadpool they
+    # cost the slowest one and leave the loop free.
+    (
+        learning_context,
+        related_concepts,
+        feedback_hints,
+        schema_summary,
+    ) = await asyncio.gather(
+        run_in_threadpool(
+            memory.get_learning_context, user_id, nid, workspace_id, user_message, 6
+        ),
+        run_in_threadpool(
+            memory.get_related_concepts, user_id, nid, workspace_id, user_message, 8
+        ),
+        run_in_threadpool(
+            _feedback_hints, user_id, nid, workspace_id, "chat", user_message
+        ),
+        run_in_threadpool(schema_context.build_schema_summary),
     )
 
     augmented_message = user_message
@@ -781,7 +1076,6 @@ async def handle_chat(user_message: str, session_id: str, ingestion_id: str,
         augmented_message += f"\n\n[RELATED CONCEPTS]\n{concepts}"
     if feedback_hints:
         augmented_message += f"\n\n[USER FEEDBACK PREFERENCES]\n{feedback_hints}"
-    schema_summary = schema_context.build_schema_summary()
     schema_context_block = _build_schema_context(schema_summary)
     if schema_context_block:
         augmented_message += f"\n\n{schema_context_block}"
@@ -806,11 +1100,8 @@ async def handle_chat(user_message: str, session_id: str, ingestion_id: str,
     if not raw:
         return "⚠️ AI service unavailable. Please try again."
 
-    cleaned = re.sub(r"```json\s*|```", "", raw, flags=re.IGNORECASE).strip()
-    m = re.search(r'\{[^{}]+\}', cleaned, re.DOTALL)
-    try:
-        decision = json.loads(m.group() if m else cleaned)
-    except Exception:
+    decision = _extract_json_object(raw)
+    if decision is None:
         if "SELECT" in raw.upper():
             sm = re.search(r'SELECT.+', raw, re.IGNORECASE | re.DOTALL)
             decision = {"action": "sql", "data": sm.group() if sm else ""}
@@ -819,7 +1110,26 @@ async def handle_chat(user_message: str, session_id: str, ingestion_id: str,
 
     action = decision.get("action", "answer")
     data   = decision.get("data", "")
-    if isinstance(data, str) and "SELECT" in data.upper():
+
+    # A comparative question ("how does mobile compare to desktop, and which
+    # modules regressed?") is genuinely two or three queries. Forcing it into
+    # one means either a contorted CTE the model gets wrong, or an answer that
+    # silently drops half the question. The decision prompt may return a list.
+    sql_steps: list[dict] = []
+    if action == "sql_multi" or isinstance(data, list):
+        action = "sql_multi"
+        for step in (data if isinstance(data, list) else []):
+            if isinstance(step, dict) and step.get("sql"):
+                sql_steps.append({"label": str(step.get("label") or "Result"),
+                                  "sql": str(step["sql"])})
+            elif isinstance(step, str) and step.strip():
+                sql_steps.append({"label": f"Result {len(sql_steps) + 1}", "sql": step})
+        if not sql_steps:
+            action, data = "answer", ""
+
+    if action == "sql_multi":
+        pass
+    elif isinstance(data, str) and "SELECT" in data.upper():
         action = "sql"
     elif action == "answer" and _looks_like_data_question(user_message):
         # Only escalate when the model landed on "answer" without
@@ -829,7 +1139,13 @@ async def handle_chat(user_message: str, session_id: str, ingestion_id: str,
         action = "sql"
         data = _fallback_sql(user_message, FALLBACK_SQL_MAP)
 
-    if action == "sql":
+    if action == "sql_multi":
+        response, response_df = await _answer_from_multiple_queries(
+            llm, sql_steps, user_message, augmented_message, feedback_hints,
+            user_id, workspace_id,
+        )
+
+    elif action == "sql":
         sql = _sanitize_sql(data) if data else ""
         # schema_summary already computed above, reused here (cached per ingestion_id).
 
@@ -847,7 +1163,11 @@ async def handle_chat(user_message: str, session_id: str, ingestion_id: str,
                 recent_build_ids = [b["build_id"] for b in data_loader.list_builds(limit=config.MAX_CROSS_BUILD_QUERY_BUILDS)]
                 df, err = await run_in_threadpool(data_loader.execute_sql_across_builds, sql, recent_build_ids)
             else:
-                df, err = data_loader.execute_sql(sql)
+                # Repair before falling back: a keyword-matched fallback query
+                # answers a *simpler* question than the one asked, so it should
+                # be the last resort, not the first response to a syntax slip.
+                df, err, sql = await _run_sql_with_repair(
+                    llm, sql, user_message, user_id, workspace_id)
             unknown_ref = _find_unknown_entity_reference(user_message, schema_summary)
 
             if (err or not _is_df_usable(df)) and unknown_ref:
@@ -862,7 +1182,7 @@ async def handle_chat(user_message: str, session_id: str, ingestion_id: str,
                     mentions = schema_context.find_entity_mentions(user_message, schema_summary)
                     fb = _fallback_sql(user_message, FALLBACK_SQL_MAP)
                     if fb and fb != sql and not _fallback_would_drop_entity(sql, fb, mentions):
-                        df, err = data_loader.execute_sql(fb)
+                        df, err = await run_in_threadpool(data_loader.execute_sql, fb)
                         sql = fb
 
                 if err:
@@ -892,7 +1212,7 @@ async def handle_chat(user_message: str, session_id: str, ingestion_id: str,
                                 " SUM(CASE WHEN status='failed' THEN 1 ELSE 0 END) AS failed_count"
                                 f" FROM flattened_tests WHERE status IN ('passed','failed') AND {col} = '{escaped_value}'"
                             )
-                            scoped_df, scoped_err = data_loader.execute_sql(scoped_sql)
+                            scoped_df, scoped_err = await run_in_threadpool(data_loader.execute_sql, scoped_sql)
                             if not scoped_err and _is_df_usable(scoped_df):
                                 df = scoped_df
                                 scope_note = f"\n\n*(Scoped to {col} = '{value}', not the global figure across all projects.)*"
@@ -924,11 +1244,14 @@ async def handle_chat(user_message: str, session_id: str, ingestion_id: str,
                                 "Explicitly say which build(s) each fact applies to (e.g. call out "
                                 "tests that recur across every build vs ones unique to one build)."
                             )
+                        dataset_facts = _dataset_facts(df)
                         answer_prompt = CHAT_ANSWER_PROMPT.format(
                             user_message=answer_message,
                             feedback_hints=feedback_hints or "None",
                             row_count=len(df),
-                            data_json=df_safe.head(50).to_json(orient="records", force_ascii=False),
+                            dataset_facts=dataset_facts or "(none)",
+                            data_json=df_safe.head(_ANSWER_ROW_CAP).to_json(
+                                orient="records", force_ascii=False),
                         )
                         llm_response = await llm.agenerate(
                             answer_prompt, temperature=0.15, user_id=user_id, workspace_id=workspace_id
@@ -940,14 +1263,25 @@ async def handle_chat(user_message: str, session_id: str, ingestion_id: str,
                             # fallback below is a mechanical table dump of
                             # the exact query result - nothing to validate,
                             # so skip the extra round-trip entirely.
-                            response = await _validate_grounded_response(
-                                llm,
-                                user_message,
-                                llm_response,
-                                df_safe,
-                                user_id=user_id,
-                                workspace_id=workspace_id,
-                            )
+                            #
+                            # Even for prose, it is only worth it when there
+                            # is something a validator could actually catch:
+                            # _needs_llm_validation re-derives every figure in
+                            # the draft against the result first, and only
+                            # pays for the round-trip when a number does not
+                            # reconcile or a ranking claim is made.
+                            if _needs_llm_validation(llm_response, df, dataset_facts):
+                                response = await _validate_grounded_response(
+                                    llm,
+                                    user_message,
+                                    llm_response,
+                                    df_safe,
+                                    user_id=user_id,
+                                    workspace_id=workspace_id,
+                                )
+                            else:
+                                logger.debug("Skipped validation pass: draft is fully grounded")
+                                response = llm_response
                         else:
                             response = _fallback_tabular_response(df)
 
@@ -992,17 +1326,8 @@ async def handle_chat(user_message: str, session_id: str, ingestion_id: str,
     if not response_df.empty:
         response = _improve_numeric_formatting(response, response_df)
 
-    memory.store_chat_message(
-        session_id, "user", user_message,
-        user_id=user_id, ingestion_id=nid, workspace_id=workspace_id,
-    )
-    memory.store_chat_message(
-        session_id, "assistant", response,
-        user_id=user_id, ingestion_id=nid, workspace_id=workspace_id,
-    )
-    memory.learn_from_interaction(
-        user_id, nid, session_id, workspace_id, user_message, response, kind="chat"
-    )
+    _record_interaction(session_id, user_message, response,
+                        user_id, nid, workspace_id)
     return response
 
 
@@ -1010,128 +1335,144 @@ async def handle_chat(user_message: str, session_id: str, ingestion_id: str,
 # Chart handler
 # ---------------------------------------------------------------------------
 
+def _spec_sql_directives(spec) -> str:
+    """Turn the parsed intent into explicit instructions for the SQL writer.
+
+    Without this the LLM sees only the raw prompt and routinely returns SQL
+    that is *valid* but answers a slightly different question — no LIMIT for a
+    "top 5", the wrong measure column, an unrequested platform filter. Stating
+    the parse makes the SQL and the rendered chart agree by construction."""
+    lines = [f"- Chart form: {spec.chart_type}"]
+    if spec.measure:
+        cols = ", ".join(spec.measure_columns())
+        lines.append(f"- Primary measure: {spec.measure_label} (prefer columns: {cols})")
+    if spec.measure2:
+        lines.append(f"- Second measure (y axis): {spec.measure2_label()}")
+    if spec.dimension:
+        cols = ", ".join(spec.dimension_columns())
+        lines.append(f"- Group by: {spec.dimension} (prefer columns: {cols})")
+    if spec.breakdown:
+        lines.append(f"- Also split by: {spec.breakdown} (include that column)")
+    if spec.direction != "none":
+        order = "DESC" if spec.direction == "highest" else "ASC"
+        lines.append(f"- MUST end with ORDER BY <measure> {order} LIMIT {spec.limit}")
+    else:
+        lines.append(f"- Return at most {spec.limit} rows")
+    for col, value in (spec.filters or {}).items():
+        lines.append(f"- MUST filter: WHERE {col} = '{value}'")
+    if spec.chart_type in ("scatter", "bubble"):
+        lines.append("- Return at least TWO numeric columns (one per axis)")
+    if spec.chart_type == "heatmap":
+        lines.append("- Return exactly TWO categorical columns plus one numeric column")
+    if spec.chart_type in ("pie", "donut", "funnel", "treemap"):
+        lines.append("- Return ONE categorical column plus ONE numeric column")
+    return "\n".join(lines)
+
+
+async def _chart_sql(llm, spec, user_prompt, prompt_for_llm, schema_summary,
+                     user_id, workspace_id):
+    """Produce SQL for a chart request, in order of decreasing confidence:
+    a deterministic structured query, then the LLM, then the fallback map."""
+    structured_intent = _detect_structured_intent(user_prompt)
+    if structured_intent:
+        return _build_structured_sql(structured_intent), "structured"
+
+    raw_sql = await llm.agenerate(
+        CHART_SQL_PROMPT.format(
+            user_prompt=prompt_for_llm,
+            chart_type=spec.chart_type,
+            spec_directives=_spec_sql_directives(spec),
+            schema_examples=schema_context.render_prompt_examples(schema_summary),
+        ),
+        temperature=0.05,
+        user_id=user_id,
+        workspace_id=workspace_id,
+    )
+    sql = _sanitize_sql(raw_sql or "")
+    if sql and sql.upper() != "N/A":
+        return sql, "llm"
+    return _fallback_sql(user_prompt, CHART_FALLBACK_SQL_MAP), "fallback"
+
+
 async def handle_chart(user_prompt: str, session_id: str, ingestion_id: str,
                        role: str = None, project_id: str = None,
                        user_id: str = "anonymous", workspace_id: str = "default"):
     nid = str(ingestion_id or "").strip()
     _entry = await run_in_threadpool(data_loader.get_or_load_ingestion, nid)
     if _entry is None:
-        return None, f"❌ Ingestion '{ingestion_id}' not found."
+        return None, f"❌ Ingestion '{ingestion_id}' not found.", None
     state.set_active_ingestion(nid, _entry["duck_conn"], _entry["lance_db"], _entry["embedder"])
 
     llm = llm_client.LLMClient()
-    feedback_hints = memory.get_feedback_prompt_hints(
-        user_id,
-        nid,
-        workspace_id,
-        target_kind="chart",
-        current_prompt=user_prompt,
+    # Independent of each other, and both are blocking reads — see the same
+    # treatment in handle_chat.
+    feedback_hints, chart_schema_summary = await asyncio.gather(
+        run_in_threadpool(
+            _feedback_hints, user_id, nid, workspace_id, "chart", user_prompt
+        ),
+        run_in_threadpool(schema_context.build_schema_summary),
     )
     prompt_for_llm = user_prompt
     if feedback_hints:
         prompt_for_llm += f"\n\n[USER FEEDBACK PREFERENCES]\n{feedback_hints}"
-    chart_schema_summary = schema_context.build_schema_summary()
     schema_context_block = _build_schema_context(chart_schema_summary)
     if schema_context_block:
         prompt_for_llm += f"\n\n{schema_context_block}"
 
-    # STEP 1: Deterministic chart type (no LLM involved)
-    chart_type = detect_chart_type(user_prompt)
-    logger.info(f"Chart type='{chart_type}' for: '{user_prompt[:60]}'")
+    # STEP 1 — parse intent once, deterministically. Everything downstream
+    # (SQL shaping, rendering, titling) reads from this single parse, so the
+    # query and the picture can't end up answering different questions.
+    spec = chart_spec_mod.parse(user_prompt)
+    logger.info("Chart spec: %s | prompt=%r", spec.describe(), user_prompt[:80])
 
-    wants_cross_build_rows = _detect_historical_intent(user_prompt) and _needs_row_level_history(user_prompt)
+    wants_cross_build_rows = _detect_historical_intent(user_prompt) and \
+        _needs_row_level_history(user_prompt)
 
-    # A genuine "pass rate over builds" trend chart has real cross-build
-    # data available for free (list_builds()'s cached summaries) - use it
-    # directly instead of asking the LLM to write SQL against a single
-    # build's schema and calling that a "trend" (the old fallback used
-    # module-name alphabetical order as a fake time axis).
-    if (
-        chart_type == "line"
-        and _detect_historical_intent(user_prompt)
-        and not wants_cross_build_rows
-    ):
+    # A real "pass rate over builds" trend has genuine cross-build data
+    # available for free from each build's cached summary.json. Use it rather
+    # than asking for SQL against a single build and calling the result a trend.
+    if spec.is_cross_build and spec.chart_type in ("line", "area") and not wants_cross_build_rows:
         trend_df = _build_trend_dataframe()
         if not trend_df.empty:
-            return await _generate_chart(
-                trend_df, user_prompt, prompt_for_llm, feedback_hints, session_id,
+            return await run_in_threadpool(
+                _render_and_store,
+                trend_df, spec, user_prompt, session_id,
                 "-- cross-build trend from each build's summary.json, not a live query --",
-                chart_type, llm, user_id, nid, workspace_id,
+                user_id, nid, workspace_id,
             )
-        # Fewer than 2 builds exist yet - fall through to the normal
-        # single-build chart flow below.
+        # Fewer than 2 builds exist yet — fall through to the single-build flow.
 
-    # STEP 2: SQL
-    structured_intent = _detect_structured_intent(user_prompt)
-    # chart_schema_summary already computed above, reused here (cached per ingestion_id).
+    # STEP 2 — SQL. Cache only prompts that resolved to something concrete; an
+    # ambiguous "compare them" has no anchor, so caching it would replay a
+    # stale, wrong-context query across unrelated sessions and datasets.
     chart_entity_mentions = schema_context.find_entity_mentions(user_prompt, chart_schema_summary)
-    # Only cache prompts that resolved to something concrete (a structured
-    # intent or a known entity mention). Ambiguous prompts like "compare
-    # them" have no concrete anchor, so caching them risks replaying a
-    # stale, wrong-context result across unrelated sessions/datasets.
-    is_cacheable_prompt = bool(structured_intent) or bool(chart_entity_mentions)
+    is_cacheable_prompt = bool(_detect_structured_intent(user_prompt)) or bool(chart_entity_mentions)
     cache_key = f"{nid}:{session_id or 'global'}:{user_prompt.lower().strip()}"
     sql = _sql_cache.get(cache_key) if is_cacheable_prompt else None
-    if structured_intent:
-        sql = _build_structured_sql(structured_intent)
     if not sql:
-        raw_sql = await llm.agenerate(
-            CHART_SQL_PROMPT.format(
-                user_prompt=prompt_for_llm,
-                chart_type=chart_type,
-                schema_examples=schema_context.render_prompt_examples(chart_schema_summary),
-            ),
-            temperature=0.05,
-            user_id=user_id,
-            workspace_id=workspace_id,
+        sql, _source = await _chart_sql(
+            llm, spec, user_prompt, prompt_for_llm, chart_schema_summary, user_id, workspace_id,
         )
-        sql = _sanitize_sql(raw_sql or "")
+    if not sql:
+        return None, "Could not determine what data to chart.", None
 
-    if not sql or sql.upper() == "N/A":
-        sql = _fallback_sql(user_prompt, CHART_FALLBACK_SQL_MAP)
-        if not sql:
-            return None, "Could not determine what data to chart."
-
-    # STEP 3: Execute with retries
+    # STEP 3 — execute, with a bounded repair loop.
     if wants_cross_build_rows:
-        recent_build_ids = [b["build_id"] for b in data_loader.list_builds(limit=config.MAX_CROSS_BUILD_QUERY_BUILDS)]
-        df, err = await run_in_threadpool(data_loader.execute_sql_across_builds, sql, recent_build_ids)
+        recent_build_ids = [b["build_id"] for b in
+                            data_loader.list_builds(limit=config.MAX_CROSS_BUILD_QUERY_BUILDS)]
+        df, err = await run_in_threadpool(
+            data_loader.execute_sql_across_builds, sql, recent_build_ids)
     else:
-        df, err = data_loader.execute_sql(sql)
-    for attempt in range(2):
-        if err or not _is_df_usable(df):
-            fb = _fallback_sql(user_prompt, CHART_FALLBACK_SQL_MAP)
-            if fb and fb != sql:
-                df, err = data_loader.execute_sql(fb)
-                sql = fb
-                if not err and _is_df_usable(df):
-                    break
-            else:
-                fixed_sql = await llm.agenerate(
-                    f"Fix this DuckDB SQL. Error: {err or 'empty'}\nSQL: {sql}\n"
-                    f"Request: {user_prompt}\nReturn ONLY corrected SQL:",
-                    temperature=0.1,
-                    user_id=user_id,
-                    workspace_id=workspace_id,
-                )
-                if fixed_sql:
-                    sql = _sanitize_sql(fixed_sql)
-                    df, err = data_loader.execute_sql(sql)
-                break
+        df, err = await run_in_threadpool(data_loader.execute_sql, sql)
+
+    if err or not _is_df_usable(df):
+        df, err, sql = await _repair_chart_sql(
+            llm, sql, err, df, user_prompt, user_id, workspace_id)
 
     if err:
-        return None, f"SQL error: {err}"
+        return None, f"SQL error: {err}", None
     if not _is_df_usable(df):
-        return None, "No data returned for this chart."
-
-    # Validate chart fitness; retry once with deterministic fallback SQL if shape is incompatible.
-    if not _is_chart_df_valid_for_type(df, chart_type):
-        fb = _fallback_sql(user_prompt, CHART_FALLBACK_SQL_MAP)
-        if fb and fb != sql:
-            df_fb, err_fb = data_loader.execute_sql(fb)
-            if not err_fb and _is_chart_df_valid_for_type(df_fb, chart_type):
-                df = df_fb
-                sql = fb
+        return None, "No data returned for this chart.", None
 
     if is_cacheable_prompt:
         _sql_cache[cache_key] = sql
@@ -1139,166 +1480,73 @@ async def handle_chart(user_prompt: str, session_id: str, ingestion_id: str,
             for k in list(_sql_cache.keys())[:20]:
                 del _sql_cache[k]
 
-    return await _generate_chart(
-        df,
-        user_prompt,
-        prompt_for_llm,
-        feedback_hints,
-        session_id,
-        sql,
-        chart_type,
-        llm,
-        user_id,
-        nid,
-        workspace_id,
+    # Building the Plotly figure is real CPU work (and the LanceDB write that
+    # follows it is blocking I/O). Left on the event loop it stalled every
+    # other in-flight request for the duration of each chart render.
+    return await run_in_threadpool(
+        _render_and_store, df, spec, user_prompt, session_id, sql, user_id, nid, workspace_id
     )
 
 
-async def _generate_chart(df, user_prompt, prompt_for_llm, feedback_hints, session_id, sql, chart_type, llm, user_id, ingestion_id, workspace_id):
-    if not _is_df_usable(df):
-        return None, "No data available."
-    df = df.dropna(how="all")
-    if df.empty:
-        return None, "Data is empty after cleaning."
+async def _repair_chart_sql(llm, sql, err, df, user_prompt, user_id, workspace_id):
+    """Two recovery attempts, cheapest first: the deterministic fallback map,
+    then one LLM repair with the actual error text. Returns (df, err, sql)."""
+    fb = _fallback_sql(user_prompt, CHART_FALLBACK_SQL_MAP)
+    if fb and fb != sql:
+        fb_df, fb_err = await run_in_threadpool(data_loader.execute_sql, fb)
+        if not fb_err and _is_df_usable(fb_df):
+            return fb_df, None, fb
 
-    data_sample = _convert_timestamp(df.head(50).to_dict(orient="records"))
-    data_sample = [
-        {k: ("" if isinstance(v, float) and np.isnan(v) else v) for k, v in row.items()}
-        for row in data_sample
-    ]
-
-    title    = _make_title(user_prompt)
-    template = get_chart_template(chart_type, title)
-
-    code = await llm.agenerate(
-        CHART_CODE_PROMPT.format(
-            user_prompt=prompt_for_llm,
-            feedback_hints=feedback_hints or "None",
-            chart_type=chart_type,
-            data_sample=json.dumps(data_sample, indent=2, ensure_ascii=False),
-            columns=list(df.columns),
-            chart_template=template,
-        ),
-        temperature=0.1,
-        user_id=user_id,
-        workspace_id=workspace_id,
+    fixed = await llm.agenerate(
+        f"Fix this DuckDB SQL. Error: {err or 'query returned no rows'}\n"
+        f"SQL: {sql}\nRequest: {user_prompt}\nReturn ONLY corrected SQL:",
+        temperature=0.1, user_id=user_id, workspace_id=workspace_id,
     )
+    if fixed:
+        fixed_sql = _sanitize_sql(fixed)
+        fixed_df, fixed_err = await run_in_threadpool(data_loader.execute_sql, fixed_sql)
+        if not fixed_err and _is_df_usable(fixed_df):
+            return fixed_df, None, fixed_sql
 
-    if not code:
-        return None, "Chart code generation failed."
+    return df, err, sql
 
-    code = _sanitize_code(code)
 
+def _render_and_store(df, spec, user_prompt, session_id, sql, user_id, ingestion_id, workspace_id):
+    """Reconcile the requested form against the data that actually came back,
+    render it, and persist. Reconciliation is what stops a 400-slice pie or a
+    two-point 'trend' from ever reaching the user.
+
+    Returns (chart_json, error, chart_id)."""
     try:
-        import plotly.express as px
-        import plotly.graph_objects as go
-        ns = {"px": px, "go": go, "pd": pd, "np": np, "data": data_sample}
-        exec(code, ns)  # noqa: S102
-        fig = ns.get("fig")
-        if fig is None:
-            raise ValueError("No 'fig' variable produced.")
-        fig = _apply_chart_layout(fig)
-        if not getattr(getattr(fig, "layout", None), "title", None) or \
-           not getattr(fig.layout.title, "text", None):
-            fig.update_layout(title=dict(text=title))
+        spec = chart_spec_mod.reconcile(spec, df)
+        fig, meta = chart_builder.build_figure(df, spec)
         chart_json = fig.to_json()
-        memory.store_chart(
-            session_id,
-            user_prompt,
-            chart_json,
-            {"sql": sql, "chart_type": chart_type},
-            user_id=user_id,
-            ingestion_id=ingestion_id,
-            workspace_id=workspace_id,
-        )
-        memory.learn_from_interaction(
-            user_id, ingestion_id, session_id, workspace_id, user_prompt, chart_json, kind="chart"
-        )
-        return chart_json, None
     except Exception as exc:
-        logger.error(f"Chart exec error ({chart_type}): {exc}")
-        try:
-            return _safe_fallback_chart(
-                df, title, chart_type, user_prompt, session_id, sql, user_id, ingestion_id, workspace_id
-            )
-        except Exception as fb:
-            logger.error(f"Fallback chart failed: {fb}")
-        return None, f"Chart generation failed: {exc}"
+        logger.exception("Chart build failed for %r: %s", user_prompt[:80], exc)
+        return None, f"Chart generation failed: {exc}", None
 
-
-def _safe_fallback_chart(df, title, chart_type, user_prompt, session_id, sql, user_id, ingestion_id, workspace_id):
-    """100% deterministic fallback — no LLM."""
-    import plotly.express as px
-    import plotly.graph_objects as go
-
-    COLORS = ["#6C8BFF", "#22C55E", "#F59E0B", "#EF4444", "#A855F7", "#06B6D4"]
-    num_cols = df.select_dtypes(include="number").columns.tolist()
-    cat_cols = df.select_dtypes(include=["object", "category"]).columns.tolist()
-
-    if not num_cols:
-        return None, "No numeric data for chart."
-
-    x_col = cat_cols[0] if cat_cols else df.columns[0]
-    y_col = num_cols[0]
-    color_col = ("platform_type" if "platform_type" in df.columns
-                 else "project_name" if "project_name" in df.columns else None)
-
-    if chart_type in ("pie", "donut"):
-        fig = px.pie(df, names=x_col, values=y_col, title=title,
-                     hole=0.4 if chart_type == "donut" else 0,
-                     color_discrete_sequence=["#22C55E","#EF4444","#F59E0B","#A855F7","#06B6D4","#6C8BFF"])
-        fig.update_traces(textposition="inside", textinfo="percent+label", textfont_size=13)
-
-    elif chart_type == "horizontal_bar":
-        df_s = df.sort_values(y_col, ascending=True)
-        fig = px.bar(df_s, x=y_col, y=x_col, orientation="h", title=title,
-                     color=color_col, color_discrete_sequence=COLORS)
-        fig.update_traces(textposition="outside", cliponaxis=False)
-        fig.update_yaxes(automargin=True)
-
-    elif chart_type == "line":
-        fig = px.line(df, x=x_col, y=y_col, title=title, color=color_col,
-                      markers=True, color_discrete_sequence=COLORS)
-        fig.update_traces(line_width=2.5, marker_size=8)
-
-    elif chart_type == "heatmap" and len(cat_cols) >= 2:
-        pivot = df.pivot_table(index=cat_cols[0], columns=cat_cols[1],
-                               values=num_cols[0], fill_value=0, aggfunc="sum")
-        fig = go.Figure(go.Heatmap(z=pivot.values, x=pivot.columns.tolist(),
-                                   y=pivot.index.tolist(), colorscale="Reds",
-                                   text=pivot.values.astype(int).astype(str), texttemplate="%{text}"))
-        fig.update_layout(title=title)
-
-    elif chart_type == "scatter" and len(num_cols) >= 2:
-        fig = px.scatter(df, x=num_cols[0], y=num_cols[1], title=title,
-                         color=color_col or (cat_cols[0] if cat_cols else None),
-                         color_discrete_sequence=COLORS)
-        fig.update_traces(marker_size=10, marker_opacity=0.8)
-
-    elif chart_type == "platform_comparison" and "platform_type" in df.columns:
-        fig = px.bar(df, x="platform_type", y=y_col, title=title, color="platform_type",
-                     barmode="group", text_auto=True,
-                     color_discrete_map={"mobile": "#EF4444", "desktop": "#22C55E"})
-        fig.update_traces(textfont_size=13, textposition="outside")
-
-    else:
-        fig = px.bar(df, x=x_col, y=y_col, title=title, color=color_col,
-                     barmode="group", color_discrete_sequence=COLORS)
-        fig.update_traces(textfont_size=11, textangle=0, textposition="outside", cliponaxis=False)
-        fig.update_xaxes(tickangle=-35)
-
-    fig = _apply_chart_layout(fig)
-    chart_json = fig.to_json()
-    memory.store_chart(
+    # The store itself stays inline: its id is handed to the browser so the
+    # gallery can show this figure immediately and still recognise it when the
+    # history list catches up. The learning write has no such reader, so it
+    # goes to the background rather than into the user's wait.
+    chart_id = memory.store_chart(
         session_id,
         user_prompt,
         chart_json,
-        {"sql": sql, "fallback": True},
+        {
+            "sql": sql,
+            "chart_type": spec.chart_type,
+            "measure": meta.get("measure"),
+            "dimension": meta.get("dimension"),
+            "insight": meta.get("insight"),
+        },
         user_id=user_id,
         ingestion_id=ingestion_id,
         workspace_id=workspace_id,
     )
-    memory.learn_from_interaction(
-        user_id, ingestion_id, session_id, workspace_id, user_prompt, chart_json, kind="chart"
+    _persist_in_background(
+        memory.learn_from_interaction,
+        user_id, ingestion_id, session_id, workspace_id, user_prompt, chart_json,
+        kind="chart",
     )
-    return chart_json, None
+    return chart_json, None, chart_id

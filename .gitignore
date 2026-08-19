@@ -34,3 +34,7 @@ vm-data.zip
 # see docker-compose.yml's `ingest` service and config2.docker.json.example
 ingest-source/*
 !ingest-source/.gitkeep
+# Live-run client package build output
+packages/*/node_modules/
+packages/*/dist/
+packages/dist-pack/

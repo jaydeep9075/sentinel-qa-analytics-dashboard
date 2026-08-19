@@ -63,6 +63,12 @@ python ingester.py
 
 ### Tests
 ```bash
+# Run all tests
+python -m pytest tests/ -q
+
+# Chart pipeline (intent parsing + figure construction) and chat helpers
+python -m pytest tests/test_chart_pipeline.py tests/test_chat_helpers.py -v
+
 # Run adaptive ingestion tests
 python -m pytest tests/test_adaptive_ingestion.py -v
 
@@ -84,6 +90,10 @@ python verify_system.py
   - `auth.py` — JWT login, password hashing (bcrypt), user store (SQLite or memory)
   - `data_loader.py` — Loads ingested LanceDB/DuckDB tables; abstracts test results queries
   - `handlers.py` — Chat and chart request processing; prompt templates, LLM calls
+  - `chart_spec.py` — Deterministic chart-intent parser (no LLM): chart form,
+    measure, dimension, breakdown, top-N, sort direction, filters
+  - `chart_builder.py` — Deterministic Plotly figure construction from a ChartSpec
+  - `chart_theme.py` — Validated colour palette + both-mode theme payload
   - `llm_client.py` — LLM abstraction (Gemini, OpenAI, Anthropic, Ollama) with unified interface
   - `memory.py` — Chat and chart history storage; session management
   - `ingestion_service.py` — Orchestrates Allure → LanceDB pipeline
@@ -110,6 +120,54 @@ python verify_system.py
 - **API Client**: `lib/api.ts` — Axios wrapper with Bearer token auth
 
 **Theme**: Tailwind CSS 4 + dark/light mode toggle (ThemeInitializer.tsx)
+
+### Live Execution (`services/live_exec/` + `packages/sentinel-qa-reporter/`)
+Streams a test run to `/runs/live` while it is still running, then folds it
+into normal history. **Framework-agnostic by contract** — four plain HTTP
+calls (`POST /live/runs`, `POST /live/runs/{id}/events`, optional attachment
+upload, `PATCH /live/runs/{id}`), and `framework` is free text. Don't
+reintroduce Playwright-specific wording into the UI or the schemas.
+
+- **One client package, both frameworks**: `sentinel-qa-reporter` ships a
+  framework-neutral `src/core/` (HTTP client, CI detection, config
+  resolution, redaction) plus `src/playwright/` and `src/cypress/` adapters,
+  exposed as subpath exports. The Cypress adapter is two halves — a node
+  plugin and a browser support file — bridged over `cy.task`; the browser half
+  is gated on a flag the node half sets, so an unconfigured repo never calls
+  the task and reporting cannot fail a test. Their shared constants live in
+  `cypress/constants.ts` precisely because the support file is bundled *for
+  the browser* and must not pull `node:fs` in.
+- **The client never fails a run.** Every request has a deadline, the event
+  queue has a ceiling and sheds log lines before test results, `finish()` is
+  idempotent, and the worst available outcome is one `[sentinel]` warning.
+  Covered by `packages/sentinel-qa-reporter/test/`.
+- **Repo setup is one call**: `withSentinel(config)` appends the reporter and
+  injects `--remote-debugging-port` into the top-level *and every Chromium
+  project's* `launchOptions.args`. That last part is the whole reason the
+  helper exists — Playwright *replaces* rather than merges project-level
+  `launchOptions`, so hand-wiring silently breaks live view in any repo whose
+  projects set their own args.
+- **Hot layer**: SQLite WAL (`store.py`) for in-progress runs only;
+  `finalize/job.py` promotes a finished run into LanceDB and deletes the hot
+  rows. Abandoned runs are swept by `store.reap_stale_runs`.
+- **Sharding**: `external_id` attaches several runner processes to one run
+  (`store._join_existing`), summing `total_tests`/`worker_count` and counting
+  `active_runners`. `update_run_status` decrements that count and returns
+  `True` only for the last runner out, so an early shard cannot finalize a run
+  the others are still writing to; an early failure is parked in
+  `pending_status` so `status` keeps reading `running` for viewers.
+- **Push**: in-process pub/sub (`bus.py`) → SSE. Multi-replica needs `REDIS_URL`.
+- **Distribution**: the Docker images build the package tarball in a
+  `reporter-builder` stage and the backend serves it at `GET /live/package`
+  (unauthenticated — public client code, and `npm install` carries no JWT;
+  the filename is whitelisted against the one file present rather than
+  sanitised). So a team that pulls the image installs a client that matches
+  their server by construction, with no npm registry involved.
+- **Key distribution**: `GET /live/connection-info` (admin-only) serves this
+  install's ingest key, a request-derived base URL and the exact install
+  command, rendered as copy-paste snippets under **Live Runs → Connect a
+  repo**. `POST /live/connection-info/rotate` reissues it without a restart,
+  and 409s when the key is pinned in the environment.
 
 ### Universal Ingester (`universal_ingester/`)
 - **Connectors**: Allure JSON, files, databases, APIs
@@ -170,6 +228,51 @@ python verify_system.py
   the reusable validator called from both the Settings-tab save path and the old startup path
   used to call). Chat/chart requests fail clearly (`LLMNotConfiguredError`) instead.
 - **Context Management**: Role/project personas injected via `x-role`, `x-project` headers
+
+### Chart Generation Pipeline
+Charts are built **deterministically**; the LLM's only job is writing SQL.
+
+```
+prompt → chart_spec.parse()      intent: form, measure, dimension, breakdown,
+                                 top-N, direction, filters (regex, no LLM)
+       → CHART_SQL_PROMPT        LLM writes SQL, constrained by the parse via
+                                 handlers._spec_sql_directives()
+       → execute + repair loop   fallback map, then one LLM repair with the error
+       → chart_spec.reconcile()  can the returned data support the requested
+                                 form? downgrade if not (400-slice pie, 2-point
+                                 "trend", scatter with one measure)
+       → chart_builder.build_figure()
+```
+- **17 chart forms**: bar, stacked_bar, horizontal_bar, line, area, pie, donut,
+  scatter, bubble, heatmap, treemap, sunburst, funnel, histogram, box, gauge,
+  radar, plus `platform_comparison`.
+- **Colour by job, never by rank** (`chart_theme.py`): categorical hues in fixed
+  slot order; the reserved status palette (good/warning/serious/critical) only
+  where colour genuinely means state; one hue light→dark for sequential. The
+  palette is validated for colourblind separation in **both** themes — re-run
+  `node scripts/validate_palette.js` (dataviz skill) before changing any hex.
+  The previous palette failed: `#F59E0B`↔`#22C55E` sat at protan ΔE 5.7.
+- **Theming is client-side.** The backend emits the light rendering plus both
+  palettes and a per-trace `meta.slot` in `layout.meta.sentinel`;
+  `frontend/lib/chartTheme.ts` remaps colour *by slot* on theme change, so a
+  series keeps its identity. Never hardcode theme colours in a figure.
+- Every figure carries an **insight subtitle** (computed from the drawn frame,
+  so it can't drift from what's on screen), a **scope note** when truncated or
+  filtered, and a **table-view twin** in `meta.sentinel.table`.
+- `services/prompts.py` no longer generates Plotly code. `CHART_CODE_PROMPT`,
+  `CHART_TEMPLATES` and `detect_chart_type()` were removed — do not reintroduce
+  an `exec()` path for charts.
+
+### Chat Answer Pipeline
+- `CHAT_DECISION_PROMPT` returns `sql`, `sql_multi` (a labelled list of queries
+  for multi-part questions), `vector`, or `answer`.
+- `handlers._extract_json_object()` does a balanced-brace scan — the old
+  `\{[^{}]+\}` regex could not match a nested decision object at all.
+- `handlers._run_sql_with_repair()` feeds DuckDB's error back to the model
+  before resorting to the keyword fallback map (a fallback answers a *simpler*
+  question, so it must be last, not first).
+- `handlers._dataset_facts()` computes sums/extremes/distributions over **all**
+  rows and injects them, since only the first 50 rows are sent to the model.
 
 ### Data Storage
 - **LanceDB**: Vector embeddings for semantic search (historical context retrieval)
@@ -313,8 +416,10 @@ LLM_API_KEY          # API key (or provider-specific: OPENAI_API_KEY, etc.) — 
 LLM_MODEL            # Full model ID
 OLLAMA_URL           # http://localhost:11434 (if using Ollama)
 SECRET_KEY           # ≥32 chars, random — auto-generated into state/secret_key if unset
-LIVE_INGEST_API_KEY  # Playwright reporter's x-api-key — auto-generated into
-                      # state/live_ingest_api_key and logged once at startup if unset
+LIVE_INGEST_API_KEY  # Reporter's x-api-key — auto-generated into state/live_ingest_api_key
+                      # and logged once at startup if unset. Pinning it here disables the
+                      # admin UI's Rotate key button (config.LIVE_INGEST_API_KEY_FROM_ENV)
+LIVE_PACKAGE_DIR     # Where the served client tarball lives (default packages/dist-pack)
 BOOTSTRAP_ADMIN_USERNAME   # default: admin
 BOOTSTRAP_ADMIN_PASSWORD   # default: auto-generated into state/bootstrap_admin_password, logged
                             # once at startup (forces a password change on first login either way)
@@ -330,6 +435,17 @@ ROLES_ROOT           # Path to roles/ directory
 INGEST_MAX_FILE_SIZE_BYTES # Max ingestion file size (default 200MB)
 INGEST_MAX_ROWS      # Max rows to ingest (default 500k)
 INGEST_TIMEOUT_SECONDS # Ingestion timeout (default 600s)
+```
+
+**Test repo (live execution)** — set in the repo running the tests, not here:
+```
+SENTINEL_URL         # Sentinel API origin. The on/off switch: nothing reports without it
+SENTINEL_API_KEY     # Must equal the backend's LIVE_INGEST_API_KEY
+SENTINEL_DASHBOARD_URL # Only when the UI is on a different origin (local dev: :3000 vs :8000)
+SENTINEL_ENV / SENTINEL_PROJECT # Free-text labels shown in the run list
+SENTINEL_RUN_KEY     # Joins sharded processes into one run (sent as external_id)
+SENTINEL_LIVE_VIEW   # on|off. Defaults on locally, off in CI (screenshots leave the network)
+SENTINEL_DEBUG       # 1 to log what the reporter is doing
 ```
 
 **Frontend (`frontend/.env.local`)**

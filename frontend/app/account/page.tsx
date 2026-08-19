@@ -4,7 +4,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { motion } from "framer-motion";
 import { AlertTriangle, ArrowLeft, Eye, EyeOff, KeyRound, ShieldCheck, UserCog } from "lucide-react";
-import BrandLogo from "@/components/BrandLogo";
+import BrandHeading from "@/components/BrandHeading";
 
 const API = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
@@ -125,19 +125,25 @@ function AccountPageInner() {
     "w-full rounded-xl border border-slate-300 dark:border-white/[0.08] bg-white dark:bg-black/60 px-4 py-2.5 text-sm text-slate-900 dark:text-white focus:outline-none focus:border-cyan-500/40 focus:ring-1 focus:ring-cyan-500/30 placeholder:text-slate-400 dark:placeholder:text-white/20";
 
   return (
-    <div className="min-h-screen bg-[var(--background)] text-[var(--foreground)] p-6 md:p-10">
-      <div className="max-w-2xl mx-auto space-y-6">
-        <div className="flex items-center gap-3">
-          <BrandLogo className="px-2.5 py-1.5" />
-          <div>
-            <h1 className="text-xl font-bold">Account settings</h1>
-            {!forced && (
-              <Link href="/dashboard" className="inline-flex items-center gap-1.5 text-xs text-slate-500 dark:text-white/40 hover:text-cyan-500">
-                <ArrowLeft className="w-3.5 h-3.5" /> Back to dashboard
-              </Link>
-            )}
-          </div>
+    <div className="min-h-screen bg-[var(--background)] text-[var(--foreground)]">
+      <header className="bg-white/90 border-slate-200 shadow-[0_4px_30px_rgba(15,23,42,0.08)] dark:bg-black/80 dark:border-white/[0.06] dark:shadow-[0_4px_30px_rgba(0,0,0,0.5)] backdrop-blur-xl border-b sticky top-0 z-50">
+        <div className="max-w-2xl mx-auto px-6 py-3.5 flex flex-wrap items-center justify-between gap-4">
+          {/* When the session is locked to this page there is nowhere to go
+              back to yet, so the tagline stands in for the link. */}
+          <BrandHeading
+            label="Account"
+            subtitle={
+              forced ? undefined : (
+                <Link href="/dashboard" className="inline-flex items-center gap-1.5 text-xs text-slate-500 dark:text-white/40 hover:text-cyan-500">
+                  <ArrowLeft className="w-3.5 h-3.5" /> Back to dashboard
+                </Link>
+              )
+            }
+          />
         </div>
+      </header>
+
+      <main className="max-w-2xl mx-auto px-6 py-8 space-y-6">
 
         {forced && (
           <motion.div
@@ -325,7 +331,7 @@ function AccountPageInner() {
           <ShieldCheck className="w-3.5 h-3.5" />
           Changes take effect immediately for this session.
         </div>
-      </div>
+      </main>
     </div>
   );
 }

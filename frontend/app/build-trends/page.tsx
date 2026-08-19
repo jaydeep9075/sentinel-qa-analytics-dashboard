@@ -3,8 +3,18 @@
 import { useState, useEffect } from "react";
 import Link from "next/link";
 import dynamic from "next/dynamic";
-import { TrendingUp, LayoutDashboard, LogOut, ChevronDown, BarChart3, AlertTriangle } from "lucide-react";
-import BrandLogo from "@/components/BrandLogo";
+import {
+  TrendingUp,
+  LayoutDashboard,
+  LogOut,
+  ChevronDown,
+  BarChart3,
+  AlertTriangle,
+  Radio,
+  UserCog,
+} from "lucide-react";
+import BrandHeading from "@/components/BrandHeading";
+import { NavLink, NAV_DANGER } from "@/components/HeaderNav";
 
 const BuildTrendCharts = dynamic(() => import("@/components/BuildTrendCharts"), { 
   ssr: false,
@@ -136,30 +146,21 @@ export default function BuildTrends() {
     <div className="min-h-screen bg-[var(--background)] text-[var(--foreground)]">
       {/* ══════════ HEADER ══════════ */}
       <header className="bg-white/90 border-slate-200 shadow-[0_4px_30px_rgba(15,23,42,0.08)] dark:bg-black/80 dark:border-white/[0.06] dark:shadow-[0_4px_30px_rgba(0,0,0,0.5)] backdrop-blur-xl border-b sticky top-0 z-50">
-        <div className="max-w-[1600px] mx-auto px-6 py-3.5 flex justify-between items-center">
-          <div className="flex items-center gap-3">
-            <BrandLogo className="shadow-[0_0_20px_rgba(0,240,255,0.2)]" />
-            <div>
-              <h1 className="text-lg font-bold tracking-tight">
-                <span className="text-cyan-400">Sentinel</span>{" "}
-                <span className="text-slate-500 dark:text-white/60 font-normal">Dashboard</span>
-              </h1>
-            </div>
-          </div>
-          <div className="flex items-center gap-4">
-            <Link href="/dashboard" className="flex items-center gap-1.5 text-xs text-slate-500 hover:text-cyan-600 dark:text-white/40 dark:hover:text-cyan-400 transition-colors">
-              <LayoutDashboard className="w-3.5 h-3.5" />
-              Dashboard
-            </Link>
-            <div className="flex items-center gap-1.5 text-xs text-cyan-400 font-semibold border-b border-cyan-500/40 pb-0.5">
-              <TrendingUp className="w-3.5 h-3.5" />
-              Build Trends
-            </div>
-            <button onClick={handleLogout} className="flex items-center gap-1.5 text-xs text-red-600/80 hover:text-red-700 hover:bg-red-100 dark:text-red-400/70 dark:hover:text-red-400 dark:hover:bg-red-500/[0.08] px-3 py-1.5 rounded-lg transition-all">
+        <div className="max-w-[1600px] mx-auto px-6 py-3.5 flex flex-wrap justify-between items-center gap-4">
+          {/* This header used to label itself "Sentinel Dashboard" while
+              rendering the trends page, and hand-rolled the mark instead of
+              using BrandHeading. */}
+          <BrandHeading label="Build Trends" />
+          <nav className="flex items-center gap-1">
+            <NavLink href="/dashboard" icon={LayoutDashboard} label="Dashboard" />
+            <NavLink href="/runs/live" icon={Radio} label="Live Runs" />
+            <NavLink href="/build-trends" icon={TrendingUp} label="Build Trends" active />
+            <NavLink href="/account" icon={UserCog} label="Account" />
+            <button onClick={handleLogout} className={NAV_DANGER}>
               <LogOut className="w-3.5 h-3.5" />
               Logout
             </button>
-          </div>
+          </nav>
         </div>
       </header>
 

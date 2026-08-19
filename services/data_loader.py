@@ -650,6 +650,73 @@ def _log_summary(conn: duckdb.DuckDBPyConnection):
         logger.warning(f"Could not log hierarchy: {e}")
 
 
+# Fragments that state a duration column's unit. Checked in order, so the
+# more specific spelling wins before a shorter one can match inside it.
+_DURATION_UNIT_SCALES = (
+    ("microsecond", 1e-6),
+    ("millisecond", 1e-3),
+    ("nanosecond", 1e-9),
+    ("micros", 1e-6),
+    ("millis", 1e-3),
+    ("_usec", 1e-6),
+    ("_msec", 1e-3),
+    ("_nsec", 1e-9),
+    ("_us", 1e-6),
+    ("_ms", 1e-3),
+    ("_ns", 1e-9),
+)
+
+# Per-value suffixes. "ms"/"us"/"ns" must be tried before the bare "s" they
+# all end with, or every one of them would be read as seconds.
+_DURATION_SUFFIX_SCALES = (
+    ("ms", 1e-3),
+    ("us", 1e-6),
+    ("ns", 1e-9),
+    ("sec", 1.0),
+    ("min", 60.0),
+    ("s", 1.0),
+    ("m", 60.0),
+    ("h", 3600.0),
+)
+
+
+def _to_seconds(series: pd.Series, column_name: str) -> pd.Series:
+    """Normalise an arbitrary duration column to seconds.
+
+    Every downstream number involving time - suite runtime, average test
+    duration, slowest-module ranking, the duration axis on charts - assumes
+    seconds. A source column named `Duration_ms` used to be copied through
+    verbatim, so those readings came out 1000x too large (a 100-test suite
+    reporting as 93 hours). The unit is only ever declared in the column
+    name, so that is what sets the scale; a row that spells its own unit
+    ("240ms") still overrides it.
+    """
+    name = str(column_name or "").lower()
+    scale = 1.0
+    for fragment, factor in _DURATION_UNIT_SCALES:
+        if fragment in name:
+            scale = factor
+            break
+
+    numeric = pd.to_numeric(series, errors="coerce")
+    result = numeric * scale
+
+    unparsed = numeric.isna() & pd.Series(series).notna()
+    if unparsed.any():
+        text = pd.Series(series)[unparsed].astype(str).str.strip().str.lower()
+        for suffix, factor in _DURATION_SUFFIX_SCALES:
+            hit = result.isna() & result.index.isin(text.index)
+            candidates = text[text.index.isin(result.index[hit])]
+            candidates = candidates[candidates.str.endswith(suffix)]
+            if candidates.empty:
+                continue
+            result.loc[candidates.index] = (
+                pd.to_numeric(candidates.str[: -len(suffix)], errors="coerce") * factor
+            )
+
+    return result.fillna(0).astype(float)
+
+
 def _coerce_generic_to_flattened_tests(df: pd.DataFrame) -> pd.DataFrame:
     """Best-effort adapter for arbitrary structured datasets.
     Produces the canonical columns expected by chat/chart logic.
@@ -666,19 +733,27 @@ def _coerce_generic_to_flattened_tests(df: pd.DataFrame) -> pd.DataFrame:
     def _empty(default=""):
         return pd.Series([default] * len(df))
 
-    def _pick(*names, default=""):
+    def _pick_named(*names, default=""):
+        """Series plus the source column's name. The name matters for
+        duration, whose unit is only ever stated in the column name."""
         for n in names:
             key = n.lower()
             if key in cols:
-                return df[cols[key]]
-        return _empty(default)
+                return df[cols[key]], cols[key]
+        return _empty(default), ""
 
-    def _pick_by_aliases(aliases: list[str], default=""):
+    def _pick(*names, default=""):
+        return _pick_named(*names, default=default)[0]
+
+    def _pick_by_aliases_named(aliases: list[str], default=""):
         for alias in aliases:
             for c_lower, c_orig in cols.items():
                 if alias in c_lower:
-                    return df[c_orig]
-        return _empty(default)
+                    return df[c_orig], c_orig
+        return _empty(default), ""
+
+    def _pick_by_aliases(aliases: list[str], default=""):
+        return _pick_by_aliases_named(aliases, default=default)[0]
 
     out["result_id"] = _pick("id", "result_id", default="")
     out["test_name"] = _pick("test_name", "name", "title", "full_name", default="record")
@@ -692,10 +767,12 @@ def _coerce_generic_to_flattened_tests(df: pd.DataFrame) -> pd.DataFrame:
         status_series = _pick_by_aliases(["status", "state", "result", "outcome"], default="unknown").astype(str)
     out["status"] = status_series.apply(normalize_status)
 
-    duration_raw = _pick("duration_seconds", "duration", "latency", default=0)
+    duration_raw, duration_col = _pick_named("duration_seconds", "duration", "latency", default=0)
     if pd.to_numeric(duration_raw, errors="coerce").fillna(0).eq(0).all():
-        duration_raw = _pick_by_aliases(["duration", "latency", "elapsed", "time", "runtime"], default=0)
-    out["duration"] = pd.to_numeric(duration_raw, errors="coerce").fillna(0).astype(float)
+        duration_raw, duration_col = _pick_by_aliases_named(
+            ["duration", "latency", "elapsed", "time", "runtime"], default=0
+        )
+    out["duration"] = _to_seconds(duration_raw, duration_col)
 
     out["error"] = _pick("error", "error_message", "message", default="").astype(str)
     if out["error"].str.strip().eq("").all():
@@ -706,9 +783,18 @@ def _coerce_generic_to_flattened_tests(df: pd.DataFrame) -> pd.DataFrame:
     if out["project_name"].str.strip().eq("unknown").all():
         out["project_name"] = _pick_by_aliases(["project", "product", "application", "app", "suite"], default="unknown").astype(str)
 
-    out["module_name"] = _pick("module_name", "module", "category", "type", default="unknown").astype(str)
+    out["module_name"] = _pick("module_name", "module", "suite", "category", "type", default="unknown").astype(str)
     if out["module_name"].str.strip().eq("unknown").all():
-        out["module_name"] = _pick_by_aliases(["module", "component", "feature", "category", "area"], default="unknown").astype(str)
+        # "suite" belongs here, not only in the project aliases above. A
+        # dataset carrying both Project and Suite (a very common export
+        # shape) matched Project for project_name and then found nothing for
+        # module_name, so every row landed in a single "unknown" module -
+        # silently flattening every per-module metric, chart breakdown and
+        # blast-radius count into one bucket.
+        out["module_name"] = _pick_by_aliases(
+            ["module", "component", "feature", "category", "area", "suite", "class"],
+            default="unknown",
+        ).astype(str)
 
     out["platform_type"] = _pick("platform_type", default="desktop").astype(str)
     out["browser"] = _pick("browser", "client", default="GoogleChrome").astype(str)

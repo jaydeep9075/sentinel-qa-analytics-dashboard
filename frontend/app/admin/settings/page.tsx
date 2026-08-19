@@ -47,6 +47,10 @@ const EMBEDDING_MODELS = [
   "paraphrase-multilingual-MiniLM-L12-v2", // non-English content
 ];
 
+function formatProviderLabel(provider: string): string {
+  return provider.replace(/_/g, " ").toUpperCase();
+}
+
 export default function AdminSettingsPage() {
   const [settings, setSettings] = useState<LLMSettings | null>(null);
   const [loading, setLoading] = useState(true);
@@ -287,7 +291,7 @@ export default function AdminSettingsPage() {
           >
             <option value="">— select a provider —</option>
             {PROVIDERS.map((p) => (
-              <option key={p} value={p}>{p}</option>
+              <option key={p} value={p}>{formatProviderLabel(p)}</option>
             ))}
           </select>
         </Field>

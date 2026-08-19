@@ -18,7 +18,7 @@ from __future__ import annotations
 import json
 import sqlite3
 from contextlib import contextmanager
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Iterator, Optional
 
@@ -41,6 +41,10 @@ CREATE TABLE IF NOT EXISTS run (
     commit_sha TEXT,
     build_url TEXT,
     worker_count INTEGER,
+    total_tests INTEGER,
+    external_id TEXT,
+    active_runners INTEGER NOT NULL DEFAULT 1,
+    pending_status TEXT,
     metadata TEXT,
     started_at TEXT NOT NULL,
     finished_at TEXT
@@ -110,36 +114,122 @@ def init_db() -> None:
         existing_cols = {row["name"] for row in conn.execute("PRAGMA table_info(run)").fetchall()}
         if "name" not in existing_cols:
             conn.execute("ALTER TABLE run ADD COLUMN name TEXT")
+        if "last_event_at" not in existing_cols:
+            conn.execute("ALTER TABLE run ADD COLUMN last_event_at TEXT")
+        if "total_tests" not in existing_cols:
+            conn.execute("ALTER TABLE run ADD COLUMN total_tests INTEGER")
+        if "active_runners" not in existing_cols:
+            conn.execute("ALTER TABLE run ADD COLUMN active_runners INTEGER NOT NULL DEFAULT 1")
+        if "pending_status" not in existing_cols:
+            conn.execute("ALTER TABLE run ADD COLUMN pending_status TEXT")
+        if "external_id" not in existing_cols:
+            conn.execute("ALTER TABLE run ADD COLUMN external_id TEXT")
+        # Deliberately created here rather than in _SCHEMA: on an upgrade the
+        # schema script runs before the ALTER above, so an index naming a
+        # column that does not exist yet aborts the whole script - which is
+        # to say it breaks exactly the installs that need the migration.
+        # Partial, so only one *in-progress* run may claim an external id:
+        # re-running the same build id after the first finished starts a
+        # fresh run rather than reopening a closed one.
+        conn.execute(
+            "CREATE UNIQUE INDEX IF NOT EXISTS idx_run_external_active "
+            "ON run(external_id) WHERE external_id IS NOT NULL AND status = 'running'"
+        )
+
+
+def _join_existing(conn: sqlite3.Connection, data: RunCreate) -> Optional[dict]:
+    """Attach this process to an in-progress run with the same external_id,
+    if there is one.
+
+    The sharded case: `--shard=1/4` is four processes, each of which knows
+    only its own quarter of the suite. Whoever gets here first creates the
+    row; the rest add their test count and worker count to it, so the
+    progress denominator on the dashboard is the whole suite rather than
+    whichever quarter happened to be first.
+    """
+    if not data.external_id:
+        return None
+    row = conn.execute(
+        "SELECT * FROM run WHERE external_id = ? AND status = 'running'",
+        (data.external_id,),
+    ).fetchone()
+    if not row:
+        return None
+    conn.execute(
+        """
+        UPDATE run
+           SET total_tests    = COALESCE(total_tests, 0) + COALESCE(?, 0),
+               worker_count   = COALESCE(worker_count, 0) + COALESCE(?, 0),
+               active_runners = active_runners + 1
+         WHERE run_id = ?
+        """,
+        (data.total_tests, data.worker_count, row["run_id"]),
+    )
+    updated = conn.execute("SELECT * FROM run WHERE run_id = ?", (row["run_id"],)).fetchone()
+    return {
+        "run_id": updated["run_id"],
+        "name": updated["name"],
+        "status": updated["status"],
+        "started_at": updated["started_at"],
+        "total_tests": updated["total_tests"],
+        "joined": True,
+    }
 
 
 def create_run(run_id: str, data: RunCreate) -> dict:
     started_at = _now()
     with _conn() as conn:
-        conn.execute(
-            """
-            INSERT INTO run (
-                run_id, name, workspace_id, project_id, framework, status,
-                environment, ci_provider, branch, commit_sha, build_url,
-                worker_count, metadata, started_at
-            ) VALUES (?, ?, ?, ?, ?, 'running', ?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            (
-                run_id,
-                data.name,
-                data.workspace_id,
-                data.project_id,
-                data.framework,
-                data.environment,
-                data.ci_provider,
-                data.branch,
-                data.commit_sha,
-                data.build_url,
-                data.worker_count,
-                json.dumps(data.metadata),
-                started_at,
-            ),
-        )
-    return {"run_id": run_id, "name": data.name, "status": "running", "started_at": started_at}
+        existing = _join_existing(conn, data)
+        if existing:
+            return existing
+        try:
+            _insert_run(conn, run_id, data, started_at)
+        except sqlite3.IntegrityError:
+            # Two shards started close enough together that both found no
+            # row and both tried to create one; the partial unique index
+            # let exactly one win. The loser joins it, which is what it
+            # wanted in the first place.
+            joined = _join_existing(conn, data)
+            if joined is None:
+                raise
+            return joined
+    return {
+        "run_id": run_id,
+        "name": data.name,
+        "status": "running",
+        "started_at": started_at,
+        "total_tests": data.total_tests,
+    }
+
+
+def _insert_run(conn: sqlite3.Connection, run_id: str, data: RunCreate, started_at: str) -> None:
+    conn.execute(
+        """
+        INSERT INTO run (
+            run_id, name, workspace_id, project_id, framework, status,
+            environment, ci_provider, branch, commit_sha, build_url,
+            worker_count, total_tests, external_id, metadata, started_at, last_event_at
+        ) VALUES (?, ?, ?, ?, ?, 'running', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            run_id,
+            data.name,
+            data.workspace_id,
+            data.project_id,
+            data.framework,
+            data.environment,
+            data.ci_provider,
+            data.branch,
+            data.commit_sha,
+            data.build_url,
+            data.worker_count,
+            data.total_tests,
+            data.external_id,
+            json.dumps(data.metadata),
+            started_at,
+            started_at,
+        ),
+    )
 
 
 def get_run(run_id: str) -> Optional[dict]:
@@ -148,27 +238,135 @@ def get_run(run_id: str) -> Optional[dict]:
         return dict(row) if row else None
 
 
-def update_run_status(run_id: str, status: str) -> None:
-    finished_at = _now() if status in {"passed", "failed", "cancelled"} else None
+_STATUS_RANK = {"passed": 0, "cancelled": 1, "failed": 2}
+
+
+def _worst(*statuses: Optional[str]) -> str:
+    """A run is only as good as its worst shard. Ranked rather than
+    special-cased so adding a status later cannot silently reorder this."""
+    known = [s for s in statuses if s in _STATUS_RANK]
+    return max(known, key=lambda s: _STATUS_RANK[s]) if known else "passed"
+
+
+def update_run_status(run_id: str, status: str) -> bool:
+    """Record one runner's verdict. Returns True when that was the last
+    runner and the run is genuinely over.
+
+    For an ordinary single-process run this is the same one-shot update it
+    always was. For a sharded run it is not: four shards each report when
+    their own quarter finishes, and taking the first one at its word would
+    finalize the run - promoting it into permanent history and deleting the
+    hot rows - while three quarters of the suite were still writing to it.
+    So the runner count is decremented instead, and only the last one out
+    closes the run.
+
+    An early shard's verdict is parked in pending_status rather than in
+    status, because status is what the dashboard renders: writing 'failed'
+    there while other shards are still running would show the run as over
+    when it is not. It is sticky in the failing direction - a run where any
+    shard failed is a failed run, whichever shard happens to finish last.
+    """
     with _conn() as conn:
+        row = conn.execute(
+            "SELECT active_runners, pending_status FROM run WHERE run_id = ?", (run_id,)
+        ).fetchone()
+        if row is None:
+            return False
+        remaining = max(0, (row["active_runners"] or 1) - 1)
+        worst = _worst(row["pending_status"], status)
+        if remaining > 0:
+            conn.execute(
+                "UPDATE run SET active_runners = ?, pending_status = ? WHERE run_id = ?",
+                (remaining, worst, run_id),
+            )
+            return False
         conn.execute(
-            "UPDATE run SET status = ?, finished_at = COALESCE(?, finished_at) WHERE run_id = ?",
-            (status, finished_at, run_id),
+            "UPDATE run SET status = ?, active_runners = 0, pending_status = NULL, "
+            "finished_at = ? WHERE run_id = ?",
+            (worst, _now(), run_id),
         )
+        return True
+
+
+# Per-run pass/fail/skip tallies, folded into the list query rather than
+# left to the caller. The Live Runs list is the page people leave open on a
+# second monitor during a release; "is anything red?" is the only question
+# it exists to answer, and answering it used to require opening every run in
+# turn. One GROUP BY over the (indexed) test table costs far less than N
+# extra round trips, and it is the same aggregate the detail page computes
+# client-side anyway.
+_COUNTS_SUBQUERY = """
+    SELECT run_id,
+           COUNT(*)                                            AS tests_seen,
+           SUM(CASE WHEN status = 'passed'  THEN 1 ELSE 0 END) AS passed,
+           SUM(CASE WHEN status = 'failed'  THEN 1 ELSE 0 END) AS failed,
+           SUM(CASE WHEN status = 'skipped' THEN 1 ELSE 0 END) AS skipped,
+           SUM(CASE WHEN status = 'running' THEN 1 ELSE 0 END) AS running
+    FROM test GROUP BY run_id
+"""
 
 
 def list_runs(workspace_id: Optional[str] = None, limit: int = 50) -> list[dict]:
+    sql = f"""
+        SELECT r.*,
+               COALESCE(c.tests_seen, 0) AS tests_seen,
+               COALESCE(c.passed, 0)     AS passed_count,
+               COALESCE(c.failed, 0)     AS failed_count,
+               COALESCE(c.skipped, 0)    AS skipped_count,
+               COALESCE(c.running, 0)    AS running_count
+        FROM run r
+        LEFT JOIN ({_COUNTS_SUBQUERY}) c ON c.run_id = r.run_id
+        {{where}}
+        ORDER BY r.started_at DESC LIMIT ?
+    """
     with _conn() as conn:
         if workspace_id:
             rows = conn.execute(
-                "SELECT * FROM run WHERE workspace_id = ? ORDER BY started_at DESC LIMIT ?",
-                (workspace_id, limit),
+                sql.format(where="WHERE r.workspace_id = ?"), (workspace_id, limit)
             ).fetchall()
         else:
-            rows = conn.execute(
-                "SELECT * FROM run ORDER BY started_at DESC LIMIT ?", (limit,)
-            ).fetchall()
+            rows = conn.execute(sql.format(where=""), (limit,)).fetchall()
         return [dict(r) for r in rows]
+
+
+def reap_stale_runs(timeout_seconds: int) -> list[str]:
+    """Delete runs stuck in 'running' with no incoming events for longer than
+    timeout_seconds, returning the ids that were swept.
+
+    A run is only moved out of 'running' by the reporter's final PATCH. Kill
+    the Playwright process before it gets there and the row is orphaned: no
+    later request touches it, so the Live Runs list shows a run that will
+    never finish and never leave. Deleting rather than marking 'aborted' is
+    deliberate - these rows are the hot layer for something no longer running,
+    they hold a partial test list nobody asked to keep, and the normal finish
+    path already deletes them after finalizing into LanceDB. An abandoned run
+    is the one case where there is nothing worth finalizing, so it just goes.
+
+    Comparison is lexicographic on the stored ISO-8601 UTC strings, which is
+    equivalent to chronological ordering for this format (fixed-width, same
+    offset) and avoids parsing every row.
+    """
+    cutoff = (
+        datetime.now(timezone.utc) - timedelta(seconds=timeout_seconds)
+    ).isoformat()
+    with _conn() as conn:
+        stale = [
+            row["run_id"]
+            for row in conn.execute(
+                """
+                SELECT run_id FROM run
+                WHERE status = 'running'
+                  AND COALESCE(last_event_at, started_at) < ?
+                """,
+                (cutoff,),
+            ).fetchall()
+        ]
+        for run_id in stale:
+            conn.execute("DELETE FROM log_line WHERE run_id = ?", (run_id,))
+            conn.execute("DELETE FROM attachment WHERE run_id = ?", (run_id,))
+            conn.execute("DELETE FROM test WHERE run_id = ?", (run_id,))
+            conn.execute("DELETE FROM run WHERE run_id = ?", (run_id,))
+    return stale
 
 
 def apply_event(run_id: str, event: ExecutionEvent) -> None:
@@ -237,6 +435,13 @@ def apply_batch(run_id: str, batch: EventBatch) -> None:
         try:
             for event in batch.events:
                 _apply_event(conn, run_id, event)
+            # Proof-of-life for the reaper below. Stamped once per batch rather
+            # than per event: it costs one extra UPDATE on a path that already
+            # writes, and it's what separates "this run is quiet" from "the
+            # process behind this run is gone".
+            conn.execute(
+                "UPDATE run SET last_event_at = ? WHERE run_id = ?", (_now(), run_id)
+            )
             conn.execute("COMMIT")
         except Exception:
             conn.execute("ROLLBACK")

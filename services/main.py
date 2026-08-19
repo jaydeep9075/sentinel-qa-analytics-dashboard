@@ -1,5 +1,6 @@
 ﻿import logging
 import os
+import copy
 import uuid
 import json
 import re
@@ -52,8 +53,10 @@ _STATUS_CACHE_TTL_SECONDS = 10.0
 _QUALITY_CACHE_TTL_SECONDS = 20.0
 _SUGGESTIONS_CACHE_TTL_SECONDS = 120.0
 _INGESTIONS_CACHE_TTL_SECONDS = 15.0
+_INSIGHTS_CACHE_TTL_SECONDS = 20.0
 _status_cache: dict[str, tuple[float, dict]] = {}
 _quality_cache: dict[str, tuple[float, dict]] = {}
+_insights_cache: dict[str, tuple[float, dict]] = {}
 _suggestions_cache: dict[str, tuple[float, dict]] = {}
 _ingestions_cache: dict[str, tuple[float, dict]] = {}
 # The ingestions list is cached per viewer scope ("admin" or "ws:<workspace>")
@@ -667,6 +670,212 @@ def _get_status_payload(normalized_ingestion_id: str) -> dict:
     return _cache_set(_status_cache, normalized_ingestion_id, payload)
 
 
+_EMPTY_INSIGHTS = {
+    "has_data": False,
+    "readiness": {"verdict": "unknown", "label": "No data", "detail": "Select a build to see release readiness."},
+    "pass_rate": 0.0,
+    "blast_radius": {"impacted": 0, "total": 0, "top_area": "", "top_area_failures": 0},
+    "top_failure": {"signature": "", "count": 0, "share": 0.0},
+    "runtime": {"total_seconds": 0.0, "avg_seconds": 0.0, "failed_seconds": 0.0, "slowest_area": ""},
+    "coverage": {"skipped": 0, "skipped_rate": 0.0},
+}
+
+
+def _readiness_verdict(pass_rate: float, failed: int, total: int) -> dict:
+    """Turn raw counts into the one thing a release call actually needs.
+
+    The thresholds are deliberately blunt - this is a go/no-go signal for a
+    stakeholder skimming the page, not a statistical model. Anything more
+    nuanced belongs in the charts below it.
+    """
+    if total <= 0:
+        return {"verdict": "unknown", "label": "No data", "detail": "This build has no test results yet."}
+    if failed == 0:
+        return {
+            "verdict": "ready",
+            "label": "Ready to ship",
+            "detail": f"All {total:,} tests passed on this build.",
+        }
+    if pass_rate >= 98.0:
+        return {
+            "verdict": "ready",
+            "label": "Ready to ship",
+            "detail": f"{failed:,} of {total:,} tests failing - under the 2% release threshold.",
+        }
+    if pass_rate >= 90.0:
+        return {
+            "verdict": "at_risk",
+            "label": "At risk",
+            "detail": f"{failed:,} failures need triage before this build ships.",
+        }
+    return {
+        "verdict": "blocked",
+        "label": "Blocked",
+        "detail": f"{failed:,} of {total:,} tests failing - not shippable as-is.",
+    }
+
+
+def _failure_signature(error: str) -> str:
+    """Collapse a stack trace to the one line that identifies the fault.
+
+    Grouping on the raw `error` string produces one "cluster" per test (every
+    trace carries its own line numbers and selectors), which tells a reader
+    nothing. The first line, minus its variable tail, is what actually
+    repeats across tests hitting the same defect.
+    """
+    text = str(error or "").strip()
+    if not text:
+        return ""
+    first_line = text.splitlines()[0].strip()
+    # Drop the trailing detail after a colon when the head looks like an
+    # exception/assertion name - that head is the part that repeats.
+    head = first_line.split(":", 1)[0].strip() if ":" in first_line else first_line
+    signature = head if 4 <= len(head) <= 80 else first_line
+    return signature[:120]
+
+
+def _get_insights_payload(normalized_ingestion_id: str) -> dict:
+    """Business-level read of one build: ship/no-ship, blast radius, the
+    dominant failure driver, and what the suite costs in wall-clock time.
+
+    Everything here is a DuckDB aggregate over tables that are already in
+    memory - same cost class as /data/status, no LLM and no disk I/O - so it
+    rides along on the dashboard overview instead of being its own request.
+    """
+    cached = _cache_get(_insights_cache, normalized_ingestion_id, _INSIGHTS_CACHE_TTL_SECONDS)
+    if cached is not None:
+        return cached
+
+    if not state.duck_conn:
+        return _cache_set(_insights_cache, normalized_ingestion_id, copy.deepcopy(_EMPTY_INSIGHTS))
+
+    test_table = _get_test_results_table()
+    payload = copy.deepcopy(_EMPTY_INSIGHTS)
+
+    try:
+        with state._duck_query_lock:
+            columns = {c[0] for c in state.duck_conn.execute(f"DESCRIBE {test_table}").fetchall()}
+    except Exception as e:
+        logger.warning(f"Insights: could not describe {test_table}: {e}")
+        return _cache_set(_insights_cache, normalized_ingestion_id, payload)
+
+    has_error = "error" in columns
+    # module_name is the canonical "area of the product" column; project_name
+    # is the next best thing when a dataset never carried modules.
+    if "module_name" in columns:
+        area_col = "module_name"
+    elif "project_name" in columns:
+        area_col = "project_name"
+    else:
+        area_col = None
+
+    duration_expr = "COALESCE(TRY_CAST(duration AS DOUBLE), 0)" if "duration" in columns else "0"
+
+    try:
+        with state._duck_query_lock:
+            totals = state.duck_conn.execute(
+                f"""
+                SELECT
+                  COUNT(*) AS total,
+                  SUM(CASE WHEN status='passed' THEN 1 ELSE 0 END) AS passed,
+                  SUM(CASE WHEN status='failed' THEN 1 ELSE 0 END) AS failed,
+                  SUM(CASE WHEN status='skipped' THEN 1 ELSE 0 END) AS skipped,
+                  SUM({duration_expr}) AS total_duration,
+                  AVG({duration_expr}) AS avg_duration,
+                  SUM(CASE WHEN status='failed' THEN {duration_expr} ELSE 0 END) AS failed_duration
+                FROM {test_table}
+                """
+            ).fetchone()
+    except Exception as e:
+        logger.warning(f"Insights: totals query failed: {e}")
+        return _cache_set(_insights_cache, normalized_ingestion_id, payload)
+
+    total = int(totals[0] or 0)
+    if total <= 0:
+        return _cache_set(_insights_cache, normalized_ingestion_id, payload)
+
+    passed = int(totals[1] or 0)
+    failed = int(totals[2] or 0)
+    skipped = int(totals[3] or 0)
+    pass_rate = round((passed / total) * 100, 1)
+
+    payload["has_data"] = True
+    payload["pass_rate"] = pass_rate
+    payload["readiness"] = _readiness_verdict(pass_rate, failed, total)
+    payload["coverage"] = {
+        "skipped": skipped,
+        "skipped_rate": round((skipped / total) * 100, 1),
+    }
+    payload["runtime"] = {
+        "total_seconds": round(float(totals[4] or 0), 2),
+        "avg_seconds": round(float(totals[5] or 0), 3),
+        "failed_seconds": round(float(totals[6] or 0), 2),
+        "slowest_area": "",
+    }
+
+    if area_col:
+        try:
+            with state._duck_query_lock:
+                areas = state.duck_conn.execute(
+                    f"""
+                    SELECT
+                      COALESCE(NULLIF(TRIM(CAST({area_col} AS VARCHAR)), ''), 'unknown') AS area,
+                      COUNT(*) AS area_total,
+                      SUM(CASE WHEN status='failed' THEN 1 ELSE 0 END) AS area_failed,
+                      SUM({duration_expr}) AS area_duration
+                    FROM {test_table}
+                    GROUP BY 1
+                    """
+                ).fetchall()
+        except Exception as e:
+            logger.warning(f"Insights: area query failed: {e}")
+            areas = []
+
+        if areas:
+            impacted = [a for a in areas if int(a[2] or 0) > 0]
+            top_area = max(impacted, key=lambda a: int(a[2] or 0)) if impacted else None
+            slowest = max(areas, key=lambda a: float(a[3] or 0))
+            payload["blast_radius"] = {
+                "impacted": len(impacted),
+                "total": len(areas),
+                "top_area": str(top_area[0]) if top_area else "",
+                "top_area_failures": int(top_area[2] or 0) if top_area else 0,
+            }
+            if float(slowest[3] or 0) > 0:
+                payload["runtime"]["slowest_area"] = str(slowest[0])
+
+    if has_error and failed > 0:
+        try:
+            with state._duck_query_lock:
+                errors = state.duck_conn.execute(
+                    f"""
+                    SELECT CAST(error AS VARCHAR) AS err
+                    FROM {test_table}
+                    WHERE status='failed'
+                      AND error IS NOT NULL
+                      AND TRIM(CAST(error AS VARCHAR)) <> ''
+                    """
+                ).fetchall()
+        except Exception as e:
+            logger.warning(f"Insights: failure-signature query failed: {e}")
+            errors = []
+
+        buckets: dict[str, int] = {}
+        for row in errors:
+            sig = _failure_signature(row[0])
+            if sig:
+                buckets[sig] = buckets.get(sig, 0) + 1
+        if buckets:
+            sig, count = max(buckets.items(), key=lambda kv: kv[1])
+            payload["top_failure"] = {
+                "signature": sig,
+                "count": count,
+                "share": round((count / failed) * 100, 1),
+            }
+
+    return _cache_set(_insights_cache, normalized_ingestion_id, payload)
+
+
 def _get_quality_payload(normalized_ingestion_id: str) -> dict:
     cached = _cache_get(_quality_cache, normalized_ingestion_id, _QUALITY_CACHE_TTL_SECONDS)
     if cached is not None:
@@ -916,7 +1125,10 @@ async def credential_change_middleware(request: Request, call_next):
         user = _user_from_request(request)
         if user is not None and config.AUTH_BACKEND == "db":
             try:
-                must_change = auth_module.get_user_store().get_must_change_password(
+                # Same rule the login response reports, so a session is never
+                # waved past the login screen only to be 403'd by every panel
+                # it lands on - see auth.credential_change_is_forced().
+                must_change = auth_module.credential_change_is_forced(
                     user.get("username")
                 )
             except Exception:
@@ -977,22 +1189,21 @@ async def login(username: str, password: str, workspace_id: Optional[str] = None
     if not user:
         audit_log.record("login_failed", uname_for_audit, success=False)
         raise HTTPException(status_code=401, detail="Invalid credentials")
+    # Signing in with the shipped default is a soft prompt (Change now /
+    # Remind later), not a hard lock - but it stays a prompt for as long as
+    # the password is still the default, which means deciding it fresh on
+    # every login instead of consuming a flag on the first one. This used to
+    # clear must_change_password here, which is a write on the login path:
+    # it discarded policy an admin may have set on purpose, and it made the
+    # answer depend on how many times the account had signed in before.
+    # Nothing about the credential is mutated by signing in any more.
     default_password_prompt = (
         auth_module.is_default_password_value(password)
         and auth_module.user_has_default_password(user["username"])
     )
-    if default_password_prompt and user.get("must_change_password"):
-        # Default-password logins are now a soft prompt (Change now / Remind later),
-        # not a hard lock. Keep the hard lock for non-default temporary passwords.
-        try:
-            auth_module.get_user_store().set_must_change_password(user["username"], False)
-            user["must_change_password"] = False
-        except Exception:
-            logger.warning(
-                "Could not clear must_change_password for default-password user '%s'",
-                user["username"],
-                exc_info=True,
-            )
+    must_change_password = auth_module.credential_change_is_forced(
+        user["username"], bool(user.get("must_change_password"))
+    )
 
     audit_log.record("login", user["username"], workspace_id=user.get("workspace_id", ""))
     ws = str(user.get("workspace_id") or config.DEFAULT_WORKSPACE_ID).strip().lower()
@@ -1011,7 +1222,8 @@ async def login(username: str, password: str, workspace_id: Optional[str] = None
         # to check it - see credential_change_middleware, which re-reads it
         # from the store on each protected request instead of relying on
         # this snapshot.
-        "must_change_password": bool(user.get("must_change_password")),        "default_password_prompt": bool(default_password_prompt),
+        "must_change_password": must_change_password,
+        "default_password_prompt": bool(default_password_prompt),
         "default_password_message": (
             "You are signed in with the default password. "
             "Change it now to secure your account."
@@ -1062,13 +1274,21 @@ async def registration_policy():
 
 @app.get("/auth/me")
 async def whoami(current_user: dict = Depends(get_current_user)):
-    record = get_user_store().get_user_record(current_user.get("username")) or {}
     return {
         "username": current_user.get("username"),
         "role": current_user.get("role"),
         "workspace_id": current_user.get("workspace_id"),
         "is_admin": is_admin(current_user),
-        "must_change_password": bool(record.get("must_change_password")),
+        # The hard-lock rule, not the raw column: the dashboard and the admin
+        # layout bounce to /account?forced=1 on this, and an account that is
+        # merely still on the shipped default gets the login-screen prompt
+        # instead. Reporting the raw flag here would redirect it away from
+        # every page it is in fact allowed to use. The admin console reads
+        # the raw column via /admin/users, which is where seeing the flag an
+        # admin actually set is the point.
+        "must_change_password": auth_module.credential_change_is_forced(
+            current_user.get("username")
+        ),
     }
 
 
@@ -1891,7 +2111,7 @@ async def chart(
 ):
     session_id = x_session_id or request.session_id or str(uuid.uuid4())
     _enforce_token_quota(current_user)
-    chart_json, error = await handlers.handle_chart(
+    chart_json, error, chart_id = await handlers.handle_chart(
         request.message, session_id, x_ingestion_id,
         role=x_role,
         project_id=x_project,
@@ -1900,7 +2120,10 @@ async def chart(
     )
     if error:
         return {"error": error, "session_id": session_id}
-    return {"chart": chart_json, "session_id": session_id}
+    # chart_id lets the browser render this figure straight away and still
+    # match it against the history list on the next fetch, instead of waiting
+    # for that fetch to find out what it just generated.
+    return {"chart": chart_json, "chart_id": chart_id, "session_id": session_id}
 
 @app.get("/chat/history/{session_id}")
 async def get_chat_history_endpoint(
@@ -1964,43 +2187,35 @@ async def delete_chart(
     _entry = await run_in_threadpool(data_loader.get_or_load_ingestion, normalized_ingestion_id)
     if _entry is not None:
         state.set_active_ingestion(normalized_ingestion_id, _entry["duck_conn"], _entry["lance_db"], _entry["embedder"])
-    if state.lance_db is None or "chart_history" not in state.lance_db.table_names():
-        return {"error": "Chart history not available"}
+
+    if state.lance_db is None:
+        raise HTTPException(status_code=404, detail="Chart history not available for this build")
+
+    def _remove() -> bool:
+        return memory.delete_chart(
+            chart_id,
+            user_id=current_user["username"],
+            workspace_id=_normalize_workspace(x_workspace_id, current_user),
+            ingestion_id=normalized_ingestion_id,
+            # An admin deleting from the admin surface still needs to reach
+            # charts they do not personally own; everyone else is scoped to
+            # their own (workspace, user) pair.
+            allow_any_owner=_is_admin_role(current_user.get("role")),
+        )
+
     try:
-        import pandas as pd
-
-        table = state.lance_db.open_table("chart_history")
-        all_df = table.to_pandas()
-        if all_df.empty:
-            return {"error": "Chart not found"}
-
-        user_key = str(current_user["username"]).strip().lower()
-        ws_key = _normalize_workspace(x_workspace_id, current_user)
-        if "user_id" in all_df.columns:
-            owned = all_df[(all_df["user_id"] == user_key) & (all_df["id"] == chart_id)]
-            if "workspace_id" in all_df.columns:
-                owned = owned[owned["workspace_id"] == ws_key]
-        else:
-            owned = all_df[all_df["id"] == chart_id]
-
-        if owned.empty:
-            return {"error": "Chart not found or not owned by current user"}
-
-        updated_df = all_df[all_df["id"] != chart_id]
-        if len(updated_df) == 0:
-            state.lance_db.drop_table("chart_history")
-            empty_df = pd.DataFrame(columns=[
-                "id", "workspace_id", "user_id", "ingestion_id", "session_id", "type", "prompt", "response", "config",
-                "created_at", "metadata"
-            ])
-            state.lance_db.create_table("chart_history", empty_df)
-        else:
-            state.lance_db.drop_table("chart_history")
-            state.lance_db.create_table("chart_history", updated_df)
-        return {"success": True}
+        removed = await run_in_threadpool(_remove)
     except Exception as e:
-        logger.error(f"Error deleting chart: {e}")
-        return {"error": str(e)}
+        # Answering a failed delete with 200 + {"error": ...} is why this
+        # looked like "delete does nothing" in the UI: the browser saw a
+        # success, kept the card on screen, and nothing said why.
+        logger.error(f"Error deleting chart {chart_id}: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Failed to delete chart")
+
+    if not removed:
+        raise HTTPException(status_code=404, detail="Chart not found, or not owned by the current user")
+
+    return {"success": True, "id": chart_id}
 
 @app.get("/debug/data")
 async def debug_data(
@@ -2099,6 +2314,7 @@ async def dashboard_overview(
         "checks": [],
         "guidance": ["No ingestion selected"],
     }
+    insights_payload = copy.deepcopy(_EMPTY_INSIGHTS)
 
     if normalized_ingestion_id:
         _entry = await run_in_threadpool(data_loader.get_or_load_ingestion, normalized_ingestion_id)
@@ -2130,6 +2346,14 @@ async def dashboard_overview(
                 )
             except Exception as e:
                 logger.error(f"Error computing overview quality: {e}")
+            try:
+                # Same in-memory aggregates the status block already touched,
+                # so this adds a handful of DuckDB scans rather than a round
+                # trip - the dashboard's business band would otherwise need
+                # its own request on every refresh.
+                insights_payload = _get_insights_payload(normalized_ingestion_id)
+            except Exception as e:
+                logger.error(f"Error computing overview insights: {e}")
 
     # Token usage is intentionally NOT included here anymore - it used to be
     # embedded in every caller's dashboard overview regardless of role, which
@@ -2141,6 +2365,7 @@ async def dashboard_overview(
         "ingestion_id": normalized_ingestion_id,
         "status": status_payload,
         "quality": quality_payload,
+        "insights": insights_payload,
         "server_time": datetime.now(timezone.utc).isoformat(),
     }
 
@@ -2253,7 +2478,7 @@ def _purge_build_state(ingestion_id: str) -> None:
         except Exception:
             logger.debug("Could not close pooled DuckDB connection for %s", ingestion_id, exc_info=True)
 
-    for cache in (_status_cache, _quality_cache, _suggestions_cache):
+    for cache in (_status_cache, _quality_cache, _suggestions_cache, _insights_cache):
         cache.pop(ingestion_id, None)
     # Cleared wholesale, not by key: the list is cached per viewer scope
     # ("admin", "ws:platform", ...) and a deleted build has to disappear from

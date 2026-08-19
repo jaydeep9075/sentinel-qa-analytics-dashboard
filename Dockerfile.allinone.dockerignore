@@ -42,3 +42,9 @@ tests/
 *.md
 !README.md
 node_modules/
+
+# Reporter package: built from source inside the image (reporter-builder
+# stage), so its local node_modules/dist/tarball must not bloat the context.
+packages/*/node_modules
+packages/*/dist
+packages/dist-pack

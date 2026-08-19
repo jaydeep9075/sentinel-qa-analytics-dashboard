@@ -145,7 +145,7 @@ export default function LoginPage() {
           <div className="relative z-10">
             {/* logo + heading */}
             <div className="flex items-center gap-3 mb-8">
-              <BrandLogo className="px-3 py-2 shadow-[0_0_24px_rgba(0,240,255,0.18)]" />
+              <BrandLogo size={46} />
               <div>
                 <h2 className="text-2xl font-bold text-slate-900 dark:text-white">Welcome Back</h2>
                 <p className="text-slate-500 dark:text-white/30 text-xs tracking-wide">Sign in to Sentinel Analytics</p>

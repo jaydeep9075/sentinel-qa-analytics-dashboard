@@ -2,18 +2,33 @@
 
 import { useState, useEffect, useRef } from "react";
 import { useRouter } from "next/navigation";
-import Link from "next/link";
 import { motion } from "framer-motion";
-import { TrendingUp, LogOut, Wifi, WifiOff, Plus, Radio, Shield, UserCog } from "lucide-react";
+import {
+  TrendingUp,
+  LogOut,
+  Wifi,
+  WifiOff,
+  Plus,
+  Radio,
+  Shield,
+  UserCog,
+  LayoutDashboard,
+} from "lucide-react";
+import { NavLink, NAV_ACTION, NAV_DANGER } from "@/components/HeaderNav";
 import ChartGallery from "@/components/ChartGallery";
+import DashboardInsightBand from "@/components/DashboardInsights";
 import IngestionSelector from "@/components/IngestionSelector";
 import ProjectSelector from "@/components/ProjectSelector";
 import RoleSelector from "@/components/RoleSelector";
 import FloatingChat from "@/components/FloatingChat";
 import FloatingChart from "@/components/FloatingChart";  // new
-import BrandLogo from "@/components/BrandLogo";
+import BrandHeading from "@/components/BrandHeading";
 import AddBuildWizard from "@/components/AddBuildWizard";
-import { getDashboardOverview, readCachedDashboardOverview } from "@/lib/api";
+import {
+  getDashboardOverview,
+  readCachedDashboardOverview,
+  type DashboardInsights,
+} from "@/lib/api";
 import { useIngestion } from "@/lib/IngestionContext";
 import { usePermissions } from "@/lib/usePermissions";
 
@@ -32,6 +47,43 @@ const statCardVariants = {
   },
 };
 
+/** One KPI tile. Colour is carried by the number alone — the card chrome
+ *  stays neutral, so a row of six reads as one instrument panel rather than
+ *  six competing badges. */
+const TILE_TONES = {
+  neutral: "text-slate-900 dark:text-white",
+  good: "text-emerald-600 dark:text-emerald-400",
+  bad: "text-red-600 dark:text-red-400",
+  warn: "text-amber-600 dark:text-amber-400",
+  accent: "text-cyan-600 dark:text-cyan-400",
+} as const;
+
+function StatTile({
+  label,
+  value,
+  tone = "neutral",
+  hint,
+}: {
+  label: string;
+  value: string;
+  tone?: keyof typeof TILE_TONES;
+  hint?: string;
+}) {
+  return (
+    <motion.div
+      variants={statCardVariants}
+      whileHover={{ y: -3 }}
+      title={hint}
+      className="rounded-xl border border-slate-200 bg-white px-4 py-3.5 transition-colors hover:border-cyan-500/25 dark:border-white/[0.06] dark:bg-white/[0.02]"
+    >
+      <p className="mb-1 text-[10px] font-semibold uppercase tracking-widest text-slate-500 dark:text-white/35">
+        {label}
+      </p>
+      <p className={`text-2xl font-bold leading-none tabular-nums ${TILE_TONES[tone]}`}>{value}</p>
+    </motion.div>
+  );
+}
+
 export default function Dashboard() {
   const router = useRouter();
   const { selectedIngestion, setSelectedIngestion } = useIngestion();
@@ -47,7 +99,6 @@ export default function Dashboard() {
     };
   } | null>(null);
   const [backendConnected, setBackendConnected] = useState(false);
-  const [refreshGallery, setRefreshGallery] = useState(0);
   const [isAddBuildOpen, setIsAddBuildOpen] = useState(false);
   const [dataQuality, setDataQuality] = useState<{
     score?: number;
@@ -55,17 +106,16 @@ export default function Dashboard() {
     guidance?: string[];
     checks?: { name?: string; passed?: boolean; detail?: string }[];
   } | null>(null);
+  const [insights, setInsights] = useState<DashboardInsights | null>(null);
   const [isHeaderLoading, setIsHeaderLoading] = useState(true);
   const headerLoadStartRef = useRef<number>(0);
 
-  // Listen for chart-generated events from FloatingChart
-  useEffect(() => {
-    const handleChartGenerated = () => {
-      setRefreshGallery(prev => prev + 1);
-    };
-    window.addEventListener("chart-generated", handleChartGenerated);
-    return () => window.removeEventListener("chart-generated", handleChartGenerated);
-  }, []);
+  // `chart-generated` is handled inside ChartGallery, which inserts the new
+  // figure into its own list. This page used to answer the same event by
+  // bumping a `key` on <ChartGallery/> — remounting it wholesale, which threw
+  // away every already-drawn Plotly instance and rebuilt the entire gallery
+  // from scratch. That teardown-and-redraw was the multi-second gap between
+  // "generating" disappearing and charts reappearing.
 
   useEffect(() => {
     let cancelled = false;
@@ -88,11 +138,13 @@ export default function Dashboard() {
         guidance?: string[];
         checks?: { name?: string; passed?: boolean; detail?: string }[];
       };
+      insights?: DashboardInsights;
     }) => {
       if (cancelled) return;
       setBackendConnected(Boolean(overview.connected));
       if (overview.status) setDataStatus(overview.status);
       if (overview.quality) setDataQuality(overview.quality);
+      if (overview.insights) setInsights(overview.insights);
       setIsHeaderLoading(false);
     };
 
@@ -106,6 +158,7 @@ export default function Dashboard() {
         if (!cancelled) {
           setDataStatus(null);
           setDataQuality(null);
+          setInsights(null);
           setBackendConnected(true);
           setIsHeaderLoading(false);
         }
@@ -216,16 +269,7 @@ export default function Dashboard() {
       >
         <div className="max-w-[1600px] mx-auto px-6 py-3.5 flex flex-col md:flex-row justify-between items-center gap-4">
           {/* left: logo */}
-          <div className="flex items-center gap-3">
-            <BrandLogo className="shadow-[0_0_20px_rgba(0,240,255,0.2)]" />
-            <div>
-              <h1 className="text-lg font-bold tracking-tight">
-                <span className="text-cyan-400">Sentinel</span>{" "}
-                <span className="font-normal text-slate-500 dark:text-white/60">Dashboard</span>
-              </h1>
-              <p className="text-[10px] uppercase tracking-widest font-semibold text-slate-500 dark:text-white/25">QA Intelligence Platform</p>
-            </div>
-          </div>
+          <BrandHeading label="Dashboard" />
 
           {/* right: selectors + status + actions */}
           <div className="flex items-center gap-3 flex-wrap justify-end">
@@ -234,10 +278,7 @@ export default function Dashboard() {
             <RoleSelector />
             {canIngest && (
             <div className="relative">
-              <button
-                onClick={() => setIsAddBuildOpen(true)}
-                className="flex items-center gap-1.5 text-xs text-slate-700 dark:text-white/75 font-semibold border border-slate-300 dark:border-white/[0.1] px-3 py-1.5 rounded-lg bg-slate-100 hover:bg-slate-200 dark:bg-white/[0.05] dark:hover:bg-white/[0.1] transition-all active:scale-95"
-              >
+              <button onClick={() => setIsAddBuildOpen(true)} className={NAV_ACTION}>
                 <Plus className="w-3.5 h-3.5" />
                 Add New Build
               </button>
@@ -245,10 +286,9 @@ export default function Dashboard() {
               <AddBuildWizard
                 isOpen={isAddBuildOpen}
                 onClose={() => setIsAddBuildOpen(false)}
-                onSuccess={(id) => {
-                  setSelectedIngestion(id);
-                  setRefreshGallery((prev) => prev + 1);
-                }}
+                // Switching the build already changes the gallery's SWR key,
+                // which refetches it — no remount needed on top of that.
+                onSuccess={(id) => setSelectedIngestion(id)}
               />
             </div>
             )}
@@ -266,173 +306,95 @@ export default function Dashboard() {
               </div>
             )}
 
-            {/* live runs link */}
-            <Link
-              href="/runs/live"
-              className="flex items-center gap-1.5 text-xs text-emerald-400 hover:text-emerald-300 font-semibold border border-emerald-500/20 px-3 py-1.5 rounded-lg bg-emerald-500/[0.06] hover:bg-emerald-500/[0.12] hover:border-emerald-500/30 hover:shadow-[0_0_15px_rgba(16,240,150,0.08)] hover:-translate-y-0.5 active:scale-95 transition-all"
-            >
-              <Radio className="w-3.5 h-3.5" />
-              Live Runs
-            </Link>
-
-            {/* build trends link */}
-            <Link
-              href="/build-trends"
-              className="flex items-center gap-1.5 text-xs text-cyan-400 hover:text-cyan-300 font-semibold border border-cyan-500/20 px-3 py-1.5 rounded-lg bg-cyan-500/[0.06] hover:bg-cyan-500/[0.12] hover:border-cyan-500/30 hover:shadow-[0_0_15px_rgba(0,240,255,0.08)] hover:-translate-y-0.5 active:scale-95 transition-all"
-            >
-              <TrendingUp className="w-3.5 h-3.5" />
-              Build Trends
-            </Link>
-
-            {/* admin console — admins only */}
-            {isAdmin && (
-              <Link
-                href="/admin"
-                className="flex items-center gap-1.5 text-xs text-purple-400 hover:text-purple-300 font-semibold border border-purple-500/20 px-3 py-1.5 rounded-lg bg-purple-500/[0.06] hover:bg-purple-500/[0.12] hover:border-purple-500/30 hover:-translate-y-0.5 active:scale-95 transition-all"
-              >
-                <Shield className="w-3.5 h-3.5" />
-                Admin
-              </Link>
-            )}
-
-            {/* account settings — everyone */}
-            <Link
-              href="/account"
-              className="flex items-center gap-1.5 text-xs text-slate-600 dark:text-white/60 hover:text-cyan-500 font-semibold border border-slate-300 dark:border-white/[0.1] px-3 py-1.5 rounded-lg bg-slate-100 hover:bg-slate-200 dark:bg-white/[0.05] dark:hover:bg-white/[0.1] hover:-translate-y-0.5 active:scale-95 transition-all"
-            >
-              <UserCog className="w-3.5 h-3.5" />
-              Account
-            </Link>
-
-            {/* logout */}
-            <button
-              onClick={handleLogout}
-              className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg transition-all active:scale-95 text-red-600/80 hover:text-red-700 hover:bg-red-100 dark:text-red-400/70 dark:hover:text-red-400 dark:hover:bg-red-500/[0.08]"
-            >
-              <LogOut className="w-3.5 h-3.5" />
-              Logout
-            </button>
+            {/* Nav proper. One shared style — the page you are on is the
+                only item that takes the brand accent. */}
+            <nav className="flex items-center gap-1">
+              <NavLink href="/dashboard" icon={LayoutDashboard} label="Dashboard" active />
+              <NavLink href="/runs/live" icon={Radio} label="Live Runs" />
+              <NavLink href="/build-trends" icon={TrendingUp} label="Build Trends" />
+              {isAdmin && <NavLink href="/admin" icon={Shield} label="Admin" />}
+              <NavLink href="/account" icon={UserCog} label="Account" />
+              <button onClick={handleLogout} className={NAV_DANGER}>
+                <LogOut className="w-3.5 h-3.5" />
+                Logout
+              </button>
+            </nav>
           </div>
         </div>
       </motion.header>
 
       {/* ══════════ MAIN CONTENT ══════════ */}
       <div className="relative z-10 max-w-[1600px] mx-auto px-6 py-8">
-        {/* Data Summary Cards */}
+        {/* ── KPI strip ───────────────────────────────────────────────
+            Six equal tiles, one row. Data quality now lives here as a bare
+            percentage alongside the other counts, instead of the full-width
+            panel it used to own — it is a health indicator, not the headline
+            of the page. */}
         {(dataStatus?.has_data && dataStatus.total_rows) || isHeaderLoading ? (
           <motion.div
             variants={statGridVariants}
             initial="hidden"
             animate="visible"
-            className="grid grid-cols-1 md:grid-cols-6 gap-4 mb-4"
+            className="grid grid-cols-2 gap-3 mb-4 md:grid-cols-3 xl:grid-cols-6"
           >
-            {/* Total Tests */}
-            <motion.div
-              variants={statCardVariants}
-              whileHover={{ y: -6 }}
-              className="group relative rounded-2xl p-5 border border-slate-200 bg-white hover:border-cyan-500/20 hover:bg-cyan-500/[0.03] hover:shadow-[0_16px_35px_rgba(6,182,212,0.1)] transition-all overflow-hidden dark:border-white/[0.06] dark:bg-white/[0.02] dark:hover:shadow-[0_16px_35px_rgba(0,0,0,0.5)]"
-            >
-              <div className="absolute -top-12 -right-12 w-24 h-24 bg-cyan-500/[0.06] blur-2xl rounded-full opacity-0 group-hover:opacity-100 transition-opacity" />
-              <p className="text-[10px] uppercase tracking-widest font-semibold mb-1 text-slate-500 dark:text-white/30">Total Tests</p>
-              <p className="text-3xl font-bold transition-colors text-slate-900 group-hover:text-cyan-600 dark:text-white dark:group-hover:text-cyan-400">
-                {isHeaderLoading ? "..." : (dataStatus?.total_rows || 0).toLocaleString()}
-              </p>
-            </motion.div>
-
-            {/* Passed */}
-            <motion.div
-              variants={statCardVariants}
-              whileHover={{ y: -6 }}
-              className="group relative rounded-2xl p-5 border border-emerald-500/10 bg-emerald-500/[0.03] hover:border-emerald-500/25 hover:bg-emerald-500/[0.06] hover:shadow-[0_16px_35px_rgba(16,185,129,0.12)] transition-all overflow-hidden"
-            >
-              <div className="absolute -top-12 -right-12 w-24 h-24 bg-emerald-500/[0.08] blur-2xl rounded-full opacity-0 group-hover:opacity-100 transition-opacity" />
-              <p className="text-[10px] uppercase tracking-widest font-semibold mb-1 text-slate-500 dark:text-white/30">Passed</p>
-              <p className="text-3xl font-bold text-emerald-400">
-                {isHeaderLoading ? "..." : (dataStatus?.status_summary?.passed?.toLocaleString() || 0)}
-              </p>
-            </motion.div>
-
-            {/* Failed */}
-            <motion.div
-              variants={statCardVariants}
-              whileHover={{ y: -6 }}
-              className="group relative rounded-2xl p-5 border border-red-500/10 bg-red-500/[0.03] hover:border-red-500/25 hover:bg-red-500/[0.06] hover:shadow-[0_16px_35px_rgba(239,68,68,0.12)] transition-all overflow-hidden"
-            >
-              <div className="absolute -top-12 -right-12 w-24 h-24 bg-red-500/[0.08] blur-2xl rounded-full opacity-0 group-hover:opacity-100 transition-opacity" />
-              <p className="text-[10px] uppercase tracking-widest font-semibold mb-1 text-slate-500 dark:text-white/30">Failed</p>
-              <p className="text-3xl font-bold text-red-400">
-                {isHeaderLoading ? "..." : (dataStatus?.status_summary?.failed?.toLocaleString() || 0)}
-              </p>
-            </motion.div>
-
-            {/* Pass Rate */}
-            <motion.div
-              variants={statCardVariants}
-              whileHover={{ y: -6 }}
-              className="group relative rounded-2xl p-5 border border-cyan-500/10 bg-cyan-500/[0.03] hover:border-cyan-500/25 hover:bg-cyan-500/[0.06] hover:shadow-[0_16px_35px_rgba(6,182,212,0.12)] transition-all overflow-hidden"
-            >
-              <div className="absolute -top-12 -right-12 w-24 h-24 bg-cyan-500/[0.08] blur-2xl rounded-full opacity-0 group-hover:opacity-100 transition-opacity" />
-              <p className="text-[10px] uppercase tracking-widest font-semibold mb-1 text-slate-500 dark:text-white/30">Pass Rate</p>
-              <p className="text-3xl font-bold bg-gradient-to-r from-cyan-400 to-blue-500 bg-clip-text text-transparent">
-                {isHeaderLoading
+            <StatTile
+              label="Total Tests"
+              value={isHeaderLoading ? "..." : (dataStatus?.total_rows || 0).toLocaleString()}
+              tone="neutral"
+            />
+            <StatTile
+              label="Passed"
+              value={isHeaderLoading ? "..." : (dataStatus?.status_summary?.passed || 0).toLocaleString()}
+              tone="good"
+            />
+            <StatTile
+              label="Failed"
+              value={isHeaderLoading ? "..." : (dataStatus?.status_summary?.failed || 0).toLocaleString()}
+              tone="bad"
+            />
+            <StatTile
+              label="Skipped"
+              value={isHeaderLoading ? "..." : (dataStatus?.status_summary?.skipped || 0).toLocaleString()}
+              tone="warn"
+            />
+            <StatTile
+              label="Pass Rate"
+              value={
+                isHeaderLoading
                   ? "..."
                   : `${Math.round(
-                      (((dataStatus?.status_summary?.passed || 0) / Math.max(1, dataStatus?.total_rows || 0)) * 100),
-                    )}%`}
-              </p>
-            </motion.div>
-
-            {/* Skipped */}
-            <motion.div
-              variants={statCardVariants}
-              whileHover={{ y: -6 }}
-              className="group relative rounded-2xl p-5 border border-amber-500/10 bg-amber-500/[0.03] hover:border-amber-500/25 hover:bg-amber-500/[0.06] hover:shadow-[0_16px_35px_rgba(245,158,11,0.12)] transition-all overflow-hidden"
-            >
-              <div className="absolute -top-12 -right-12 w-24 h-24 bg-amber-500/[0.08] blur-2xl rounded-full opacity-0 group-hover:opacity-100 transition-opacity" />
-              <p className="text-[10px] uppercase tracking-widest font-semibold mb-1 text-slate-500 dark:text-white/30">Skipped</p>
-              <p className="text-3xl font-bold text-amber-500 dark:text-amber-400">
-                {isHeaderLoading ? "..." : (dataStatus?.status_summary?.skipped?.toLocaleString() || 0)}
-              </p>
-            </motion.div>
+                      ((dataStatus?.status_summary?.passed || 0) /
+                        Math.max(1, dataStatus?.total_rows || 0)) *
+                        100,
+                    )}%`
+              }
+              tone="accent"
+            />
+            <StatTile
+              label="Data Quality"
+              value={
+                isHeaderLoading
+                  ? "..."
+                  : `${Math.max(0, Math.min(100, Math.round(Number(dataQuality?.score || 0))))}%`
+              }
+              tone="accent"
+              hint={
+                (dataQuality?.guidance || []).slice(0, 2).join("  |  ") ||
+                "Completeness and shape of this build's ingested data"
+              }
+            />
           </motion.div>
         ) : null}
 
-        {dataQuality && (
-          <div className="mb-6 rounded-2xl border border-slate-200 bg-white p-5 dark:border-white/[0.06] dark:bg-white/[0.02]">
-            <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
-              <div>
-                <p className="text-[10px] uppercase tracking-widest font-semibold text-slate-500 dark:text-white/30">Ingestion Quality</p>
-                <h3 className="text-lg font-semibold text-slate-900 dark:text-white">
-                  Score: {Math.max(0, Math.min(100, Number(dataQuality.score || 0)))} / 100
-                  <span className="ml-2 text-sm font-normal text-slate-500 dark:text-white/45">({String(dataQuality.quality || "unknown").toUpperCase()})</span>
-                </h3>
-              </div>
-              <div className="flex items-center gap-2">
-                {(dataQuality.checks || []).slice(0, 3).map((c, idx) => (
-                  <span
-                    key={`${c.name}-${idx}`}
-                    className={`text-[10px] px-2 py-1 rounded-full border ${
-                      c.passed
-                        ? "text-emerald-600 border-emerald-500/30 bg-emerald-500/[0.08] dark:text-emerald-300"
-                        : "text-amber-700 border-amber-500/30 bg-amber-500/[0.08] dark:text-amber-300"
-                    }`}
-                    title={c.detail || c.name || ""}
-                  >
-                    {c.passed ? "PASS" : "CHECK"} {c.name || "rule"}
-                  </span>
-                ))}
-              </div>
-            </div>
-            {(dataQuality.guidance || []).length > 0 && (
-              <p className="mt-3 text-xs text-slate-600 dark:text-white/55">
-                {(dataQuality.guidance || []).slice(0, 2).join("  |  ")}
-              </p>
-            )}
-          </div>
-        )}
+        {/* ── Business band ───────────────────────────────────────────── */}
+        <DashboardInsightBand
+          insights={insights}
+          qualityScore={dataQuality?.score}
+          loading={isHeaderLoading && !insights}
+        />
 
         {/* Chart Gallery - now at TOP */}
-        <ChartGallery key={refreshGallery} />
+        <ChartGallery />
 
         {/* Floating buttons: chart (higher) and chat (lower) */}
         <FloatingChart />

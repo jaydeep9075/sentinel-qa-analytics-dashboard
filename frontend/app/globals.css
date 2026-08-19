@@ -342,3 +342,24 @@ a:focus-visible {
 .press-scale:active {
   transform: scale(0.92);
 }
+
+/* Stage-label crossfade for the chat thinking indicator. Each new label
+   remounts (keyed on its text), so the animation replays per stage. */
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(2px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+/* The logo's left cube face is a near-black slate that sinks into the dark
+   theme's background and leaves only half a mark visible. Lifting the
+   shadows (brightness up, contrast down) brings that face back to a
+   readable grey without touching the light theme, where it reads fine. */
+.dark .brand-mark {
+  filter: brightness(2.3) contrast(0.72) saturate(1.2);
+}

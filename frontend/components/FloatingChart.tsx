@@ -35,7 +35,9 @@ export default function FloatingChart() {
 
     setIsGenerating(true);
     setGeneratingPrompt(`Generating: "${trimmedPrompt}"...`);
-    window.dispatchEvent(new CustomEvent("chart-generating-start", { detail: trimmedPrompt }));
+    window.dispatchEvent(
+      new CustomEvent("chart-generating-start", { detail: { prompt: trimmedPrompt } }),
+    );
 
     try {
       if (styleHint) {
@@ -56,13 +58,27 @@ export default function FloatingChart() {
         ? `${trimmedPrompt}\n\nStyle preference from user: ${styleHint}`
         : trimmedPrompt;
 
-      await generateChart(promptWithStyle, selectedIngestion, selectedRole, selectedProject);
+      const { chart, chartId } = await generateChart(
+        promptWithStyle,
+        selectedIngestion,
+        selectedRole,
+        selectedProject,
+      );
       setRecentPrompts((prev) => {
         const next = [trimmedPrompt, ...prev.filter((p) => p !== trimmedPrompt)];
         return next.slice(0, 6);
       });
       setGeneratingPrompt("✅ Chart ready! See it at the top of the gallery.");
-      window.dispatchEvent(new CustomEvent("chart-generated", { detail: trimmedPrompt }));
+      // Ship the figure itself, not just the prompt. The gallery can render
+      // it on the spot instead of round-tripping to /chart/history first —
+      // that refetch was pure dead time during which the placeholder had
+      // already been torn down, which is what made the chart look like it
+      // arrived late and out of nowhere.
+      window.dispatchEvent(
+        new CustomEvent("chart-generated", {
+          detail: { prompt: trimmedPrompt, chart, chartId },
+        }),
+      );
       // Auto‑close after a short delay
       setTimeout(() => {
         setIsOpen(false);
@@ -71,11 +87,15 @@ export default function FloatingChart() {
     } catch (error: unknown) {
       const message = error instanceof Error ? error.message : "Unknown error";
       setGeneratingPrompt(`❌ Failed: ${message}`);
-      window.dispatchEvent(new CustomEvent("chart-generation-failed", { detail: trimmedPrompt }));
+      window.dispatchEvent(
+        new CustomEvent("chart-generation-failed", { detail: { prompt: trimmedPrompt } }),
+      );
       setTimeout(() => setGeneratingPrompt(null), 4000);
     } finally {
       setIsGenerating(false);
-      window.dispatchEvent(new CustomEvent("chart-generating-end", { detail: trimmedPrompt }));
+      window.dispatchEvent(
+        new CustomEvent("chart-generating-end", { detail: { prompt: trimmedPrompt } }),
+      );
     }
   };
 

@@ -5,6 +5,7 @@ import { motion } from "framer-motion";
 import useSWR from "swr";
 import { getChartHistory, deleteChart, submitFeedback } from "@/lib/api";
 import { useIngestion } from "@/lib/IngestionContext";
+import { schedulePlotlyPreload } from "@/lib/plotlyPreload";
 import AIGeneratedChart from "./AIGeneratedChart";
 import {
   LayoutGrid,
@@ -55,6 +56,29 @@ interface ChartHistoryResponse {
 
 const chartsCacheByIngestion = new Map<string, Chart[]>();
 const parsedConfigCache = new Map<string, unknown>();
+
+/** Payload the chart generator hands over once a figure is ready. */
+type ChartGeneratedDetail = {
+  prompt?: string;
+  chart?: string | unknown;
+  chartId?: string;
+};
+
+function readEventDetail(event: Event): ChartGeneratedDetail {
+  const detail = (event as CustomEvent<ChartGeneratedDetail | string>).detail;
+  if (typeof detail === "string") return { prompt: detail };
+  return detail || {};
+}
+
+function parseChartConfig(raw: string | unknown): unknown {
+  if (raw === null || raw === undefined) return null;
+  if (typeof raw !== "string") return raw;
+  try {
+    return JSON.parse(raw);
+  } catch {
+    return null;
+  }
+}
 
 function perfNow(): number {
   if (typeof performance !== "undefined" && typeof performance.now === "function") {
@@ -124,10 +148,12 @@ const fetchCharts = async (ingestionId: string) => {
 function SortableItem({
   chart,
   onDelete,
+  isDeleting = false,
   ingestionId,
 }: {
   chart: Chart;
   onDelete: (id: string) => void;
+  isDeleting?: boolean;
   ingestionId?: string;
 }) {
   const [isSavingFeedback, setIsSavingFeedback] = useState(false);
@@ -230,10 +256,18 @@ function SortableItem({
             <Palette className="w-4 h-4" />
           </button>
           <button
+            type="button"
             onClick={() => onDelete(chart.id)}
-            className="text-slate-400 dark:text-white/15 hover:text-red-400 p-2 hover:bg-red-500/[0.08] rounded-lg transition-all"
+            disabled={isDeleting}
+            aria-label="Delete chart"
+            title="Delete chart"
+            className="text-slate-400 dark:text-white/30 hover:text-red-500 p-2 hover:bg-red-500/[0.08] rounded-lg transition-all disabled:opacity-40 disabled:cursor-not-allowed"
           >
-            <Trash2 className="w-4 h-4" />
+            {isDeleting ? (
+              <Loader2 className="w-4 h-4 animate-spin" />
+            ) : (
+              <Trash2 className="w-4 h-4" />
+            )}
           </button>
         </div>
       </div>
@@ -458,6 +492,14 @@ export default function ChartGallery() {
   const [layout, setLayout] = useState<"grid" | "list">("grid");
   const [orderedIds, setOrderedIds] = useState<string[]>([]);
   const [generatingPrompts, setGeneratingPrompts] = useState<string[]>([]);
+  // Charts already rendered from the generator's own response, still awaiting
+  // confirmation from the next history fetch. They are dropped the moment the
+  // server list contains them, so a chart is never shown twice.
+  const [pendingCharts, setPendingCharts] = useState<Chart[]>([]);
+  // Ids removed locally that the server list may still be carrying (its
+  // response was in flight, or a cached copy is being replayed).
+  const [deletedIds, setDeletedIds] = useState<string[]>([]);
+  const [deletingIds, setDeletingIds] = useState<string[]>([]);
   const fallbackCharts = selectedIngestion
     ? chartsCacheByIngestion.get(selectedIngestion)
     : undefined;
@@ -485,23 +527,46 @@ export default function ChartGallery() {
     chartsCacheByIngestion.set(selectedIngestion, charts as Chart[]);
   }, [selectedIngestion, charts]);
 
+  // Warm the Plotly chunk while the gallery is idle. Without this the first
+  // chart of a session pays a multi-megabyte download only AFTER its data has
+  // arrived — the part of the wait that used to happen with nothing on screen.
+  useEffect(() => schedulePlotlyPreload(), []);
+
   useEffect(() => {
     const handleStart = (event: Event) => {
-      const e = event as CustomEvent<string>;
-      const detail = String(e.detail || "");
-      if (!detail) return;
-      setGeneratingPrompts((prev) => [...prev, detail]);
+      const prompt = String(readEventDetail(event).prompt || "");
+      if (!prompt) return;
+      setGeneratingPrompts((prev) => [...prev, prompt]);
     };
     const handleGenerated = (event: Event) => {
-      const e = event as CustomEvent<string>;
-      const detail = String(e.detail || "");
-      setGeneratingPrompts((prev) => prev.filter((p) => p !== detail));
+      const { prompt, chart, chartId } = readEventDetail(event);
+      const promptText = String(prompt || "");
+      const config = parseChartConfig(chart);
+
+      if (config) {
+        // Render straight from the generator's response. The placeholder is
+        // only retired once its replacement is in the list, so the two hand
+        // over in the same commit and the card never blinks out of existence.
+        setPendingCharts((prev) => [
+          {
+            id: chartId || `pending:${promptText}:${Date.now()}`,
+            prompt: promptText || "Chart",
+            config,
+            created_at: new Date().toISOString(),
+          },
+          // Confirmed entries are filtered out at render time; the cap is
+          // only here so a long session can't accumulate them forever.
+          ...prev.filter((c) => c.prompt !== promptText).slice(0, 5),
+        ]);
+      }
+
+      setGeneratingPrompts((prev) => prev.filter((p) => p !== promptText));
+      // Reconcile with the server in the background; the chart is already up.
       mutate();
     };
     const handleFailed = (event: Event) => {
-      const e = event as CustomEvent<string>;
-      const detail = String(e.detail || "");
-      setGeneratingPrompts((prev) => prev.filter((p) => p !== detail));
+      const prompt = String(readEventDetail(event).prompt || "");
+      setGeneratingPrompts((prev) => prev.filter((p) => p !== prompt));
     };
 
     window.addEventListener("chart-generating-start", handleStart);
@@ -523,17 +588,62 @@ export default function ChartGallery() {
   );
 
   const handleDelete = async (id: string) => {
-    if (!selectedIngestion) return;
+    if (!selectedIngestion || deletingIds.includes(id)) return;
+
+    setDeletingIds((prev) => [...prev, id]);
+    // Tombstone first. A chart lives in three places at once (the SWR list,
+    // the module cache, and `pendingCharts`); removing it from one still
+    // leaves the other two able to put it back, so the id is filtered at
+    // render time until the server list stops carrying it.
+    setDeletedIds((prev) => (prev.includes(id) ? prev : [...prev, id]));
+    setPendingCharts((prev) => prev.filter((c) => c.id !== id));
+
+    const dropped = (list?: Chart[]) => (list || []).filter((c) => c.id !== id);
+    chartsCacheByIngestion.set(selectedIngestion, dropped(charts as Chart[] | undefined));
+
     try {
-      await deleteChart(id, selectedIngestion);
-      mutate();
-    } catch {
-      alert("Failed to delete chart");
+      // Optimistic: the card disappears on click, and the revalidation that
+      // follows only ever confirms it.
+      await mutate(deleteChart(id, selectedIngestion).then(() => dropped(charts as Chart[] | undefined)), {
+        optimisticData: dropped(charts as Chart[] | undefined),
+        rollbackOnError: true,
+        revalidate: true,
+      });
+    } catch (err) {
+      setDeletedIds((prev) => prev.filter((d) => d !== id));
+      chartsCacheByIngestion.set(selectedIngestion, (charts as Chart[]) || []);
+      alert(err instanceof Error ? err.message : "Failed to delete chart");
+    } finally {
+      setDeletingIds((prev) => prev.filter((d) => d !== id));
     }
   };
 
-  const chartList = useMemo(() => {
+  // A tombstone is retired once the server agrees the chart is gone, so the
+  // list can't grow without bound across a long session.
+  useEffect(() => {
+    if (!deletedIds.length || !charts) return;
+    const serverIds = new Set((charts as Chart[]).map((c) => c.id));
+    const stillPresent = deletedIds.filter((id) => serverIds.has(id));
+    if (stillPresent.length !== deletedIds.length) setDeletedIds(stillPresent);
+  }, [charts, deletedIds]);
+
+  // A pending chart is superseded as soon as the server's list carries the
+  // same chart — by id when the backend returned one, otherwise by prompt.
+  // Matching on prompt alone would be wrong for a re-run of the same prompt,
+  // so the id is preferred whenever it exists.
+  const unconfirmedPending = useMemo(() => {
     const source = charts || [];
+    if (!pendingCharts.length) return [];
+    const serverIds = new Set(source.map((c) => c.id));
+    const serverPrompts = new Set(source.map((c) => c.prompt));
+    return pendingCharts.filter((p) =>
+      p.id.startsWith("pending:") ? !serverPrompts.has(p.prompt) : !serverIds.has(p.id),
+    );
+  }, [charts, pendingCharts]);
+
+  const chartList = useMemo(() => {
+    const deleted = new Set(deletedIds);
+    const source = [...unconfirmedPending, ...(charts || [])].filter((c) => !deleted.has(c.id));
     if (!source.length || !orderedIds.length) return source;
 
     const byId = new Map(source.map((c) => [c.id, c]));
@@ -543,7 +653,7 @@ export default function ChartGallery() {
     const seen = new Set(orderedExisting.map((c) => c.id));
     const newItems = source.filter((c) => !seen.has(c.id));
     return [...newItems, ...orderedExisting];
-  }, [charts, orderedIds]);
+  }, [charts, orderedIds, unconfirmedPending, deletedIds]);
 
   if (isLoading)
     return (
@@ -663,6 +773,7 @@ export default function ChartGallery() {
                 key={chart.id}
                 chart={chart}
                 onDelete={handleDelete}
+                isDeleting={deletingIds.includes(chart.id)}
                 ingestionId={selectedIngestion ?? undefined}
               />
             ))}

@@ -27,7 +27,7 @@ import logging
 import re
 from pathlib import Path
 from datetime import datetime, timezone
-from typing import Any, Dict, Iterable, List, Optional
+from typing import Any, Callable, Dict, Iterable, List, Optional
 
 import pandas as pd
 import numpy as np
@@ -85,6 +85,29 @@ class RowLimitExceededError(RuntimeError):
     pass
 
 
+# (phase, human-readable detail, rows-so-far). Deliberately a plain callable
+# rather than an interface: the only producer is this module and the only
+# consumer is services/ingestion_jobs.py, which just merges the values into
+# the job status the Add Build wizard polls.
+ProgressCallback = Callable[[str, str, int], None]
+
+
+def report_progress(cb: Optional[ProgressCallback], phase: str,
+                    detail: str = "", rows: int = 0) -> None:
+    """Fire a progress callback, never letting it break the ingestion.
+
+    Progress reporting is cosmetic; a status-file write failing (disk full,
+    permissions, a caller that raises) must not abort a run that is
+    otherwise succeeding - hence the blanket except.
+    """
+    if cb is None:
+        return
+    try:
+        cb(phase, detail, rows)
+    except Exception:
+        logger.debug("Progress callback failed for phase %s", phase, exc_info=True)
+
+
 class UniversalIngester:
     def __init__(self, data_base_path: str = "../data", embedding_model: Optional[str] = None):
         """
@@ -119,15 +142,22 @@ class UniversalIngester:
     # ------------------------------------------------------------------
     # entry points
     # ------------------------------------------------------------------
-    def run_ingestion_from_config(self, config_path: str, build_id: str = None):
+    def run_ingestion_from_config(self, config_path: str, build_id: str = None,
+                                  progress_cb: Optional[ProgressCallback] = None):
+        """progress_cb: optional (phase, detail, rows) sink called at each
+        pipeline boundary. Purely observational - the service layer passes
+        one so the Add Build wizard can show which stage a run is in, and
+        every other caller (CLI, tests) leaves it None."""
         if build_id is None:
             build_id = f"ingestion_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}"
         with open(config_path, 'r') as f:
             config = json.load(f)
         for source in config['sources']:
-            self.ingest_source(source, build_id)
+            self.ingest_source(source, build_id, progress_cb=progress_cb)
 
-    def ingest_source(self, source_config: Dict[str, Any], build_id: str):
+    def ingest_source(self, source_config: Dict[str, Any], build_id: str,
+                      progress_cb: Optional[ProgressCallback] = None):
+        report_progress(progress_cb, "connecting", "Opening build storage")
         ingestion_folder = self.data_base_path / build_id
         ingestion_folder.mkdir(exist_ok=True)
         lancedb_path = ingestion_folder / "lancedb"
@@ -141,6 +171,7 @@ class UniversalIngester:
         connector, source_type = self._build_connector(source_config)
 
         total_rows = 0
+        report_progress(progress_cb, "fetching", f"Reading from {source_type}")
         try:
             datasets = connector.fetch()
         except Exception as exc:
@@ -151,9 +182,11 @@ class UniversalIngester:
             for dataset in datasets:
                 name = dataset.get('name', 'unnamed')
                 self.report.dataset_started(name, source_type)
+                report_progress(progress_cb, "processing", name, total_rows)
                 try:
                     rows = self._ingest_dataset(dataset, source_type, build_id)
                     total_rows += rows
+                    report_progress(progress_cb, "processing", name, total_rows)
                 except Exception as exc:
                     # One bad dataset must not abort the run.
                     logger.exception("Dataset %s failed", name)
@@ -171,10 +204,12 @@ class UniversalIngester:
                 except Exception:
                     logger.warning("Error closing connector for %s", source_type, exc_info=True)
 
+        report_progress(progress_cb, "indexing", "Building SQL views", total_rows)
         self.link_to_duckdb()
         self.report.finish()
         report_dict = self.report.to_dict()
         self.report.write(ingestion_folder)
+        report_progress(progress_cb, "summarizing", "Writing build summary", total_rows)
         self._generate_summary(build_id, total_rows)
 
         # A build directory with only failed datasets is not a usable build -

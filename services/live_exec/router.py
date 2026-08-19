@@ -1,7 +1,7 @@
 """API surface for live test execution.
 
 Two different auth models on purpose:
-- Ingestion endpoints (called by the @sentinel/playwright reporter, i.e. a
+- Ingestion endpoints (called by the sentinel-qa-reporter client, i.e. a
   CI runner or a developer's laptop) use a simple shared `x-api-key` header,
   matching the reporter-SDK pattern described in LIVE_EXECUTION_ARCHITECTURE.md.
 - Browser-facing endpoints (called by the Sentinel dashboard) reuse the
@@ -16,6 +16,8 @@ import asyncio
 import json
 import logging
 import mimetypes
+import secrets
+import stat
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
@@ -120,15 +122,24 @@ async def patch_run(run_id: str, data: RunStatusUpdate, background_tasks: Backgr
     existing = await asyncio.to_thread(store.get_run, run_id)
     if not existing:
         raise HTTPException(status_code=404, detail="Run not found")
-    await asyncio.to_thread(store.update_run_status, run_id, data.status)
-    bus.publish(run_id, {"event_type": "run.finished", "ts": _now(), "status": data.status})
+    # False means other runners are still reporting into this run - a
+    # sharded suite where only one shard is done. Finalizing on the first
+    # report would delete the hot rows out from under the rest of them.
+    finished = await asyncio.to_thread(store.update_run_status, run_id, data.status)
+    if not finished:
+        remaining = (await asyncio.to_thread(store.get_run, run_id) or {}).get("active_runners")
+        logger.info("live run %s: one runner finished, %s still reporting", run_id, remaining)
+        return {"run_id": run_id, "status": "running", "runners_remaining": remaining}
+
+    final = (await asyncio.to_thread(store.get_run, run_id) or {}).get("status", data.status)
+    bus.publish(run_id, {"event_type": "run.finished", "ts": _now(), "status": final})
     await screencast.clear_run(run_id, worker_count=existing.get("worker_count") or 8)
-    logger.info("live run finished: %s -> %s", run_id, data.status)
+    logger.info("live run finished: %s -> %s", run_id, final)
 
     from ..finalize.job import finalize_run
 
     background_tasks.add_task(finalize_run, run_id)
-    return {"run_id": run_id, "status": data.status}
+    return {"run_id": run_id, "status": final}
 
 
 @router.post("/runs/{run_id}/attachments", dependencies=[Depends(require_ingest_key)])
@@ -285,11 +296,199 @@ async def get_history_attachment(run_id: str, filename: str):
     return FileResponse(path, media_type=media_type or "application/octet-stream")
 
 
+# ---------------------------------------------------------------------------
+# Onboarding a test repo
+#
+# Everything below exists so that connecting a repo to a hosted Sentinel is a
+# copy-paste, not a support ticket. The two things a repo needs - the client
+# package and the ingest key - are both served from the install itself, so
+# there is no registry account to create, no server to SSH into, and no URL
+# for anyone to get wrong.
+# ---------------------------------------------------------------------------
+
+
+def _client_package() -> Optional[dict]:
+    """The reporter tarball this image was built with, if it is present.
+
+    Absent in a source checkout that has not run `npm run pack:dist` - which
+    is fine and must not be an error: the endpoints below fall back to
+    telling people to install from npm instead.
+    """
+    directory = config.LIVE_PACKAGE_DIR
+    if not directory.is_dir():
+        return None
+    tarballs = sorted(directory.glob("*.tgz"), key=lambda f: f.stat().st_mtime, reverse=True)
+    if not tarballs:
+        return None
+    newest = tarballs[0]
+    stem = newest.name[: -len(".tgz")]  # npm's own naming: <name>-<version>.tgz
+    name, _, version = stem.rpartition("-")
+    return {
+        "filename": newest.name,
+        "name": name or stem,
+        "version": version,
+        "size_bytes": newest.stat().st_size,
+    }
+
+
+def _public_base_url(request: Request) -> str:
+    """The URL a person outside this container would use.
+
+    Derived from the request rather than configured, so it is right by
+    construction behind a reverse proxy, a tunnel, or bare localhost - there
+    is no separate setting to keep in sync with reality. Behind a proxy the
+    request's own URL is the internal http://backend:8000 one, which is
+    useless to paste into a repo, hence X-Forwarded-* first.
+    """
+    forwarded_host = request.headers.get("x-forwarded-host") or request.headers.get("host")
+    if forwarded_host:
+        scheme = request.headers.get("x-forwarded-proto") or request.url.scheme
+        return f"{scheme}://{forwarded_host}"
+    return str(request.base_url).rstrip("/")
+
+
+def _install_command(base_url: str, package: Optional[dict]) -> str:
+    if not package:
+        return "npm i -D sentinel-qa-reporter"
+    return f"npm i -D {base_url}/live/package/{package['filename']}"
+
+
+@router.get("/package")
+async def client_package_info(request: Request) -> dict:
+    """Where to get the client package for THIS install.
+
+    Unauthenticated on purpose: it is public client code carrying no secret,
+    and the whole point is that `npm install` - which is not going to be
+    carrying a dashboard JWT - can fetch the tarball it names.
+    """
+    package = _client_package()
+    base_url = _public_base_url(request)
+    info = {
+        "available": bool(package),
+        "install_command": _install_command(base_url, package),
+    }
+    if package:
+        info.update(package)
+        info["tarball_url"] = f"{base_url}/live/package/{package['filename']}"
+    else:
+        info["name"] = "sentinel-qa-reporter"
+    return info
+
+
+@router.get("/package/{filename}")
+async def download_client_package(filename: str):
+    """Serve the tarball to `npm install`. Also unauthenticated - see above."""
+    package = _client_package()
+    # Compared against the one filename actually present rather than
+    # sanitised and then trusted: this endpoint is unauthenticated and serves
+    # files by name, which is exactly the shape of a path-traversal bug.
+    # Whitelisting removes the class of problem instead of filtering it.
+    if not package or Path(filename).name != package["filename"]:
+        raise HTTPException(status_code=404, detail="No such package")
+    return FileResponse(
+        config.LIVE_PACKAGE_DIR / package["filename"],
+        media_type="application/gzip",
+        filename=package["filename"],
+    )
+
+
+@router.get("/connection-info")
+async def connection_info(request: Request, user: dict = Depends(get_dashboard_user)) -> dict:
+    """Everything needed to point a test repo at THIS backend.
+
+    Hosting this dashboard used to mean whoever wired up a repo also needed
+    shell access to the server, because the only way to learn the ingest key
+    was to read state/live_ingest_api_key or scrape it out of the startup
+    logs. That is a hard requirement to meet for exactly the people who wire
+    up test repos, and it is the single most common reason a hosted install
+    shows an empty Live Runs page forever. Admins can read that file anyway;
+    serving the same values over an authenticated, admin-only endpoint just
+    removes the SSH step.
+    """
+    from ..auth import ADMIN_ROLES
+
+    if user.get("role") not in ADMIN_ROLES:
+        raise HTTPException(
+            status_code=403,
+            detail="Only administrators can read the live-ingest key.",
+        )
+    base_url = _public_base_url(request)
+    package = _client_package()
+    return {
+        "base_url": base_url,
+        "api_key": config.LIVE_INGEST_API_KEY,
+        # An empty key means require_ingest_key is waving everything through -
+        # worth saying out loud on the page that hands out setup instructions.
+        "authenticated": bool(config.LIVE_INGEST_API_KEY),
+        "key_pinned_in_env": config.LIVE_INGEST_API_KEY_FROM_ENV,
+        "package": package,
+        "install_command": _install_command(base_url, package),
+    }
+
+
+@router.post("/connection-info/rotate")
+async def rotate_ingest_key(user: dict = Depends(get_dashboard_user)) -> dict:
+    """Issue a new ingest key, invalidating the old one immediately.
+
+    A shared secret that gets pasted into CI settings and developer shells
+    will eventually end up somewhere it should not be. Without this, replacing
+    it means editing a file on the server and restarting the backend - enough
+    friction that in practice a leaked key just stays live.
+    """
+    from ..auth import ADMIN_ROLES
+
+    if user.get("role") not in ADMIN_ROLES:
+        raise HTTPException(status_code=403, detail="Only administrators can rotate the key.")
+    if config.LIVE_INGEST_API_KEY_FROM_ENV:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "LIVE_INGEST_API_KEY is pinned in the environment, so it cannot be "
+                "rotated from here - change it where it is set and restart."
+            ),
+        )
+    new_key = secrets.token_urlsafe(32)
+    try:
+        await asyncio.to_thread(_persist_ingest_key, new_key)
+    except OSError as exc:
+        raise HTTPException(status_code=500, detail=f"Could not write the new key: {exc}") from exc
+    config.LIVE_INGEST_API_KEY = new_key
+    logger.warning("live ingest key rotated by %s", user.get("username"))
+    return {"api_key": new_key}
+
+
+def _persist_ingest_key(key: str) -> None:
+    path = config.LIVE_INGEST_API_KEY_FILE
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(key + "\n", encoding="utf-8")
+    try:
+        path.chmod(stat.S_IRUSR | stat.S_IWUSR)
+    except OSError:
+        # Windows and some mounted volumes do not support this; the write
+        # itself is what matters.
+        pass
+
+
 @router.get("/runs", dependencies=[Depends(get_dashboard_user)])
 async def list_runs(workspace_id: Optional[str] = None, limit: int = 50) -> list[dict]:
     # Polled every 2s by the Live Runs list page - frequent enough that it's
     # worth keeping off the event loop too.
-    return await asyncio.to_thread(store.list_runs, workspace_id, limit)
+    #
+    # Sweeping abandoned runs here rather than from a background timer keeps
+    # the whole mechanism to one function and no extra task to supervise: the
+    # only moment a stale row actually matters is when someone is looking at
+    # the list, and that is exactly when this runs. Both calls share one
+    # to_thread hop so the poll still costs a single offload.
+    def _list_without_abandoned() -> list[dict]:
+        swept = store.reap_stale_runs(config.LIVE_RUN_STALE_TIMEOUT_SECONDS)
+        if swept:
+            logger.info(
+                "swept %d abandoned live run(s) with no events for >%ds: %s",
+                len(swept), config.LIVE_RUN_STALE_TIMEOUT_SECONDS, ", ".join(swept),
+            )
+        return store.list_runs(workspace_id, limit)
+
+    return await asyncio.to_thread(_list_without_abandoned)
 
 
 @router.get("/runs/{run_id}", dependencies=[Depends(get_dashboard_user)])

@@ -3,7 +3,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter, usePathname } from "next/navigation";
 import Link from "next/link";
 import { ArrowLeft, Bell, Gauge, KeyRound, ScrollText, Settings as SettingsIcon, Users } from "lucide-react";
-import BrandLogo from "@/components/BrandLogo";
+import BrandHeading from "@/components/BrandHeading";
 
 const API = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
@@ -181,17 +181,16 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
 
   return (
     <div className="min-h-screen bg-[var(--background)] text-[var(--foreground)]">
-      <header className="border-b border-slate-200 dark:border-white/[0.08] bg-white/90 dark:bg-black/80 backdrop-blur-xl sticky top-0 z-40">
-        <div className="max-w-6xl mx-auto px-6 py-4 flex flex-wrap items-center justify-between gap-4">
-          <div className="flex items-center gap-3">
-            <BrandLogo className="px-2.5 py-1.5" />
-            <div>
-              <h1 className="text-lg font-bold">Admin Console</h1>
+      <header className="bg-white/90 border-slate-200 shadow-[0_4px_30px_rgba(15,23,42,0.08)] dark:bg-black/80 dark:border-white/[0.06] dark:shadow-[0_4px_30px_rgba(0,0,0,0.5)] backdrop-blur-xl border-b sticky top-0 z-50">
+        <div className="max-w-6xl mx-auto px-6 py-3.5 flex flex-wrap items-center justify-between gap-4">
+          <BrandHeading
+            label="Admin Console"
+            subtitle={
               <Link href="/dashboard" className="inline-flex items-center gap-1.5 text-xs text-slate-500 dark:text-white/40 hover:text-cyan-500">
                 <ArrowLeft className="w-3.5 h-3.5" /> Back to dashboard
               </Link>
-            </div>
-          </div>
+            }
+          />
           <nav className="flex items-center gap-1 flex-wrap">
             {TABS.map((tab) => {
               const active = tab.href === "/admin" ? pathname === "/admin" : pathname.startsWith(tab.href);
