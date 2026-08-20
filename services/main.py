@@ -65,6 +65,7 @@ _PERF_PATH_PREFIXES = (
     "/dashboard/overview",
     "/data/status",
     "/data/quality",
+    "/data/tests",
     "/ingestions",
     "/chart/history/",
 )
@@ -754,6 +755,154 @@ def _failure_signature(error: str) -> str:
     head = first_line.split(":", 1)[0].strip() if ":" in first_line else first_line
     signature = head if 4 <= len(head) <= 80 else first_line
     return signature[:120]
+
+
+# ── Test explorer ────────────────────────────────────────────────────────────
+# Backs the drill-down behind the dashboard's Passed / Failed / Skipped tiles:
+# "which tests are these, and what do they have in common".
+
+_EXPLORER_DEFAULT_LIMIT = 50
+_EXPLORER_MAX_LIMIT = 200
+_EXPLORER_MAX_GROUPS = 40
+_EXPLORER_ERROR_CHARS = 1200
+# What the group summary calls rows whose grouping column is empty. Contains
+# no quote so it can be inlined into the COALESCE below; clicking it filters
+# for "empty", not for this literal - see _query_test_explorer.
+_EXPLORER_UNGROUPED_LABEL = "(not set)"
+
+# Grouping dimensions, in the order they're offered. `failure_signature` is
+# synthesised (see _explorer_cte) rather than read from a column, so it isn't
+# listed here - it's appended for failed tests only, where it's also the
+# default, because "what broke" is the first question about a failure and
+# "where does it live" is the first question about anything else.
+#
+# `worker` and `host` are deliberately absent. They carry runner identity
+# ("...-vt9km-61-playwright-worker-0"), which is a per-run scheduling
+# accident, not a property of the test - grouping or labelling by it tells a
+# reader nothing and costs a line on every row. The runtime insight band
+# still reads those columns directly (_wall_clock_runtime) to work out how
+# parallel the suite was, which is the one question they can answer.
+_EXPLORER_GROUP_DIMENSIONS: list[tuple[str, str]] = [
+    ("module_name", "Module"),
+    ("spec_file", "Spec file"),
+    ("project_name", "Project"),
+    ("browser", "Browser"),
+    ("platform_type", "Platform"),
+]
+
+_EXPLORER_SORTS = {
+    "name": "test_name ASC NULLS LAST",
+    "slowest": "duration DESC NULLS LAST, test_name ASC",
+    "fastest": "duration ASC NULLS LAST, test_name ASC",
+    # Newest first only makes sense where the dataset carries a timestamp;
+    # _explorer_sort_clause falls back to name when it doesn't.
+    "recent": "executed_at DESC NULLS LAST, test_name ASC",
+}
+
+_EXPLORER_STATUSES = ("passed", "failed", "skipped")
+
+
+def _explorer_text_col(column: str, columns: set) -> str:
+    """A trimmed VARCHAR projection of `column`, or a literal '' if absent.
+
+    Ingested datasets vary in shape (see data_loader._coerce_generic_to_
+    flattened_tests) - projecting missing columns as empty strings keeps one
+    SQL shape working across all of them instead of needing a query per
+    schema variant.
+    """
+    if column not in columns:
+        return "''"
+    return f"COALESCE(NULLIF(TRIM(CAST({column} AS VARCHAR)), ''), '')"
+
+
+def _explorer_cte(test_table: str, columns: set) -> str:
+    """The `enriched` CTE every explorer query reads from.
+
+    `failure_signature` is computed in SQL rather than in Python so that
+    grouping *and* filtering by a signature are one query each - collapsing
+    traces in Python would mean shipping every failing row to the API process
+    just to decide which ones belong to the bucket the user clicked. The
+    expression mirrors _failure_signature() step for step; change both
+    together or the drill-down stops agreeing with the insight band.
+    """
+    name_col = next(
+        (c for c in ("test_name", "full_name", "name", "title") if c in columns), None
+    )
+    name_expr = _explorer_text_col(name_col, columns) if name_col else "''"
+    duration_expr = (
+        "COALESCE(TRY_CAST(duration AS DOUBLE), 0)" if "duration" in columns else "0"
+    )
+    error_col = next((c for c in ("error", "error_message") if c in columns), None)
+    error_expr = _explorer_text_col(error_col, columns) if error_col else "''"
+    executed_expr = (
+        "CAST(executed_at AS VARCHAR)" if "executed_at" in columns else "CAST(NULL AS VARCHAR)"
+    )
+
+    dimension_selects = ",\n            ".join(
+        f"{_explorer_text_col(col, columns)} AS {col}" for col, _ in _EXPLORER_GROUP_DIMENSIONS
+    )
+
+    return f"""
+        WITH base AS (
+          SELECT
+            {name_expr} AS test_name,
+            LOWER(COALESCE(TRIM(CAST(status AS VARCHAR)), '')) AS status,
+            {duration_expr} AS duration,
+            {error_expr} AS error,
+            {executed_expr} AS executed_at,
+            {dimension_selects}
+          FROM {test_table}
+        ),
+        err_line AS (
+          SELECT *, TRIM(SPLIT_PART(REPLACE(error, CHR(13), ''), CHR(10), 1)) AS _line
+          FROM base
+        ),
+        err_head AS (
+          SELECT *,
+            CASE WHEN POSITION(':' IN _line) > 0
+                 THEN TRIM(SPLIT_PART(_line, ':', 1))
+                 ELSE _line END AS _head
+          FROM err_line
+        ),
+        enriched AS (
+          SELECT *,
+            SUBSTR(
+              CASE WHEN LENGTH(_head) BETWEEN 4 AND 80 THEN _head ELSE _line END,
+              1, 120
+            ) AS failure_signature
+          FROM err_head
+        )
+    """
+
+
+def _explorer_group_options(status: str, columns: set, distincts: dict) -> list[dict]:
+    """Which groupings this dataset can actually offer, most useful first.
+
+    A dimension whose column is missing - or present but constant, as
+    `browser` is on a single-browser suite - is dropped rather than offered
+    as a control that produces one meaningless bucket.
+    """
+    options: list[dict] = []
+    if status == "failed":
+        options.append({"key": "failure_signature", "label": "Failure cause"})
+
+    for col, label in _EXPLORER_GROUP_DIMENSIONS:
+        if col not in columns:
+            continue
+        if int(distincts.get(col, 0)) < 2:
+            continue
+        options.append({"key": col, "label": label})
+
+    options.append({"key": "none", "label": "No grouping"})
+    return options
+
+
+def _explorer_sort_clause(sort: str, columns: set) -> str:
+    if sort == "recent" and "executed_at" not in columns:
+        sort = "name"
+    if sort in ("slowest", "fastest") and "duration" not in columns:
+        sort = "name"
+    return _EXPLORER_SORTS.get(sort, _EXPLORER_SORTS["name"])
 
 
 def _wall_clock_runtime(
@@ -2382,6 +2531,251 @@ async def data_status(
     except Exception as e:
         logger.error(f"Error in /data/status: {e}")
         return {"has_data": False, "total_rows": 0, "status_summary": {"passed": 0, "failed": 0, "skipped": 0}}
+
+
+@app.get("/data/tests")
+async def data_tests(
+    x_ingestion_id: str = Header(...),
+    status: str = Query("failed"),
+    group_by: Optional[str] = Query(None),
+    group: Optional[str] = Query(None),
+    q: Optional[str] = Query(None),
+    sort: str = Query("name"),
+    limit: int = Query(_EXPLORER_DEFAULT_LIMIT),
+    offset: int = Query(0),
+    current_user: dict = Depends(get_current_user),
+):
+    """The tests behind one status tile, grouped by whatever they share.
+
+    Everything - the search, the grouping, the paging - happens in DuckDB.
+    A suite with 100k results must not have to cross the wire for the user
+    to read the twelve failures they clicked on, so the response is bounded
+    by `limit` no matter how large the build is, and the group summary is
+    an aggregate rather than a client-side reduce over the full list.
+    """
+    normalized_ingestion_id = str(x_ingestion_id or "").strip()
+    _entry = await run_in_threadpool(data_loader.get_or_load_ingestion, normalized_ingestion_id)
+    if _entry is None:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Ingestion '{normalized_ingestion_id}' could not be loaded.",
+        )
+    state.set_active_ingestion(
+        normalized_ingestion_id, _entry["duck_conn"], _entry["lance_db"], _entry["embedder"]
+    )
+
+    status = str(status or "").strip().lower()
+    if status not in _EXPLORER_STATUSES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"status must be one of {', '.join(_EXPLORER_STATUSES)}",
+        )
+    limit = max(1, min(_EXPLORER_MAX_LIMIT, int(limit or _EXPLORER_DEFAULT_LIMIT)))
+    offset = max(0, int(offset or 0))
+    search = str(q or "").strip()
+
+    try:
+        return await run_in_threadpool(
+            _query_test_explorer, status, group_by, group, search, sort, limit, offset
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error in /data/tests: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Failed to load test details")
+
+
+def _query_test_explorer(
+    status: str,
+    group_by: Optional[str],
+    group: Optional[str],
+    search: str,
+    sort: str,
+    limit: int,
+    offset: int,
+) -> dict:
+    if not state.duck_conn:
+        raise HTTPException(status_code=503, detail="No active ingestion loaded")
+
+    test_table = _get_test_results_table()  # locks internally - keep outside the `with`
+    with state._duck_query_lock:
+        columns = {c[0] for c in state.duck_conn.execute(f"DESCRIBE {test_table}").fetchall()}
+
+    if "status" not in columns:
+        raise HTTPException(
+            status_code=422,
+            detail="This build's data has no status column, so tests can't be listed by result.",
+        )
+
+    cte = _explorer_cte(test_table, columns)
+    dimension_cols = [c for c, _ in _EXPLORER_GROUP_DIMENSIONS if c in columns]
+
+    # One round trip for the tab counts and the per-dimension cardinality that
+    # decides which groupings are worth offering. The cardinality is scoped to
+    # the status being viewed, not the whole build: `module_name` can be rich
+    # across a suite and still be a single "unknown" bucket for its passing
+    # tests, and offering it there would be a control that does nothing.
+    distinct_selects = ", ".join(
+        f"COUNT(DISTINCT NULLIF({c}, '')) FILTER (WHERE status = ?) AS d_{c}"
+        for c in dimension_cols
+    )
+    with state._duck_query_lock:
+        summary = state.duck_conn.execute(
+            f"""
+            {cte}
+            SELECT
+              SUM(CASE WHEN status='passed' THEN 1 ELSE 0 END) AS passed,
+              SUM(CASE WHEN status='failed' THEN 1 ELSE 0 END) AS failed,
+              SUM(CASE WHEN status='skipped' THEN 1 ELSE 0 END) AS skipped,
+              COUNT(*) AS total
+              {(', ' + distinct_selects) if distinct_selects else ''}
+            FROM enriched
+            """,
+            [status] * len(dimension_cols),
+        ).fetchone()
+
+    status_counts = {
+        "passed": int(summary[0] or 0),
+        "failed": int(summary[1] or 0),
+        "skipped": int(summary[2] or 0),
+    }
+    total_rows = int(summary[3] or 0)
+    distincts = {col: int(summary[4 + i] or 0) for i, col in enumerate(dimension_cols)}
+
+    group_options = _explorer_group_options(status, columns, distincts)
+    valid_group_keys = {o["key"] for o in group_options}
+    requested_group_by = str(group_by or "").strip()
+    if requested_group_by not in valid_group_keys:
+        # Default: what broke for failures, where it lives for everything else,
+        # then whatever dimension this dataset does carry - "none" only when
+        # the build genuinely has nothing to group on.
+        preferred = ("failure_signature", "module_name", "spec_file", "project_name")
+        requested_group_by = next(
+            (k for k in preferred if k in valid_group_keys),
+            next((o["key"] for o in group_options if o["key"] != "none"), "none"),
+        )
+
+    where = ["status = ?"]
+    params: list = [status]
+    if search:
+        needle = f"%{search.lower()}%"
+        searchable = ["test_name", "error"] + dimension_cols
+        where.append(
+            "(" + " OR ".join(f"LOWER({c}) LIKE ?" for c in searchable) + ")"
+        )
+        params.extend([needle] * len(searchable))
+
+    scoped_where = list(where)
+    scoped_params = list(params)
+    active_group = str(group or "").strip()
+    if active_group and requested_group_by != "none":
+        # "(none)" is the label the group summary gives the empty bucket, so
+        # clicking it has to filter for empty rather than for that literal.
+        if active_group == _EXPLORER_UNGROUPED_LABEL:
+            scoped_where.append(f"COALESCE({requested_group_by}, '') = ''")
+        else:
+            scoped_where.append(f"{requested_group_by} = ?")
+            scoped_params.append(active_group)
+    else:
+        active_group = ""
+
+    where_sql = " AND ".join(where)
+    scoped_where_sql = " AND ".join(scoped_where)
+
+    groups: list[dict] = []
+    status_total = status_counts.get(status, 0)
+    if requested_group_by != "none":
+        with state._duck_query_lock:
+            rows = state.duck_conn.execute(
+                f"""
+                {cte}
+                SELECT
+                  COALESCE(NULLIF({requested_group_by}, ''), '{_EXPLORER_UNGROUPED_LABEL}') AS group_key,
+                  COUNT(*) AS n,
+                  SUM(COALESCE(duration, 0)) AS total_duration
+                FROM enriched
+                WHERE {where_sql}
+                GROUP BY 1
+                ORDER BY n DESC, group_key ASC
+                LIMIT {_EXPLORER_MAX_GROUPS}
+                """,
+                params,
+            ).fetchall()
+        matched_for_share = sum(int(r[1] or 0) for r in rows) or 1
+        groups = [
+            {
+                "key": str(r[0]),
+                "count": int(r[1] or 0),
+                "share": round((int(r[1] or 0) / matched_for_share) * 100, 1),
+                "duration": round(float(r[2] or 0), 2),
+            }
+            for r in rows
+        ]
+
+    with state._duck_query_lock:
+        matched = int(
+            state.duck_conn.execute(
+                f"{cte} SELECT COUNT(*) FROM enriched WHERE {scoped_where_sql}", scoped_params
+            ).fetchone()[0]
+            or 0
+        )
+
+    select_cols = [
+        "test_name",
+        "status",
+        "duration",
+        "executed_at",
+        f"SUBSTR(error, 1, {_EXPLORER_ERROR_CHARS}) AS error",
+        "failure_signature",
+    ] + dimension_cols
+    with state._duck_query_lock:
+        records = state.duck_conn.execute(
+            f"""
+            {cte}
+            SELECT {', '.join(select_cols)}
+            FROM enriched
+            WHERE {scoped_where_sql}
+            ORDER BY {_explorer_sort_clause(sort, columns)}
+            LIMIT {limit} OFFSET {offset}
+            """,
+            scoped_params,
+        ).df()
+
+    tests = []
+    for record in records.to_dict(orient="records"):
+        item = {
+            "test_name": str(record.get("test_name") or "(unnamed test)"),
+            "status": str(record.get("status") or ""),
+            "duration": round(float(record.get("duration") or 0), 3),
+            "executed_at": (str(record["executed_at"]) if record.get("executed_at") else None),
+            "error": str(record.get("error") or ""),
+            "failure_signature": str(record.get("failure_signature") or ""),
+        }
+        for col in dimension_cols:
+            item[col] = str(record.get(col) or "")
+        tests.append(item)
+
+    return {
+        "ingestion_id": state.current_ingestion_id,
+        "status": status,
+        "status_counts": status_counts,
+        "total_rows": total_rows,
+        # `matched` respects the search and the selected group; `status_total`
+        # is the tile's own number, so the UI can say "12 of 480" honestly.
+        "status_total": status_total,
+        "matched": matched,
+        "offset": offset,
+        "limit": limit,
+        "has_more": offset + len(tests) < matched,
+        "group_by": requested_group_by,
+        "group": active_group,
+        "group_options": group_options,
+        "groups": groups,
+        "group_truncated": len(groups) >= _EXPLORER_MAX_GROUPS,
+        "dimensions": dimension_cols,
+        "sort": sort if sort in _EXPLORER_SORTS else "name",
+        "tests": tests,
+    }
 
 
 @app.get("/data/profile")

@@ -434,12 +434,10 @@ export default function LandingPage() {
         className="fixed inset-x-0 top-0 z-50 border-b border-slate-200 bg-white/80 backdrop-blur-xl dark:border-white/[0.06] dark:bg-black/60"
       >
         <div className="mx-auto flex max-w-7xl items-center justify-between px-6 py-4">
-          <div className="flex items-center gap-2">
-            <BrandLogo size={34} />
-            <span className="flex items-baseline gap-1.5 text-lg font-bold tracking-tight">
-              <TestrigWordmark className="text-[13px]" />
-              <span className="text-cyan-400">Sentinel</span>
-            </span>
+          <div className="flex items-center gap-2 text-lg font-bold tracking-tight">
+            <TestrigWordmark />
+            <BrandLogo size={24} />
+            <span className="text-cyan-400">Sentinel</span>
           </div>
           <div className="hidden items-center gap-7 text-sm text-slate-500 dark:text-white/50 lg:flex">
             {[
@@ -914,15 +912,13 @@ export default function LandingPage() {
       {/* ══════════ FOOTER ══════════ */}
       <footer className="relative z-10 border-t border-slate-200 py-12 dark:border-white/[0.05]">
         <div className="mx-auto flex max-w-6xl flex-col items-center justify-between gap-6 px-6 md:flex-row">
-          <div className="flex items-center gap-2">
-            <BrandLogo size={26} />
-            <div>
-              <p className="flex items-baseline gap-1.5 text-sm font-semibold text-slate-600 dark:text-white/60">
-                <TestrigWordmark className="text-[11px]" />
-                <span>Sentinel</span>
-              </p>
-              <p className="text-xs text-slate-500 dark:text-white/35">{BRAND_TAGLINE}</p>
-            </div>
+          <div>
+            <p className="flex items-center gap-1.5 text-sm font-semibold text-slate-600 dark:text-white/60">
+              <TestrigWordmark />
+              <BrandLogo size={18} />
+              <span>Sentinel</span>
+            </p>
+            <p className="text-xs text-slate-500 dark:text-white/35">{BRAND_TAGLINE}</p>
           </div>
           <div className="flex flex-wrap items-center justify-center gap-6 text-xs text-slate-600 dark:text-white/40">
             <span>© {new Date().getFullYear()} Testrig Sentinel — Testrig Technologies Pvt. Ltd.</span>

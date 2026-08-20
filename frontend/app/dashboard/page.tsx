@@ -3,7 +3,7 @@
 import { useState, useEffect, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { motion } from "framer-motion";
-import { Wifi, WifiOff, Plus } from "lucide-react";
+import { Wifi, WifiOff, Plus, ChevronRight } from "lucide-react";
 import { NAV_ACTION } from "@/components/HeaderNav";
 import ChartGallery from "@/components/ChartGallery";
 import DashboardInsightBand from "@/components/DashboardInsights";
@@ -14,6 +14,7 @@ import FloatingChat from "@/components/FloatingChat";
 import FloatingChart from "@/components/FloatingChart";  // new
 import AppHeader from "@/components/AppHeader";
 import AddBuildWizard from "@/components/AddBuildWizard";
+import TestExplorerDrawer, { type TestStatus } from "@/components/TestExplorerDrawer";
 import {
   getDashboardOverview,
   readCachedDashboardOverview,
@@ -53,23 +54,48 @@ function StatTile({
   value,
   tone = "neutral",
   hint,
+  onClick,
 }: {
   label: string;
   value: string;
   tone?: keyof typeof TILE_TONES;
   hint?: string;
+  /** Present on the tiles that drill down into a test list. The tile becomes
+   *  a real button so it is reachable by keyboard, not just by mouse. */
+  onClick?: () => void;
 }) {
+  const interactive = Boolean(onClick);
   return (
     <motion.div
       variants={statCardVariants}
       whileHover={{ y: -3 }}
       title={hint}
-      className="rounded-xl border border-slate-200 bg-white px-4 py-3.5 transition-colors hover:border-cyan-500/25 dark:border-white/[0.06] dark:bg-white/[0.02]"
+      onClick={onClick}
+      role={interactive ? "button" : undefined}
+      tabIndex={interactive ? 0 : undefined}
+      onKeyDown={
+        interactive
+          ? (e) => {
+              if (e.key === "Enter" || e.key === " ") {
+                e.preventDefault();
+                onClick?.();
+              }
+            }
+          : undefined
+      }
+      className={`group relative rounded-xl border border-slate-200 bg-white px-4 py-3.5 transition-colors hover:border-cyan-500/25 dark:border-white/[0.06] dark:bg-white/[0.02] ${
+        interactive
+          ? "cursor-pointer outline-none focus-visible:border-cyan-500/50 focus-visible:ring-2 focus-visible:ring-cyan-500/25"
+          : ""
+      }`}
     >
       <p className="mb-1 text-[10px] font-semibold uppercase tracking-widest text-slate-500 dark:text-white/35">
         {label}
       </p>
       <p className={`text-2xl font-bold leading-none tabular-nums ${TILE_TONES[tone]}`}>{value}</p>
+      {interactive && (
+        <ChevronRight className="absolute right-3 top-3 h-3.5 w-3.5 text-slate-300 opacity-0 transition-opacity group-hover:opacity-100 dark:text-white/25" />
+      )}
     </motion.div>
   );
 }
@@ -90,6 +116,8 @@ export default function Dashboard() {
   } | null>(null);
   const [backendConnected, setBackendConnected] = useState(false);
   const [isAddBuildOpen, setIsAddBuildOpen] = useState(false);
+  // Which status tile the drill-down is showing, or null when it's closed.
+  const [explorerStatus, setExplorerStatus] = useState<TestStatus | null>(null);
   const [dataQuality, setDataQuality] = useState<{
     score?: number;
     quality?: string;
@@ -305,16 +333,22 @@ export default function Dashboard() {
               label="Passed"
               value={isHeaderLoading ? "..." : (dataStatus?.status_summary?.passed || 0).toLocaleString()}
               tone="good"
+              hint="See which tests passed"
+              onClick={isHeaderLoading ? undefined : () => setExplorerStatus("passed")}
             />
             <StatTile
               label="Failed"
               value={isHeaderLoading ? "..." : (dataStatus?.status_summary?.failed || 0).toLocaleString()}
               tone="bad"
+              hint="See which tests failed, grouped by cause"
+              onClick={isHeaderLoading ? undefined : () => setExplorerStatus("failed")}
             />
             <StatTile
               label="Skipped"
               value={isHeaderLoading ? "..." : (dataStatus?.status_summary?.skipped || 0).toLocaleString()}
               tone="warn"
+              hint="See which tests were skipped"
+              onClick={isHeaderLoading ? undefined : () => setExplorerStatus("skipped")}
             />
             <StatTile
               label="Pass Rate"
@@ -354,6 +388,15 @@ export default function Dashboard() {
 
         {/* Chart Gallery - now at TOP */}
         <ChartGallery />
+
+        {/* Drill-down behind the Passed / Failed / Skipped tiles. */}
+        <TestExplorerDrawer
+          isOpen={explorerStatus !== null}
+          status={explorerStatus || "failed"}
+          onStatusChange={setExplorerStatus}
+          onClose={() => setExplorerStatus(null)}
+          ingestionId={selectedIngestion || ""}
+        />
 
         {/* Floating buttons: chart (higher) and chat (lower) */}
         <FloatingChart />

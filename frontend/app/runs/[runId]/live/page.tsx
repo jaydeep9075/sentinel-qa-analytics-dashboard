@@ -371,10 +371,10 @@ export default function LiveRunPage() {
       <header className="sticky top-0 z-50 border-b border-slate-200 bg-white/90 shadow-[0_4px_30px_rgba(15,23,42,0.08)] backdrop-blur-xl dark:border-white/[0.06] dark:bg-black/80 dark:shadow-[0_4px_30px_rgba(0,0,0,0.5)]">
         <div className="mx-auto flex max-w-[1600px] flex-wrap items-center justify-between gap-3 px-4 py-3 sm:gap-4 sm:px-6 sm:py-3.5">
           <div className="flex items-center gap-3">
-            <BrandLogo size={34} />
             <div>
-              <h1 className="flex items-baseline gap-1.5 text-base font-bold tracking-tight sm:text-lg">
-                <TestrigWordmark className="text-[12px]" />
+              <h1 className="flex items-center gap-2 text-base font-bold tracking-tight sm:text-lg">
+                <TestrigWordmark />
+                <BrandLogo size={22} />
                 <span className="text-cyan-400">Sentinel</span>
                 <span className="font-normal text-slate-500 dark:text-white/60">Live Run</span>
               </h1>

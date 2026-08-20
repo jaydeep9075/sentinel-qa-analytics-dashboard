@@ -23,6 +23,36 @@ logger = logging.getLogger(__name__)
 _CATEGORICAL_COLUMN_HINTS = ("project", "module", "platform", "status", "browser", "priority")
 _MAX_DISTINCT_VALUES = 12
 
+# Columns hidden from every prompt that describes the data to the LLM.
+#
+# These carry runner identity - values like
+# "9ed19d4b-...-vt9km-61-playwright-worker-0" - which is a per-run scheduling
+# accident, not a property of the test. Advertised in the schema block, the
+# model treats them as just another categorical and will happily answer "which
+# area is failing" with a chart of forty unreadable worker IDs. The columns
+# still exist and still execute if SQL names them; they are simply not
+# suggested. The runtime insight band reads them directly
+# (main._wall_clock_runtime) to work out how parallel the suite was, which is
+# the one question they can actually answer.
+#
+# Matched on the exact lowercased name, not as substrings - "host" must not
+# swallow a legitimate "hosted_page" column.
+_RUNNER_IDENTITY_COLUMNS = frozenset({
+    "worker",
+    "worker_id",
+    "worker_index",
+    "workerindex",
+    "host",
+    "hostname",
+    "thread",
+    "labels_host",
+    "labels_thread",
+})
+
+
+def _is_runner_identity_column(col_name: str) -> bool:
+    return (col_name or "").strip().lower() in _RUNNER_IDENTITY_COLUMNS
+
 _cache: Dict[str, dict] = {}
 # Each ingestion is an immutable snapshot (see module docstring), so a cache
 # entry is valid for the process lifetime and invalidate_cache() is only for
@@ -72,7 +102,15 @@ def build_schema_summary(sample_rows: int = 3, force_refresh: bool = False) -> d
     for tbl, info in tables.items():
         if not isinstance(info, dict) or "columns" not in info:
             continue
-        columns = info.get("columns", [])
+        # Filtered here rather than at each prompt site: this summary is the
+        # single source every LLM-facing schema block is rendered from
+        # (handlers._build_schema_context, render_prompt_examples), so one
+        # exclusion covers both the chat and chart paths.
+        columns = [
+            col
+            for col in info.get("columns", [])
+            if not (isinstance(col, dict) and _is_runner_identity_column(col.get("name", "")))
+        ]
         distinct_values = {}
         for col in columns:
             if not isinstance(col, dict):

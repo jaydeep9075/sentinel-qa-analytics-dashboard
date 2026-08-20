@@ -600,6 +600,98 @@ export async function getDashboardOverview(
   return data;
 }
 
+/** One test row in the status drill-down. The dimension fields are optional
+ *  because ingested datasets differ in shape — `dimensions` on the response
+ *  says which of them this build actually carries.
+ *
+ *  Runner identity (worker/host) is deliberately not here: it is a per-run
+ *  scheduling accident, not a property of the test. See
+ *  _EXPLORER_GROUP_DIMENSIONS in services/main.py. */
+export interface TestRecord {
+  test_name: string;
+  status: string;
+  duration: number;
+  executed_at?: string | null;
+  error?: string;
+  failure_signature?: string;
+  module_name?: string;
+  spec_file?: string;
+  project_name?: string;
+  browser?: string;
+  platform_type?: string;
+}
+
+export interface TestGroup {
+  key: string;
+  count: number;
+  /** Percent of the matched set, not of the build. */
+  share: number;
+  duration: number;
+}
+
+export interface TestExplorerResponse {
+  status: "passed" | "failed" | "skipped";
+  status_counts: { passed: number; failed: number; skipped: number };
+  total_rows: number;
+  /** Every test with this status — the tile's own number. */
+  status_total: number;
+  /** How many survive the search and the selected group. */
+  matched: number;
+  offset: number;
+  limit: number;
+  has_more: boolean;
+  group_by: string;
+  group: string;
+  group_options: { key: string; label: string }[];
+  groups: TestGroup[];
+  group_truncated: boolean;
+  dimensions: string[];
+  sort: string;
+  tests: TestRecord[];
+}
+
+export interface TestExplorerQuery {
+  status: "passed" | "failed" | "skipped";
+  groupBy?: string;
+  group?: string;
+  q?: string;
+  sort?: string;
+  limit?: number;
+  offset?: number;
+  signal?: AbortSignal;
+}
+
+/**
+ * The tests behind one status tile.
+ *
+ * Deliberately uncached: this is opened on demand and always paged/filtered,
+ * so a cache would mostly store single-use permutations while risking a
+ * stale list right after a re-ingest.
+ */
+export async function getTestsByStatus(
+  ingestionId: string,
+  query: TestExplorerQuery,
+): Promise<TestExplorerResponse> {
+  const params = new URLSearchParams({ status: query.status });
+  if (query.groupBy) params.set("group_by", query.groupBy);
+  if (query.group) params.set("group", query.group);
+  if (query.q) params.set("q", query.q);
+  if (query.sort) params.set("sort", query.sort);
+  params.set("limit", String(query.limit ?? 50));
+  params.set("offset", String(query.offset ?? 0));
+
+  const res = await timedFetch(
+    `${API_BASE}/data/tests?${params.toString()}`,
+    {
+      cache: "no-store",
+      signal: query.signal,
+      headers: { "x-ingestion-id": ingestionId, ...getAuthHeaders() },
+    },
+    "api:data-tests",
+  );
+  return parseJsonOrThrow<TestExplorerResponse>(res, "Failed to load test details");
+}
+
 export async function prefetchDashboardQuality(ingestionId: string): Promise<void> {
   if (!ingestionId) return;
   try {

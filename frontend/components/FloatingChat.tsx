@@ -21,6 +21,7 @@ import {
 import { useRB } from "@/lib/RBContext";
 import { useIngestion } from "@/lib/IngestionContext";
 import { sendChatMessage, submitFeedback } from "@/lib/api";
+import { ASK_SENTINEL_EVENT } from "@/lib/askSentinel";
 import ReactMarkdown from "react-markdown";
 import { useSuggestions } from "@/lib/SuggestionsContext";
 import { MAX_SUGGESTIONS } from "@/lib/roleSuggestions";
@@ -284,6 +285,25 @@ export default function FloatingChat() {
     setCustomQuestion("");
     sendQuestion(question);
   };
+
+  // Other panels (today: the status drill-down) hand a question over by
+  // dispatching ASK_SENTINEL_EVENT rather than importing anything from here.
+  // Held in a ref so the subscription survives every render - sendQuestion is
+  // rebuilt each one, and re-subscribing on every keystroke would be a leak
+  // waiting to happen.
+  const sendQuestionRef = useRef(sendQuestion);
+  sendQuestionRef.current = sendQuestion;
+
+  useEffect(() => {
+    const onAsk = (event: Event) => {
+      const question = String((event as CustomEvent).detail || "").trim();
+      if (!question) return;
+      setIsOpen(true);
+      sendQuestionRef.current(question);
+    };
+    window.addEventListener(ASK_SENTINEL_EVENT, onAsk);
+    return () => window.removeEventListener(ASK_SENTINEL_EVENT, onAsk);
+  }, []);
 
   const handleCustomSubmit = (e: React.FormEvent) => {
     e.preventDefault();

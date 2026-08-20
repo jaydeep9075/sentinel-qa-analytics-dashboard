@@ -35,29 +35,27 @@ export default function BrandHeading({ label, subtitle }: BrandHeadingProps) {
     // shrink-0: when the header runs out of room the selectors in the
     // middle zone scroll, the wordmark does not get squeezed — a truncated
     // brand ("Sentine…") looks broken in a way a scrolled control does not.
-    <div className="flex shrink-0 items-center gap-2.5">
-      <BrandLogo size={34} />
-      <div className="min-w-0">
-        <h1 className="flex items-baseline gap-1.5 truncate text-lg font-bold leading-tight tracking-tight">
-          <TestrigWordmark className="text-[13px]" />
-          <span className="text-cyan-500 dark:text-cyan-400">Sentinel</span>
-          {label && (
-            <>
-              <span className="text-slate-300 dark:text-white/20" aria-hidden>
-                /
-              </span>
-              <span className="truncate text-sm font-medium text-slate-500 dark:text-white/60">
-                {label}
-              </span>
-            </>
-          )}
-        </h1>
-        {subtitle ?? (
-          <p className="text-[10px] font-semibold uppercase tracking-widest text-slate-500 dark:text-white/25">
-            QA Intelligence
-          </p>
+    <div className="min-w-0 shrink-0">
+      <h1 className="flex items-center gap-2 truncate text-lg font-bold leading-tight tracking-tight">
+        <TestrigWordmark />
+        <BrandLogo size={24} />
+        <span className="text-cyan-500 dark:text-cyan-400">Sentinel</span>
+        {label && (
+          <>
+            <span className="text-slate-300 dark:text-white/20" aria-hidden>
+              /
+            </span>
+            <span className="truncate text-sm font-medium text-slate-500 dark:text-white/60">
+              {label}
+            </span>
+          </>
         )}
-      </div>
+      </h1>
+      {subtitle ?? (
+        <p className="text-[10px] font-semibold uppercase tracking-widest text-slate-500 dark:text-white/25">
+          QA Intelligence
+        </p>
+      )}
     </div>
   );
 }
