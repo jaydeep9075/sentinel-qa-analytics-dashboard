@@ -13,8 +13,7 @@ import {
   Paperclip,
   Radio,
 } from "lucide-react";
-import BrandLogo from "@/components/BrandLogo";
-import TestrigWordmark from "@/components/TestrigWordmark";
+import BrandLockup from "@/components/BrandLockup";
 import { API_BASE, elapsedMs, formatDuration, passRate } from "@/lib/liveRuns";
 
 interface TestRow {
@@ -371,17 +370,19 @@ export default function LiveRunPage() {
       <header className="sticky top-0 z-50 border-b border-slate-200 bg-white/90 shadow-[0_4px_30px_rgba(15,23,42,0.08)] backdrop-blur-xl dark:border-white/[0.06] dark:bg-black/80 dark:shadow-[0_4px_30px_rgba(0,0,0,0.5)]">
         <div className="mx-auto flex max-w-[1600px] flex-wrap items-center justify-between gap-3 px-4 py-3 sm:gap-4 sm:px-6 sm:py-3.5">
           <div className="flex items-center gap-3">
-            <div>
-              <h1 className="flex items-center gap-2 text-base font-bold tracking-tight sm:text-lg">
-                <TestrigWordmark />
-                <BrandLogo size={22} />
-                <span className="text-cyan-400">Sentinel</span>
-                <span className="font-normal text-slate-500 dark:text-white/60">Live Run</span>
-              </h1>
-              <p className="hidden text-[10px] font-semibold uppercase tracking-widest text-slate-500 dark:text-white/25 sm:block">
-                QA Intelligence Platform
-              </p>
-            </div>
+            <BrandLockup
+              scale={16}
+              trailing={
+                <>
+                  <span className="text-slate-300 dark:text-white/20" aria-hidden>
+                    /
+                  </span>
+                  <span className="text-sm font-medium text-slate-500 dark:text-white/60">
+                    Live Run
+                  </span>
+                </>
+              }
+            />
           </div>
           <Link
             href="/runs/live"

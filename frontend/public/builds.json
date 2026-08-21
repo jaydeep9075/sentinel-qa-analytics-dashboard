@@ -1,71 +1,6 @@
 {
   "builds": [
     {
-      "build_id": "ingestion_20260819_075910",
-      "ingested_at": "2026-08-19T08:13:11.778006+00:00",
-      "total_records_ingested": 2500,
-      "metrics": {
-        "total_tests": 0,
-        "executed_tests": 0,
-        "skipped_tests": 0,
-        "passed": 0,
-        "failed": 0,
-        "pass_rate": 0,
-        "module_count": 0,
-        "avg_duration_sec": 0,
-        "total_duration_sec": 0,
-        "most_common_error": "",
-        "slowest_tests": [],
-        "modules": {},
-        "projects": {}
-      },
-      "tables": [
-        "documents",
-        "ingestion_schema_profiles",
-        "sources",
-        "structured_Testresults_1"
-      ],
-      "parser_insights": {
-        "total_sources": 1,
-        "strategies": {
-          "native-structured": 1
-        },
-        "avg_confidence": 1,
-        "ai_fallback_used": 0
-      },
-      "ingestion_report": {
-        "build_id": "ingestion_20260819_075910",
-        "overall_status": "completed",
-        "started_at": "2026-08-19T07:59:11.765100+00:00",
-        "finished_at": "2026-08-19T08:13:11.714201+00:00",
-        "datasets": {
-          "Testresults (1)": {
-            "status": "completed",
-            "rows_stored": 2500,
-            "documents_stored": 2500,
-            "duplicates_skipped": 0,
-            "records_failed": 0,
-            "tables": [
-              "structured_Testresults_1"
-            ],
-            "parser_strategy": "native-structured",
-            "parser_confidence": 1,
-            "schema_changes": [],
-            "error": null,
-            "source_type": "file"
-          }
-        },
-        "warnings": [],
-        "totals": {
-          "rows_stored": 2500,
-          "documents_stored": 2500,
-          "duplicates_skipped": 0,
-          "records_failed": 0,
-          "datasets_failed": 0
-        }
-      }
-    },
-    {
       "build_id": "ingestion_20260819_070839",
       "ingested_at": "2026-08-19T07:18:50.021233+00:00",
       "total_records_ingested": 2500,
@@ -2848,5 +2783,5 @@
       ]
     }
   ],
-  "cache_key": "C:\\Users\\JAIDEEP JOSHI\\Desktop\\ai_dashboard\\sentinel-qa-analytics-dashboard\\data\\ingestion_20260423_111619\\summary.json:1783933236539.8853:4847|C:\\Users\\JAIDEEP JOSHI\\Desktop\\ai_dashboard\\sentinel-qa-analytics-dashboard\\data\\ingestion_20260428_113234\\summary.json:1783951450143.4998:14546|C:\\Users\\JAIDEEP JOSHI\\Desktop\\ai_dashboard\\sentinel-qa-analytics-dashboard\\data\\ingestion_20260506_104014\\summary.json:1783951450455.537:14546|C:\\Users\\JAIDEEP JOSHI\\Desktop\\ai_dashboard\\sentinel-qa-analytics-dashboard\\data\\ingestion_20260506_110116\\summary.json:1783951450575.7954:14546|C:\\Users\\JAIDEEP JOSHI\\Desktop\\ai_dashboard\\sentinel-qa-analytics-dashboard\\data\\ingestion_20260709_110143\\summary.json:1783951450783.6526:14575|C:\\Users\\JAIDEEP JOSHI\\Desktop\\ai_dashboard\\sentinel-qa-analytics-dashboard\\data\\ingestion_20260720_065915\\summary.json:1784530818540.6035:26201|C:\\Users\\JAIDEEP JOSHI\\Desktop\\ai_dashboard\\sentinel-qa-analytics-dashboard\\data\\ingestion_20260818_185122\\summary.json:1787079100790.749:1562|C:\\Users\\JAIDEEP JOSHI\\Desktop\\ai_dashboard\\sentinel-qa-analytics-dashboard\\data\\ingestion_20260818_185212\\summary.json:1787079152151.0457:1562|C:\\Users\\JAIDEEP JOSHI\\Desktop\\ai_dashboard\\sentinel-qa-analytics-dashboard\\data\\ingestion_20260819_070058\\summary.json:1787122881229.9187:1562|C:\\Users\\JAIDEEP JOSHI\\Desktop\\ai_dashboard\\sentinel-qa-analytics-dashboard\\data\\ingestion_20260819_070839\\summary.json:1787123930020.6318:1647|C:\\Users\\JAIDEEP JOSHI\\Desktop\\ai_dashboard\\sentinel-qa-analytics-dashboard\\data\\ingestion_20260819_075910\\summary.json:1787127191777.9517:1647"
+  "cache_key": "C:\\Users\\JAIDEEP JOSHI\\Desktop\\ai_dashboard\\sentinel-qa-analytics-dashboard\\data\\ingestion_20260423_111619\\summary.json:1783933236539.8853:4847|C:\\Users\\JAIDEEP JOSHI\\Desktop\\ai_dashboard\\sentinel-qa-analytics-dashboard\\data\\ingestion_20260428_113234\\summary.json:1783951450143.4998:14546|C:\\Users\\JAIDEEP JOSHI\\Desktop\\ai_dashboard\\sentinel-qa-analytics-dashboard\\data\\ingestion_20260506_104014\\summary.json:1783951450455.537:14546|C:\\Users\\JAIDEEP JOSHI\\Desktop\\ai_dashboard\\sentinel-qa-analytics-dashboard\\data\\ingestion_20260506_110116\\summary.json:1783951450575.7954:14546|C:\\Users\\JAIDEEP JOSHI\\Desktop\\ai_dashboard\\sentinel-qa-analytics-dashboard\\data\\ingestion_20260709_110143\\summary.json:1783951450783.6526:14575|C:\\Users\\JAIDEEP JOSHI\\Desktop\\ai_dashboard\\sentinel-qa-analytics-dashboard\\data\\ingestion_20260720_065915\\summary.json:1784530818540.6035:26201|C:\\Users\\JAIDEEP JOSHI\\Desktop\\ai_dashboard\\sentinel-qa-analytics-dashboard\\data\\ingestion_20260818_185122\\summary.json:1787079100790.749:1562|C:\\Users\\JAIDEEP JOSHI\\Desktop\\ai_dashboard\\sentinel-qa-analytics-dashboard\\data\\ingestion_20260818_185212\\summary.json:1787079152151.0457:1562|C:\\Users\\JAIDEEP JOSHI\\Desktop\\ai_dashboard\\sentinel-qa-analytics-dashboard\\data\\ingestion_20260819_070058\\summary.json:1787122881229.9187:1562|C:\\Users\\JAIDEEP JOSHI\\Desktop\\ai_dashboard\\sentinel-qa-analytics-dashboard\\data\\ingestion_20260819_070839\\summary.json:1787123930020.6318:1647"
 }

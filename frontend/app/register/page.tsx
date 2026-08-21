@@ -3,8 +3,8 @@ import { useState, useEffect } from "react";
 import Link from "next/link";
 import { motion } from "framer-motion";
 import { Eye, EyeOff, ArrowRight, CheckCircle2, Clock } from "lucide-react";
-import BrandLogo from "@/components/BrandLogo";
-import { BRAND_NAME, BRAND_TAGLINE } from "@/lib/brand";
+import BrandLockup from "@/components/BrandLockup";
+import { BRAND_NAME } from "@/lib/brand";
 
 const API = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
@@ -13,7 +13,6 @@ type Outcome = { status: "pending" | "active"; message: string };
 export default function RegisterPage() {
   const [username, setUsername] = useState("");
   const [email, setEmail] = useState("");
-  const [workspace, setWorkspace] = useState("");
   const [password, setPassword] = useState("");
   const [confirm, setConfirm] = useState("");
   const [showPassword, setShowPassword] = useState(false);
@@ -54,7 +53,6 @@ export default function RegisterPage() {
           username,
           password,
           email: email || null,
-          requested_workspace: workspace || null,
         }),
       });
       const data = await res.json().catch(() => ({}));
@@ -84,17 +82,12 @@ export default function RegisterPage() {
         className="relative w-full max-w-md z-10"
       >
         <div className="relative bg-white border border-slate-200 dark:bg-white/[0.03] dark:border-white/[0.08] backdrop-blur-2xl rounded-2xl p-8 md:p-10 shadow-[0_0_80px_rgba(0,240,255,0.04)]">
-          <div className="flex items-center gap-3 mb-8">
-            <BrandLogo size={46} />
-            <div>
-              <h2 className="text-2xl font-bold text-slate-900 dark:text-white">Request Access</h2>
-              <p className="text-slate-500 dark:text-white/40 text-xs tracking-wide">
-                Create a {BRAND_NAME} account
-              </p>
-              <p className="mt-0.5 text-slate-400 dark:text-white/25 text-[11px] leading-snug">
-                {BRAND_TAGLINE}
-              </p>
-            </div>
+          <div className="mb-8">
+            <BrandLockup scale={22} />
+            <h2 className="mt-6 text-2xl font-bold text-slate-900 dark:text-white">Request Access</h2>
+            <p className="mt-1 text-slate-500 dark:text-white/40 text-xs tracking-wide">
+              Create a {BRAND_NAME} account
+            </p>
           </div>
 
           {enabled === false && (
@@ -162,19 +155,6 @@ export default function RegisterPage() {
                   onChange={(e) => setEmail(e.target.value)}
                   placeholder="jane@company.com"
                 />
-              </div>
-
-              <div>
-                <label className={label}>Team / workspace</label>
-                <input
-                  className={field}
-                  value={workspace}
-                  onChange={(e) => setWorkspace(e.target.value)}
-                  placeholder="platform"
-                />
-                <p className="text-[11px] text-slate-400 dark:text-white/25 mt-1.5">
-                  A request, not a grant — an administrator confirms which workspace you join.
-                </p>
               </div>
 
               <div>

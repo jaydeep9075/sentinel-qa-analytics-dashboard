@@ -102,7 +102,7 @@ export function purgeIngestionCache(ingestionId: string): void {
 
   for (const key of Array.from(memoryCache.keys())) {
     if (!key.startsWith("qa_cache:")) continue;
-    if ((scope && key.endsWith(`:${scope}`)) || key.endsWith(":global")) {
+    if ((scope && key.endsWith(`:${scope}`)) || key.endsWith(":global") || key.startsWith("qa_cache:ingestions:")) {
       memoryCache.delete(key);
     }
   }
@@ -111,7 +111,7 @@ export function purgeIngestionCache(ingestionId: string): void {
   try {
     for (const key of Object.keys(sessionStorage)) {
       if (!key.startsWith("qa_cache:")) continue;
-      if ((scope && key.endsWith(`:${scope}`)) || key.endsWith(":global")) {
+      if ((scope && key.endsWith(`:${scope}`)) || key.endsWith(":global") || key.startsWith("qa_cache:ingestions:")) {
         sessionStorage.removeItem(key);
       }
     }
@@ -121,12 +121,42 @@ export function purgeIngestionCache(ingestionId: string): void {
   }
 }
 
+/**
+ * The project the UI is currently open on.
+ *
+ * Written by RBContext when the user picks a project, and attached to every
+ * authenticated request as `x-project` so the server can scope what it
+ * answers with. One storage key, one reader - a second copy of "which project
+ * am I in" is how the header and the data end up disagreeing.
+ */
+export const ACTIVE_PROJECT_KEY = "selectedProject";
+
+/**
+ * Fired after the active project changes.
+ *
+ * The build list lives in a different provider (IngestionContext) than the
+ * project selection (RBContext), and neither should import the other. An
+ * event keeps them decoupled: one owns "which project", the other owns
+ * "which builds", and the switch is the single moment they must agree.
+ */
+export const PROJECT_CHANGED_EVENT = "sentinel:project-changed";
+
+export function getActiveProject(): string {
+  if (typeof window === "undefined") return "";
+  return localStorage.getItem(ACTIVE_PROJECT_KEY) || "";
+}
+
 function getAuthHeaders(): Record<string, string> {
   const token = typeof window !== "undefined" ? localStorage.getItem("token") : null;
   const workspaceId = typeof window !== "undefined" ? localStorage.getItem("workspace_id") : null;
+  const project = getActiveProject();
   const headers: Record<string, string> = {};
   if (token) headers.Authorization = `Bearer ${token}`;
   if (workspaceId) headers["x-workspace-id"] = workspaceId;
+  // Sent on every call, not just the ingestion ones: a build belongs to
+  // exactly one project, so anything reading build data has to be told which
+  // project the question is being asked in.
+  if (project) headers["x-project"] = project;
   return headers;
 }
 
@@ -177,12 +207,23 @@ export async function getDataQuality(ingestionId: string) {
   return data;
 }
 
+/**
+ * Cache scope for the build list.
+ *
+ * "global" was wrong the moment builds became project-scoped: switching
+ * project kept serving the previous project's builds until the TTL expired,
+ * which looked exactly like the bug where every project showed every build.
+ */
+function ingestionsCacheKey(): string {
+  return withCacheKey("ingestions", `project:${getActiveProject() || "none"}`);
+}
+
 export function readCachedIngestions(): { ingestions?: unknown[] } | null {
-  return cacheGet<{ ingestions?: unknown[] }>(withCacheKey("ingestions", "global"));
+  return cacheGet<{ ingestions?: unknown[] }>(ingestionsCacheKey());
 }
 
 export async function listIngestions(forceRefresh = false) {
-  const key = withCacheKey("ingestions", "global");
+  const key = ingestionsCacheKey();
   if (!forceRefresh) {
     const cached = cacheGet<Record<string, unknown>>(key);
     if (cached) return cached;
@@ -731,4 +772,26 @@ export async function submitFeedback(
     throw new Error(data?.detail || data?.error || "Failed to submit feedback");
   }
   return data;
+}
+
+/**
+ * Forget everything cached for the project we were just in.
+ *
+ * Called on a project switch. Every `qa_cache:` entry is keyed by build id or
+ * by project, and every one of them answers a question that was asked inside
+ * the old project - so the correct scope to drop is all of it.
+ */
+export function purgeProjectScopedCache(): void {
+  for (const key of Array.from(memoryCache.keys())) {
+    if (key.startsWith("qa_cache:")) memoryCache.delete(key);
+  }
+  if (typeof window === "undefined") return;
+  try {
+    for (const key of Object.keys(sessionStorage)) {
+      if (key.startsWith("qa_cache:")) sessionStorage.removeItem(key);
+    }
+  } catch {
+    // Storage may be unavailable; the memory cache is the part that matters
+    // for the page currently rendered.
+  }
 }

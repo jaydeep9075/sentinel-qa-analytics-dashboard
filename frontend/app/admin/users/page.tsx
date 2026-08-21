@@ -1,6 +1,7 @@
 "use client";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
+import Link from "next/link";
 import { Check, KeyRound, RefreshCw, ShieldAlert, Trash2, UserPlus, X } from "lucide-react";
 import PageTransition from "@/components/PageTransition";
 import { SkeletonRows } from "@/components/Skeleton";
@@ -38,7 +39,12 @@ const STATUS_STYLES: Record<string, string> = {
 export default function AdminUsersPage() {
   const router = useRouter();
   const [users, setUsers] = useState<User[]>([]);
-  const [workspaces, setWorkspaces] = useState<string[]>([]);
+  // Projects, not workspaces. "Workspace" was a second, invisible grouping
+  // that an admin had to invent a name for and that decided nothing the user
+  // could see; a project is the boundary the product actually enforces, so
+  // this screen assigns those and workspace stays an internal default.
+  const [projects, setProjects] = useState<string[]>([]);
+  const [projectAccess, setProjectAccess] = useState<Record<string, string[]>>({});
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
@@ -64,7 +70,23 @@ export default function AdminUsersPage() {
       }
       const data = await res.json();
       setUsers(data.users || []);
-      setWorkspaces(data.workspaces || []);
+
+      const [projectsRes, accessRes] = await Promise.all([
+        fetch(`${API}/projects`, { headers: authHeaders() }),
+        fetch(`${API}/admin/projects/access`, { headers: authHeaders() }),
+      ]);
+      if (projectsRes.ok) {
+        const payload = await projectsRes.json();
+        setProjects(Array.isArray(payload.projects) ? payload.projects : []);
+      }
+      if (accessRes.ok) {
+        const payload = await accessRes.json();
+        const map: Record<string, string[]> = {};
+        for (const row of payload.users || []) {
+          map[String(row.username)] = Array.isArray(row.projects) ? row.projects : [];
+        }
+        setProjectAccess(map);
+      }
     } catch {
       setError("Could not reach the backend.");
     } finally {
@@ -95,6 +117,18 @@ export default function AdminUsersPage() {
     }
   };
 
+  /** First project grant for an account. Used right after approving or
+   *  creating a user, which is the moment somebody actually knows which
+   *  project the person was hired onto. */
+  const grantProject = async (username: string, project: string) => {
+    if (!project) return;
+    await fetch(`${API}/admin/projects/access/${encodeURIComponent(username.toLowerCase())}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json", ...authHeaders() },
+      body: JSON.stringify({ projects: [project] }),
+    }).catch(() => {});
+  };
+
   const patch = (username: string, body: Record<string, unknown>, msg: string) =>
     call(`${API}/admin/users/${encodeURIComponent(username)}`, { method: "PATCH", body: JSON.stringify(body) }, msg);
 
@@ -108,7 +142,7 @@ export default function AdminUsersPage() {
         <div>
           <h2 className="text-xl font-bold">User management</h2>
           <p className="text-sm text-slate-500 dark:text-white/40">
-            Approve access requests, assign roles and workspaces, and set per-account token limits.
+            Approve access requests, assign roles and projects, and set per-account token limits.
           </p>
         </div>
         <div className="flex gap-2">
@@ -138,11 +172,15 @@ export default function AdminUsersPage() {
 
       {showCreate && (
         <CreateUserForm
-          workspaces={workspaces}
+          projects={projects}
           onCancel={() => setShowCreate(false)}
-          onSubmit={async (body) => {
+          onSubmit={async ({ project_id, ...body }) => {
             const ok = await call(`${API}/admin/users`, { method: "POST", body: JSON.stringify(body) }, `Created ${body.username}.`);
-            if (ok) setShowCreate(false);
+            if (ok) {
+              await grantProject(String(body.username), String(project_id || ""));
+              await load();
+              setShowCreate(false);
+            }
           }}
         />
       )}
@@ -156,7 +194,20 @@ export default function AdminUsersPage() {
           </h3>
           <div className="space-y-2">
             {pending.map((u) => (
-              <PendingRow key={u.username} user={u} workspaces={workspaces} onApprove={patch} onReject={patch} />
+              <PendingRow
+                key={u.username}
+                user={u}
+                projects={projects}
+                onApprove={async (username, body, msg, project) => {
+                  const ok = await patch(username, body, msg);
+                  if (ok && project) {
+                    await grantProject(username, project);
+                    await load();
+                  }
+                  return ok;
+                }}
+                onReject={patch}
+              />
             ))}
           </div>
         </section>
@@ -172,7 +223,7 @@ export default function AdminUsersPage() {
               <tr className="text-xs uppercase tracking-wider text-slate-500 dark:text-white/40">
                 <th className="px-4 py-3">User</th>
                 <th className="px-4 py-3">Role</th>
-                <th className="px-4 py-3">Workspace</th>
+                <th className="px-4 py-3">Projects</th>
                 <th className="px-4 py-3">Token limit</th>
                 <th className="px-4 py-3">Status</th>
                 <th className="px-4 py-3 text-right">Actions</th>
@@ -180,7 +231,14 @@ export default function AdminUsersPage() {
             </thead>
             <tbody>
               {rest.map((u) => (
-                <UserRow key={u.username} user={u} workspaces={workspaces} isSelf={u.username === ownUsername} onPatch={patch} onCall={call} />
+                <UserRow
+                  key={u.username}
+                  user={u}
+                  projects={projectAccess[u.username.toLowerCase()] || []}
+                  isSelf={u.username === ownUsername}
+                  onPatch={patch}
+                  onCall={call}
+                />
               ))}
               {!loading && rest.length === 0 && (
                 <tr>
@@ -200,34 +258,49 @@ export default function AdminUsersPage() {
 
 function PendingRow({
   user,
-  workspaces,
+  projects,
   onApprove,
   onReject,
 }: {
   user: User;
-  workspaces: string[];
-  onApprove: (u: string, b: Record<string, unknown>, m: string) => Promise<boolean>;
+  projects: string[];
+  onApprove: (
+    u: string,
+    b: Record<string, unknown>,
+    m: string,
+    project?: string,
+  ) => Promise<boolean>;
   onReject: (u: string, b: Record<string, unknown>, m: string) => Promise<boolean>;
 }) {
-  const [workspace, setWorkspace] = useState(user.requested_workspace || workspaces[0] || "default");
+  // Approving used to ask which *workspace* to file the person under. It now
+  // asks the question that decides what they can actually open: which
+  // project. Blank is allowed - an account can exist before anyone has
+  // decided what it works on - and then the user lands on "no project
+  // assigned" instead of on somebody else's data.
+  const [project, setProject] = useState(projects[0] || "");
   const [role, setRole] = useState("sdet");
 
   return (
     <div className="flex flex-wrap items-center gap-3 p-4 rounded-xl border border-amber-500/25 bg-amber-500/[0.04]">
       <div className="flex-1 min-w-[180px]">
         <p className="font-semibold">{user.username}</p>
-        <p className="text-xs text-slate-500 dark:text-white/40">
-          {user.email || "no email"}
-          {user.requested_workspace && ` · requested "${user.requested_workspace}"`}
-        </p>
+        <p className="text-xs text-slate-500 dark:text-white/40">{user.email || "no email"}</p>
       </div>
-      <input
-        list="workspace-options"
-        value={workspace}
-        onChange={(e) => setWorkspace(e.target.value)}
-        placeholder="workspace"
-        className="px-3 py-2 rounded-lg bg-white dark:bg-black/50 border border-slate-300 dark:border-white/10 text-sm w-40"
-      />
+      <label className="flex items-center gap-2 text-xs text-slate-500 dark:text-white/40">
+        Project
+        <select
+          value={project}
+          onChange={(e) => setProject(e.target.value)}
+          className="px-3 py-2 rounded-lg bg-white dark:bg-black/50 border border-slate-300 dark:border-white/10 text-sm"
+        >
+          <option value="">No project yet</option>
+          {projects.map((p) => (
+            <option key={p} value={p}>
+              {p}
+            </option>
+          ))}
+        </select>
+      </label>
       <select
         value={role}
         onChange={(e) => setRole(e.target.value)}
@@ -240,7 +313,14 @@ function PendingRow({
         ))}
       </select>
       <button
-        onClick={() => onApprove(user.username, { status: "active", workspace_id: workspace, role }, `Approved ${user.username}.`)}
+        onClick={() =>
+          onApprove(
+            user.username,
+            { status: "active", role },
+            `Approved ${user.username}${project ? ` on ${project}` : ""}.`,
+            project,
+          )
+        }
         className="flex items-center gap-1.5 px-3 py-2 rounded-lg bg-emerald-500 text-white text-sm font-medium"
       >
         <Check className="w-4 h-4" /> Approve
@@ -251,33 +331,30 @@ function PendingRow({
       >
         <X className="w-4 h-4" /> Reject
       </button>
-      <datalist id="workspace-options">
-        {workspaces.map((w) => (
-          <option key={w} value={w} />
-        ))}
-      </datalist>
     </div>
   );
 }
 
 function UserRow({
   user,
-  workspaces,
+  projects,
   isSelf,
   onPatch,
   onCall,
 }: {
   user: User;
-  workspaces: string[];
+  /** Projects this account may open. Read-only here on purpose: the editor
+   *  lives in Admin - Projects, where the same grid also shows how many
+   *  builds each project holds. Two editors for one fact is one too many. */
+  projects: string[];
   isSelf: boolean;
   onPatch: (u: string, b: Record<string, unknown>, m: string) => Promise<boolean>;
   onCall: (url: string, init: RequestInit, msg: string) => Promise<boolean>;
 }) {
-  const [workspace, setWorkspace] = useState(user.workspace_id);
   const [tokenLimit, setTokenLimit] = useState(String(user.token_limit || 0));
   const retired = isRetiredRole(user.role);
+  const adminAccount = ["admin", "cto"].includes(String(user.role).toLowerCase());
 
-  useEffect(() => setWorkspace(user.workspace_id), [user.workspace_id]);
   useEffect(() => setTokenLimit(String(user.token_limit || 0)), [user.token_limit]);
 
   const resetPassword = async () => {
@@ -346,22 +423,24 @@ function UserRow({
         </select>
       </td>
       <td className="px-4 py-3">
-        <input
-          list="workspace-options"
-          value={workspace}
-          onChange={(e) => setWorkspace(e.target.value)}
-          onBlur={() => {
-            if (workspace !== user.workspace_id) {
-              onPatch(user.username, { workspace_id: workspace }, `Moved ${user.username} to "${workspace}".`);
-            }
-          }}
-          className="px-2 py-1.5 rounded-lg bg-white dark:bg-black/50 border border-slate-300 dark:border-white/10 text-sm w-32"
-        />
-        <datalist id="workspace-options">
-          {workspaces.map((w) => (
-            <option key={w} value={w} />
-          ))}
-        </datalist>
+        {adminAccount ? (
+          <span className="text-xs text-slate-500 dark:text-white/40">All projects</span>
+        ) : projects.length === 0 ? (
+          <Link href="/admin/projects" className="text-xs font-semibold text-amber-500 hover:underline">
+            None - assign
+          </Link>
+        ) : (
+          <Link href="/admin/projects" className="flex flex-wrap gap-1" title="Edit in Admin / Projects">
+            {projects.map((project) => (
+              <span
+                key={project}
+                className="rounded-md border border-cyan-500/30 bg-cyan-500/10 px-1.5 py-0.5 text-[11px] font-semibold text-cyan-600 dark:text-cyan-400"
+              >
+                {project}
+              </span>
+            ))}
+          </Link>
+        )}
       </td>
       <td className="px-4 py-3">
         <input
@@ -422,11 +501,11 @@ function UserRow({
 }
 
 function CreateUserForm({
-  workspaces,
+  projects,
   onCancel,
   onSubmit,
 }: {
-  workspaces: string[];
+  projects: string[];
   onCancel: () => void;
   onSubmit: (body: Record<string, unknown>) => void;
 }) {
@@ -436,7 +515,11 @@ function CreateUserForm({
     email: "",
     full_name: "",
     role: "sdet",
-    workspace_id: workspaces[0] || "default",
+    // Every account lands in the one default workspace. The field survives
+    // because build ownership still records it, but it is no longer a name an
+    // admin has to invent at account-creation time.
+    workspace_id: "default",
+    project_id: projects[0] || "",
     token_limit: "",
     must_change_password: true,
   });
@@ -490,14 +573,15 @@ function CreateUserForm({
         </select>
       </label>
       <label className="block">
-        <span className="text-xs text-slate-500 dark:text-white/40">Workspace</span>
-        <input
-          className={input}
-          list="workspace-options"
-          value={form.workspace_id}
-          onChange={(e) => set("workspace_id", e.target.value)}
-          required
-        />
+        <span className="text-xs text-slate-500 dark:text-white/40">Project</span>
+        <select className={input} value={form.project_id} onChange={(e) => set("project_id", e.target.value)}>
+          <option value="">No project yet</option>
+          {projects.map((p) => (
+            <option key={p} value={p}>
+              {p}
+            </option>
+          ))}
+        </select>
       </label>
       <label className="block">
         <span className="text-xs text-slate-500 dark:text-white/40">Token limit (0 = unlimited)</span>
@@ -527,11 +611,6 @@ function CreateUserForm({
           Cancel
         </button>
       </div>
-      <datalist id="workspace-options">
-        {workspaces.map((w) => (
-          <option key={w} value={w} />
-        ))}
-      </datalist>
     </form>
   );
 }

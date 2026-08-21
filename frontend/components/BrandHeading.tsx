@@ -1,8 +1,7 @@
 "use client";
 
 import type { ReactNode } from "react";
-import BrandLogo from "./BrandLogo";
-import TestrigWordmark from "./TestrigWordmark";
+import BrandLockup from "./BrandLockup";
 
 interface BrandHeadingProps {
   /** Page name shown after the Sentinel wordmark, e.g. "Dashboard", "Admin Console". */
@@ -16,19 +15,13 @@ interface BrandHeadingProps {
 }
 
 /**
- * The Sentinel mark + the "Testrig Sentinel" wordmark, identical everywhere
- * it appears.
+ * The signed-in header's brand block: the shared <BrandLockup/> (the official
+ * Testrig logo · the Sentinel mark · "Sentinel"), plus the page name after it.
  *
- * The company name is set by <TestrigWordmark/> in the brand's own bracketed
- * lettering, one size down from the product name — so the pair reads as
- * "Testrig Sentinel" with the emphasis on the product, without a second logo
- * image competing with the mark.
- *
- * This exists because the dashboard, admin console and account page each had
- * their own copy of the header block, and only the dashboard's carried the
- * full branding — the other two rendered a bare, unglowed logo next to a
- * plain page title, so moving between them looked like moving between two
- * different products. One component means the mark can't drift again.
+ * The lockup itself lives in one component so the header, the auth cards and
+ * the landing page cannot drift apart again — this file only decides what the
+ * header adds on top of it: the `/ Dashboard` label, and the choice between the
+ * tagline and a sub-page link on the second line.
  */
 export default function BrandHeading({ label, subtitle }: BrandHeadingProps) {
   return (
@@ -36,26 +29,23 @@ export default function BrandHeading({ label, subtitle }: BrandHeadingProps) {
     // middle zone scroll, the wordmark does not get squeezed — a truncated
     // brand ("Sentine…") looks broken in a way a scrolled control does not.
     <div className="min-w-0 shrink-0">
-      <h1 className="flex items-center gap-2 truncate text-lg font-bold leading-tight tracking-tight">
-        <TestrigWordmark />
-        <BrandLogo size={24} />
-        <span className="text-cyan-500 dark:text-cyan-400">Sentinel</span>
-        {label && (
-          <>
-            <span className="text-slate-300 dark:text-white/20" aria-hidden>
-              /
-            </span>
-            <span className="truncate text-sm font-medium text-slate-500 dark:text-white/60">
-              {label}
-            </span>
-          </>
-        )}
-      </h1>
-      {subtitle ?? (
-        <p className="text-[10px] font-semibold uppercase tracking-widest text-slate-500 dark:text-white/25">
-          QA Intelligence
-        </p>
-      )}
+      <BrandLockup
+        scale={16}
+        tagline={!subtitle}
+        trailing={
+          label && (
+            <>
+              <span className="text-slate-300 dark:text-white/20" aria-hidden>
+                /
+              </span>
+              <span className="truncate text-sm font-medium text-slate-500 dark:text-white/60">
+                {label}
+              </span>
+            </>
+          )
+        }
+      />
+      {subtitle}
     </div>
   );
 }

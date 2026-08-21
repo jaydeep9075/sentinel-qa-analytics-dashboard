@@ -1,7 +1,8 @@
 "use client";
-import { createContext, useContext, useState, useEffect } from "react";
+import { createContext, useCallback, useContext, useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { usePermissions } from "./usePermissions";
+import { ACTIVE_PROJECT_KEY, PROJECT_CHANGED_EVENT, purgeProjectScopedCache } from "./api";
 
 interface RBContextType {
   selectedRole: string | null;
@@ -10,6 +11,7 @@ interface RBContextType {
   setSelectedProject: (project: string) => void;
   roles: string[];
   projects: string[];
+  refreshProjects: () => Promise<void>;
   loading: boolean;
   userRole: string | null;
   canSwitchRole: boolean;
@@ -94,6 +96,76 @@ export function RBProvider({ children }: { children: React.ReactNode }) {
   const { permissions } = usePermissions();
   const userRole = permissions.role || storedUserRole;
 
+  const fetchData = useCallback(async () => {
+    const apiBase = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+    const headers = getAuthHeaders();
+
+    try {
+      const [rolesRes, projectsRes] = await Promise.all([
+        fetch(`${apiBase}/roles`, { headers }),
+        fetch(`${apiBase}/projects`, { headers }),
+      ]);
+
+      if (rolesRes.status === 401 || projectsRes.status === 401) {
+        // Stale/expired token - same recovery path as the dashboard layout's
+        // own auth guard, so the user lands back on /login instead of
+        // silently sitting on a dashboard with no roles/projects.
+        localStorage.removeItem("token");
+        router.replace("/login");
+        return;
+      }
+
+      if (!rolesRes.ok || !projectsRes.ok) {
+        throw new Error("Failed to fetch roles/projects");
+      }
+
+      const rolesData = await rolesRes.json();
+      const projectsData = await projectsRes.json();
+
+      const availableRoles: string[] = rolesData.roles || [];
+      setRoles(availableRoles);
+      setProjects(projectsData.projects || []);
+
+      // Resolve the answer style against the personas that actually exist.
+      // Done here rather than on mount because roles/*.md is server-side:
+      // until this response lands there is no list to pick a default from.
+      setSelectedRole((current) => {
+        if (current && availableRoles.includes(current)) return current;
+        return defaultAnswerStyleFor(localStorage.getItem("role"), availableRoles);
+      });
+
+      const savedProject = localStorage.getItem(ACTIVE_PROJECT_KEY);
+      let resolvedProject: string | null = null;
+      if (savedProject && projectsData.projects?.includes(savedProject)) {
+        resolvedProject = savedProject;
+        setSelectedProject(savedProject);
+      } else if (projectsData.projects?.length > 0) {
+        const firstProject = String(projectsData.projects[0]);
+        resolvedProject = firstProject;
+        setSelectedProject(firstProject);
+        localStorage.setItem(ACTIVE_PROJECT_KEY, firstProject);
+      } else {
+        // Access was revoked, or the project was deleted. Leaving the stale
+        // id in storage means every request keeps sending `x-project` for a
+        // project the server will now refuse.
+        setSelectedProject(null);
+        localStorage.removeItem(ACTIVE_PROJECT_KEY);
+      }
+
+      writeRBCache({
+        roles: rolesData.roles || [],
+        projects: projectsData.projects || [],
+        selectedProject: resolvedProject,
+      });
+    } catch (err) {
+      console.error("Error fetching roles/projects:", err);
+      setRoles([]);
+      setProjects([]);
+    } finally {
+      setLoading(false);
+    }
+  }, [router]);
+
   useEffect(() => {
     // The account role, written at login. Read-only here.
     const storedRole = localStorage.getItem("role");
@@ -116,70 +188,9 @@ export function RBProvider({ children }: { children: React.ReactNode }) {
       setLoading(false);
     }
 
-    const fetchData = async () => {
-      const apiBase = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
-      const headers = getAuthHeaders();
-
-      try {
-        const [rolesRes, projectsRes] = await Promise.all([
-          fetch(`${apiBase}/roles`, { headers }),
-          fetch(`${apiBase}/projects`, { headers }),
-        ]);
-
-        if (rolesRes.status === 401 || projectsRes.status === 401) {
-          // Stale/expired token - same recovery path as the dashboard layout's
-          // own auth guard, so the user lands back on /login instead of
-          // silently sitting on a dashboard with no roles/projects.
-          localStorage.removeItem("token");
-          router.replace("/login");
-          return;
-        }
-
-        if (!rolesRes.ok || !projectsRes.ok) {
-          throw new Error("Failed to fetch roles/projects");
-        }
-
-        const rolesData = await rolesRes.json();
-        const projectsData = await projectsRes.json();
-
-        const availableRoles: string[] = rolesData.roles || [];
-        setRoles(availableRoles);
-        setProjects(projectsData.projects || []);
-
-        // Resolve the answer style against the personas that actually exist.
-        // Done here rather than on mount because roles/*.md is server-side:
-        // until this response lands there is no list to pick a default from.
-        setSelectedRole((current) => {
-          if (current && availableRoles.includes(current)) return current;
-          return defaultAnswerStyleFor(localStorage.getItem("role"), availableRoles);
-        });
-
-        const savedProject = localStorage.getItem("selectedProject");
-        let resolvedProject: string | null = null;
-        if (savedProject && projectsData.projects?.includes(savedProject)) {
-          resolvedProject = savedProject;
-          setSelectedProject(savedProject);
-        } else if (projectsData.projects?.length > 0) {
-          resolvedProject = projectsData.projects[0];
-          setSelectedProject(resolvedProject);
-        }
-
-        writeRBCache({
-          roles: rolesData.roles || [],
-          projects: projectsData.projects || [],
-          selectedProject: resolvedProject,
-        });
-      } catch (err) {
-        console.error("Error fetching roles/projects:", err);
-        setRoles([]);
-        setProjects([]);
-      } finally {
-        setLoading(false);
-      }
-    };
-
     fetchData();
-  }, []);
+  }, [fetchData]);
+
 
   const handleSetSelectedRole = (role: string) => {
     setSelectedRole(role);
@@ -188,8 +199,15 @@ export function RBProvider({ children }: { children: React.ReactNode }) {
   };
 
   const handleSetSelectedProject = (project: string) => {
+    if (project === selectedProject) return;
     setSelectedProject(project);
-    localStorage.setItem("selectedProject", project);
+    localStorage.setItem(ACTIVE_PROJECT_KEY, project);
+    // Everything cached was an answer about the previous project. Keeping any
+    // of it is what made a switched-to project still show the old project's
+    // builds and charts.
+    purgeProjectScopedCache();
+    sessionStorage.removeItem(RB_CACHE_KEY);
+    window.dispatchEvent(new CustomEvent(PROJECT_CHANGED_EVENT, { detail: project }));
   };
 
   // Who may answer as somebody else. This is the LLM chat persona (roles/*.md),
@@ -207,6 +225,7 @@ export function RBProvider({ children }: { children: React.ReactNode }) {
         setSelectedProject: handleSetSelectedProject,
         roles,
         projects,
+        refreshProjects: fetchData,
         loading,
         userRole,
         canSwitchRole,

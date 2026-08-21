@@ -1,11 +1,12 @@
 "use client";
 import React, { createContext, useCallback, useContext, useState, useEffect } from "react";
-import { listIngestions, readCachedIngestions } from "./api";
+import { listIngestions, readCachedIngestions, PROJECT_CHANGED_EVENT } from "./api";
 
 export interface Ingestion {
   id: string;          // real folder name — used in API headers, never shown
   build_label: string; // e.g. "Build 1", "Build 2"
   display_name?: string; // optional user-supplied name, preferred over build_label when set
+  project_id?: string;
   summary: string;
   created: number;
 }
@@ -55,11 +56,17 @@ export const IngestionProvider: React.FC<{ children: React.ReactNode }> = ({
     setIngestions(list);
     if (list.length === 0) {
       setSelectedIngestion(null);
+      localStorage.removeItem("selectedIngestion");
       return;
     }
+    // The remembered build only survives if it is in *this* project's list.
+    // Otherwise the header would keep naming a build the new project doesn't
+    // contain, and every panel would ask the server for it and get a 404.
     const saved = localStorage.getItem("selectedIngestion");
     const stillExists = saved && list.some((i) => i.id === saved);
-    setSelectedIngestion(stillExists ? saved! : list[0].id);
+    const next = stillExists ? saved! : list[0].id;
+    setSelectedIngestion(next);
+    localStorage.setItem("selectedIngestion", next);
   }, []);
 
   const refreshIngestions = useCallback(async () => {
@@ -87,6 +94,17 @@ export const IngestionProvider: React.FC<{ children: React.ReactNode }> = ({
         if (!cancelled) setLoading(false);
       });
 
+    // A project switch changes which builds exist, so the list is refetched
+    // rather than filtered client-side - the client never had the other
+    // project's builds to begin with.
+    const onProjectChanged = () => {
+      setLoading(true);
+      refreshIngestions()
+        .catch(() => setIngestions([]))
+        .finally(() => setLoading(false));
+    };
+    window.addEventListener(PROJECT_CHANGED_EVENT, onProjectChanged);
+
     const onVisible = () => {
       if (document.visibilityState === "visible") {
         refreshIngestions().catch(() => {
@@ -98,6 +116,7 @@ export const IngestionProvider: React.FC<{ children: React.ReactNode }> = ({
 
     return () => {
       cancelled = true;
+      window.removeEventListener(PROJECT_CHANGED_EVENT, onProjectChanged);
       document.removeEventListener("visibilitychange", onVisible);
     };
   }, [applyIngestionList, refreshIngestions, ingestions.length]);

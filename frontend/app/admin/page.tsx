@@ -16,6 +16,14 @@ type Overview = {
   users: { total: number; by_status: Record<string, number> };
   workspaces: { count: number; names: string[] };
   builds: { count: number };
+  projects: {
+    count: number;
+    names: string[];
+    users_with_access: number;
+    users_without_access: number;
+    mapped_builds: number;
+    unmapped_builds: number;
+  };
   token_usage: { lifetime_total: number; accounts_with_usage: number };
   llm: { ready: boolean; provider: string; model: string };
   server_time: string;
@@ -99,9 +107,40 @@ export default function AdminOverviewPage() {
 
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <StatCard icon={Users} label="Users" value={data.users.total} sub={`${data.users.by_status.active || 0} active · ${pending} pending · ${data.users.by_status.disabled || 0} disabled`} />
-        <StatCard icon={Layers} label="Workspaces" value={data.workspaces.count} sub={data.workspaces.names.slice(0, 4).join(", ") || "none"} />
+        <StatCard icon={Layers} label="Projects" value={data.projects.count} sub={data.projects.names.slice(0, 4).join(", ") || "none"} />
         <StatCard icon={Database} label="Builds" value={data.builds.count} sub="ingested and visible" />
         <StatCard icon={KeyRound} label="Tokens spent" value={data.token_usage.lifetime_total.toLocaleString()} sub={`${data.token_usage.accounts_with_usage} account(s) with usage`} />
+      </div>
+
+      <div className="rounded-xl border border-slate-200 dark:border-white/[0.08] bg-white dark:bg-white/[0.02] p-4">
+        <div className="flex items-center justify-between gap-3 flex-wrap">
+          <div>
+            <p className="text-xs uppercase tracking-wider font-semibold text-slate-500 dark:text-white/40">Project Access Summary</p>
+            <p className="mt-1 text-sm text-slate-600 dark:text-white/55">
+              {data.projects.count} project(s) · {data.projects.users_with_access} user(s) with access · {data.projects.users_without_access} without access
+            </p>
+          </div>
+          <Link href="/admin/projects" className="text-sm text-cyan-500 hover:underline">Manage projects →</Link>
+        </div>
+        <div className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+          <MiniStat label="Mapped builds" value={data.projects.mapped_builds} tone="ok" />
+          <MiniStat label="Unmapped builds" value={data.projects.unmapped_builds} tone={data.projects.unmapped_builds > 0 ? "warn" : "ok"} />
+          <MiniStat label="Project names" value={data.projects.names.slice(0, 3).join(", ") || "none"} tone="neutral" />
+        </div>
+        {/* No one-click "fix" here on purpose: an unassigned build has to be
+            given to a *specific* project, and only the admin knows which.
+            The button that used to sit here picked one for them. */}
+        {data.projects.unmapped_builds > 0 && (
+          <div className="mt-3 flex items-center justify-end">
+            <Link
+              href="/admin/projects"
+              className="rounded-lg bg-cyan-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-cyan-700"
+            >
+              Assign {data.projects.unmapped_builds} unassigned build
+              {data.projects.unmapped_builds === 1 ? "" : "s"} &rarr;
+            </Link>
+          </div>
+        )}
       </div>
 
       <div className={`flex items-center gap-3 p-4 rounded-xl border ${data.llm.ready ? "border-emerald-500/25 bg-emerald-500/[0.06]" : "border-red-500/25 bg-red-500/[0.06]"}`}>
@@ -126,6 +165,30 @@ export default function AdminOverviewPage() {
       </div>
     </div>
     </PageTransition>
+  );
+}
+
+function MiniStat({
+  label,
+  value,
+  tone,
+}: {
+  label: string;
+  value: string | number;
+  tone: "neutral" | "ok" | "warn";
+}) {
+  const toneClass =
+    tone === "ok"
+      ? "text-emerald-600 dark:text-emerald-400"
+      : tone === "warn"
+        ? "text-amber-600 dark:text-amber-400"
+        : "text-slate-700 dark:text-white/70";
+
+  return (
+    <div className="rounded-lg border border-slate-200 dark:border-white/[0.08] px-3 py-2">
+      <p className="text-[11px] uppercase tracking-wider text-slate-500 dark:text-white/40">{label}</p>
+      <p className={`mt-1 text-sm font-semibold ${toneClass}`}>{value}</p>
+    </div>
   );
 }
 

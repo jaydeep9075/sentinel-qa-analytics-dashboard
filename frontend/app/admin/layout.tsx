@@ -2,7 +2,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter, usePathname } from "next/navigation";
 import Link from "next/link";
-import { ArrowLeft, Bell, Gauge, KeyRound, ScrollText, Settings as SettingsIcon, Users } from "lucide-react";
+import { ArrowLeft, Bell, FolderOpen, Gauge, KeyRound, ScrollText, Settings as SettingsIcon, Users } from "lucide-react";
 import AppHeader from "@/components/AppHeader";
 
 const API = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
@@ -15,6 +15,7 @@ function authHeaders(): Record<string, string> {
 const TABS = [
   { href: "/admin", label: "Overview", icon: Gauge },
   { href: "/admin/users", label: "Users", icon: Users },
+  { href: "/admin/projects", label: "Projects", icon: FolderOpen },
   { href: "/admin/usage", label: "Usage", icon: KeyRound },
   { href: "/admin/settings", label: "Settings", icon: SettingsIcon },
   { href: "/admin/audit", label: "Audit", icon: ScrollText },

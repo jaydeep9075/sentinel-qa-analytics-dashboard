@@ -22,7 +22,7 @@ const inter = Inter({
 
 export const metadata: Metadata = {
   title: "Testrig Sentinel — QA AI Analytics Dashboard",
-  description: "AI test analytics that answers your QA questions in plain English.",
+  description: "AI QE that knows your data.",
 };
 
 export default function RootLayout({

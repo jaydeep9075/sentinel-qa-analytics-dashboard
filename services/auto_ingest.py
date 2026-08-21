@@ -47,7 +47,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Dict, Optional, Tuple
 
-from . import config, ingestion_jobs
+from . import config, ingestion_jobs, project_builds
 
 logger = logging.getLogger(__name__)
 
@@ -321,6 +321,46 @@ def _known_workspaces() -> frozenset:
     return result
 
 
+def _existing_projects() -> list:
+    """Project ids on disk, read straight from PROJECTS_ROOT.
+
+    Deliberately not via ProjectManager: that pulls in lancedb and the
+    sentence-transformers embedder, and the watcher only needs the names.
+    Same rule as ProjectManager.list_projects - a directory holding a
+    context.md is a project.
+    """
+    root = Path(config.PROJECTS_ROOT)
+    try:
+        return [entry.name for entry in root.iterdir() if entry.is_dir() and (entry / "context.md").exists()]
+    except Exception:
+        logger.debug("Could not list projects for auto-ingest routing", exc_info=True)
+        return []
+
+
+def _project_for_dropbox(path: Path) -> str:
+    """Which project a dropped file belongs to, or "" when it is ambiguous.
+
+    The drop-box has no caller to authenticate, so the path carries the
+    routing here exactly as it does for the workspace:
+
+        <AUTO_INGEST_DIR>/FSA/report.zip   -> project "FSA"
+
+    With no matching folder, a single-project install is unambiguous and the
+    build goes there. A multi-project install is not, so the build is left
+    unassigned and shows up in Admin - Projects for someone to place. Guessing
+    would silently file one team's results under another team's project.
+    """
+    projects = _existing_projects()
+    if not projects:
+        return ""
+
+    parent = path.parent.name.strip().lower()
+    match = next((project for project in projects if project.lower() == parent), "")
+    if match:
+        return match
+    return projects[0] if len(projects) == 1 else ""
+
+
 def _eligible(entry: Path) -> Optional[Tuple[int, int]]:
     """(size, mtime) if this entry is ready to ingest, else None."""
     if entry.name.startswith("."):
@@ -446,11 +486,18 @@ async def _scan_once(pending: Dict[str, Tuple[Tuple[int, int], float]], processe
             logger.error("Auto-ingest: no free build id for %s, will retry next scan", name)
             continue
 
+        project_id = _project_for_dropbox(path)
         record = {
             "build_id": build_id,
             "workspace_id": workspace_id,
+            "project_id": project_id,
             "at": datetime.now(timezone.utc).isoformat(),
         }
+        # Recorded before the ingestion runs: the build directory exists from
+        # the first write, and a build that appears on disk without a project
+        # is invisible to everyone but an admin until this lands.
+        if project_id:
+            project_builds.set_build_project(build_id, project_id)
         try:
             await _ingest(path, build_id, workspace_id)
             record["status"] = "completed" if not ingestion_jobs.is_failed(build_id) else "failed"

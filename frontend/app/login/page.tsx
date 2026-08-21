@@ -4,8 +4,8 @@ import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { motion } from "framer-motion";
 import { Eye, EyeOff, ArrowRight, Sparkles } from "lucide-react";
-import BrandLogo from "@/components/BrandLogo";
-import { BRAND_NAME, BRAND_TAGLINE } from "@/lib/brand";
+import BrandLockup from "@/components/BrandLockup";
+import { BRAND_NAME } from "@/lib/brand";
 
 /* ───────── floating particles (login version — fewer, subtler) ───────── */
 function LoginParticles() {
@@ -103,7 +103,7 @@ export default function LoginPage() {
         router.push("/account?forced=1");
         return;
       }
-      router.push("/dashboard");
+      router.push("/projects");
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : "Login failed";
       setError(message);
@@ -145,13 +145,15 @@ export default function LoginPage() {
 
           <div className="relative z-10">
             {/* logo + heading */}
-            <div className="flex items-center gap-3 mb-8">
-              <BrandLogo size={46} />
-              <div>
-                <h2 className="text-2xl font-bold text-slate-900 dark:text-white">Welcome Back</h2>
-                <p className="text-slate-500 dark:text-white/40 text-xs tracking-wide">Sign in to {BRAND_NAME}</p>
-                <p className="mt-0.5 text-slate-400 dark:text-white/25 text-[11px] leading-snug">{BRAND_TAGLINE}</p>
-              </div>
+            <div className="mb-8">
+              {/* The full lockup leads the card: the company, the product and
+                  the one line that says what it does — the tagline is part of
+                  <BrandLockup/>, so it can never go missing here. */}
+              <BrandLockup scale={22} />
+              <h2 className="mt-6 text-2xl font-bold text-slate-900 dark:text-white">Welcome Back</h2>
+              <p className="mt-1 text-slate-500 dark:text-white/40 text-xs tracking-wide">
+                Sign in to {BRAND_NAME}
+              </p>
             </div>
 
             <form onSubmit={handleSubmit} className="space-y-5">

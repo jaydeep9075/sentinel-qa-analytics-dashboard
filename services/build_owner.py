@@ -183,11 +183,13 @@ def rename_creator(old_username: str, new_username: str) -> int:
     return updated
 
 
-def can_view(owner: dict, user: dict) -> bool:
-    """Admins see every workspace; everyone else sees only their own."""
-    if str((user or {}).get("role") or "").strip().lower() in {"admin", "cto"}:
-        return True
-    return _normalize(owner.get("workspace_id")) == _normalize((user or {}).get("workspace_id"))
+# Visibility used to live here as can_view(), comparing the build's workspace
+# to the caller's. It has moved to project assignment (services/project_access
+# + project_builds), because two independent invisible filters is one too many:
+# an account could be granted a project and still not see half of its builds,
+# with nothing in any screen explaining why. owner.json is still the record of
+# who created a build and which workspace produced it - that is what can_delete
+# below is built on, and what the UI labels rows with.
 
 
 def can_delete(owner: dict, user: dict) -> bool:
@@ -207,7 +209,12 @@ def can_delete(owner: dict, user: dict) -> bool:
     """
     if str((user or {}).get("role") or "").strip().lower() in {"admin", "cto"}:
         return True
-    if not can_view(owner, user) or owner.get("is_legacy"):
+    if owner.get("is_legacy"):
+        return False
+    if _normalize(owner.get("workspace_id")) != _normalize((user or {}).get("workspace_id")):
+        # Deleting is irreversible, so it keeps the narrower rule: you may
+        # look at a colleague's build through a shared project, but destroying
+        # one still requires having produced it.
         return False
 
     created_by = _normalize(owner.get("created_by"))

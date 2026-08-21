@@ -20,7 +20,7 @@ from typing import Optional, Dict, Any
 from datetime import datetime, timezone
 from urllib.parse import urlparse
 from . import config, state, data_loader, handlers, memory, llm_client, ingestion_jobs, schema_context
-from . import token_usage_store, auto_ingest, build_owner, app_settings, audit_log, ingestion_service
+from . import token_usage_store, auto_ingest, build_owner, app_settings, audit_log, ingestion_service, project_access, project_builds
 from jose import JWTError, jwt
 from . import auth as auth_module
 from .prompts import SUGGESTION_PROMPT
@@ -221,6 +221,19 @@ class FeedbackRequest(BaseModel):
     session_id: Optional[str] = None
 
 
+class AdminCreateProjectRequest(BaseModel):
+    project_id: str
+    context_markdown: Optional[str] = None
+
+
+class AdminProjectAccessRequest(BaseModel):
+    projects: list[str] = Field(default_factory=list)
+
+
+class AdminBuildProjectRequest(BaseModel):
+    project_id: str
+
+
 def _normalize_workspace(workspace_id: Optional[str], current_user: Optional[dict] = None) -> str:
     """The workspace this request operates in.
 
@@ -260,6 +273,110 @@ def _normalize_workspace(workspace_id: Optional[str], current_user: Optional[dic
 
 def _is_admin_role(role: Optional[str]) -> bool:
     return str(role or "").strip().lower() in {"admin", "cto"}
+
+
+def _visible_projects_for_user(current_user: dict) -> list[str]:
+    if state.project_manager is None:
+        from .project_manager import ProjectManager
+        state.project_manager = ProjectManager()
+    available = state.project_manager.list_projects()
+    return project_access.get_visible_projects(
+        username=str(current_user.get("username") or ""),
+        role=str(current_user.get("role") or ""),
+        available_projects=available,
+    )
+
+
+def _build_project_id(build_id: str) -> str:
+    """The project that owns this build, or "" when nothing claims it yet.
+
+    There is no guessed fallback on purpose. A build predating projects
+    belongs to nobody until an administrator says otherwise, and inventing an
+    owner here would make an unassigned build indistinguishable from a
+    deliberately assigned one - including in the admin screen whose whole job
+    is to show what still needs assigning.
+    """
+    return str(project_builds.get_build_project(build_id) or "").strip()
+
+
+def _can_access_build(current_user: dict, build_id: str) -> bool:
+    """Authorization: may this account see this build at all?
+
+    Separate from _matches_active_project below, which is only about the
+    project the user is currently looking at. Access is what the server
+    enforces; the active project is a view filter.
+    """
+    if _is_admin_role(current_user.get("role")):
+        return True
+    build_project = _build_project_id(build_id)
+    if not build_project:
+        # Unassigned: administrators only, so an unclaimed build can never
+        # leak into a project it was never put in.
+        return False
+    visible = _visible_projects_for_user(current_user)
+    return build_project.lower() in {p.lower() for p in visible}
+
+
+def _active_project(current_user: dict, requested_project: Optional[str]) -> str:
+    """The project this request is scoped to, or "" for "no scope".
+
+    Comes from the `x-project` header the dashboard sends with every call.
+    An unknown or unauthorized value is rejected rather than ignored: falling
+    back to "all projects" would show the caller data from a project they had
+    just been told they cannot open.
+    """
+    wanted = str(requested_project or "").strip()
+    if not wanted:
+        return ""
+    visible = _visible_projects_for_user(current_user)
+    match = next((p for p in visible if p.lower() == wanted.lower()), None)
+    if match is None:
+        raise HTTPException(status_code=403, detail="You do not have access to the selected project")
+    return match
+
+
+def _resolve_existing_project(project_id: str) -> str:
+    """Match a project id case-insensitively against what exists on disk.
+
+    Returns the canonical spelling, so the access file and the build map never
+    end up holding two casings of the same project.
+    """
+    if state.project_manager is None:
+        from .project_manager import ProjectManager
+        state.project_manager = ProjectManager()
+    wanted = str(project_id or "").strip().lower()
+    if not wanted:
+        raise HTTPException(status_code=400, detail="project_id is required")
+    match = next((p for p in state.project_manager.list_projects() if p.lower() == wanted), None)
+    if match is None:
+        raise HTTPException(status_code=404, detail=f"Project '{project_id}' not found")
+    return match
+
+
+def _resolve_target_project_for_new_build(current_user: dict, requested_project: Optional[str]) -> str:
+    """Which project a newly ingested build lands in.
+
+    Explicit header wins. With no header it is only unambiguous when the
+    account can see exactly one project - otherwise the ingestion is refused
+    rather than dropped into whichever project happens to sort first.
+    """
+    visible = _visible_projects_for_user(current_user)
+    if not visible:
+        raise HTTPException(
+            status_code=403,
+            detail="No project access configured for this account - ask an administrator to assign one",
+        )
+
+    active = _active_project(current_user, requested_project)
+    if active:
+        return active
+
+    if len(visible) == 1:
+        return visible[0]
+    raise HTTPException(
+        status_code=400,
+        detail="Select a project before starting an ingestion",
+    )
 
 
 def _infer_source_type(source_path: str, explicit: Optional[str]) -> str:
@@ -1312,13 +1429,13 @@ async def build_visibility_middleware(request: Request, call_next):
                     status_code=400, content={"detail": "Invalid ingestion id"}
                 )
             if build_path.is_dir() and (build_path / "lancedb").exists():
-                if not build_owner.can_view(build_owner.read_owner(build_path), user):
+                if not _can_access_build(user, ingestion_id):
                     logger.warning(
-                        "Blocked cross-workspace access: user=%s workspace=%s build=%s",
-                        user.get("username"), user.get("workspace_id"), ingestion_id,
+                        "Blocked cross-project access: user=%s build=%s",
+                        user.get("username"), ingestion_id,
                     )
                     # 404, not 403: confirming a build exists in another
-                    # workspace is itself a small leak, and the caller has no
+                    # project is itself a small leak, and the caller has no
                     # legitimate way to know the id.
                     return JSONResponse(
                         status_code=404, content={"detail": "Ingestion not found"}
@@ -1527,11 +1644,22 @@ async def registration_policy():
 
 @app.get("/auth/me")
 async def whoami(current_user: dict = Depends(get_current_user)):
+    visible_projects = _visible_projects_for_user(current_user)
+    if state.project_manager is None:
+        from .project_manager import ProjectManager
+        state.project_manager = ProjectManager()
     return {
         "username": current_user.get("username"),
         "role": current_user.get("role"),
         "workspace_id": current_user.get("workspace_id"),
         "is_admin": is_admin(current_user),
+        "visible_projects": visible_projects,
+        "visible_projects_count": len(visible_projects),
+        # "no projects exist yet" and "you were granted none" look identical
+        # from visible_projects alone, and they need opposite screens: the
+        # first-run admin gets a create form, the unassigned user gets "ask an
+        # administrator".
+        "projects_total": len(state.project_manager.list_projects()),
         # The hard-lock rule, not the raw column: the dashboard and the admin
         # layout bounce to /account?forced=1 on this, and an account that is
         # merely still on the shipped default gets the login-screen prompt
@@ -1847,6 +1975,7 @@ def _guard_last_admin(store, record: dict, target: str, new_role, new_status) ->
 async def ingest_from_config2(
     request: IngestRequest,
     background_tasks: BackgroundTasks,
+    x_project: Optional[str] = Header(None),
     current_user: dict = Depends(require_permission(PERM_DATA_INGEST)),
 ):
     source_path = str(request.source_path or "").strip()
@@ -1856,6 +1985,7 @@ async def ingest_from_config2(
     build_id = f"ingestion_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}"
     source_type = _infer_source_type(source_path, request.source_type)
     workspace_id = _normalize_workspace(request.workspace_id, current_user)
+    project_id = _resolve_target_project_for_new_build(current_user, x_project)
 
     dynamic_cfg = {
         "ingestion_name": f"{workspace_id}_{source_type}",
@@ -1882,12 +2012,14 @@ async def ingest_from_config2(
         source="api",
     )
     _ingestions_cache.clear()
+    project_builds.set_build_project(build_id, project_id)
 
     return {
         "success": True,
         "build_id": build_id,
         "source_path": source_path,
         "source_type": source_type,
+        "project_id": project_id,
         "workspace_id": workspace_id,
         "status": "pending",
     }
@@ -2048,6 +2180,7 @@ async def ingest_test_connection(
 async def ingest_build(
     request: BuildIngestRequest,
     background_tasks: BackgroundTasks,
+    x_project: Optional[str] = Header(None),
     current_user: dict = Depends(require_permission(PERM_DATA_INGEST)),
 ):
     """Connector-driven build creation for the Add Build wizard - the
@@ -2065,6 +2198,7 @@ async def ingest_build(
 
     build_id = f"ingestion_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}"
     workspace_id = _normalize_workspace(request.workspace_id, current_user)
+    project_id = _resolve_target_project_for_new_build(current_user, x_project)
     display_name = str(request.display_name or "").strip()[:200]
     source_path_for_guard = ""  # only meaningful for file-based connectors' size pre-check
 
@@ -2158,6 +2292,7 @@ async def ingest_build(
         cleanup_dir=cleanup_dir,
     )
     _ingestions_cache.clear()
+    project_builds.set_build_project(build_id, project_id)
 
     audit_log.record(
         "build_ingest_start",
@@ -2171,6 +2306,7 @@ async def ingest_build(
         "success": True,
         "build_id": build_id,
         "connector_type": connector_type,
+        "project_id": project_id,
         "workspace_id": workspace_id,
         "status": "pending",
     }
@@ -2317,7 +2453,7 @@ async def ingest_status(build_id: str, current_user: dict = Depends(get_current_
     # missing owner.json here means "not started yet", not "unowned" â€” check
     # visibility only once there is something to check.
     if (build_path / build_owner.OWNER_FILENAME).exists():
-        if not build_owner.can_view(build_owner.read_owner(build_path), current_user):
+        if not _can_access_build(current_user, build_id):
             raise HTTPException(status_code=404, detail=f"No ingestion job found for '{build_id}'")
 
     status = ingestion_jobs.get_status(build_id)
@@ -2891,18 +3027,39 @@ async def dashboard_overview(
     }
 
 @app.get("/ingestions")
-async def list_ingestions(current_user: dict = Depends(get_current_user)):
+async def list_ingestions(
+    x_project: Optional[str] = Header(None),
+    current_user: dict = Depends(get_current_user),
+):
     """Available builds, filtered to what this caller is allowed to see.
 
-    Admins get every workspace (each row carries its workspace_id so the UI
-    can label them); everyone else gets only their own. The cache key includes
-    the viewer's scope â€” a single global key would serve one workspace's build
-    list to the next caller for the whole TTL.
+    Two independent filters apply, and they are not the same thing:
+
+      * access - which builds this account may see at all (project
+        assignment, plus the older workspace ownership rule).
+      * scope  - which project the dashboard is currently open on, from the
+        `x-project` header. A build belongs to exactly one project, so the
+        build dropdown never mixes two projects' builds into one list.
+
+    The cache key carries both, plus the account: a single global key would
+    serve one project's build list to the next caller for the whole TTL.
     """
-    viewer_scope = (
-        "admin"
-        if _is_admin_role(current_user.get("role"))
-        else f"ws:{_normalize_workspace(None, current_user)}"
+    active_project = _active_project(current_user, x_project)
+    if not active_project:
+        # No explicit scope. Unambiguous only when the account can see exactly
+        # one project - then that is the scope. Otherwise fall back to "every
+        # build you may access", which is still access-checked.
+        visible = _visible_projects_for_user(current_user)
+        if len(visible) == 1:
+            active_project = visible[0]
+
+    viewer_scope = "|".join(
+        [
+            "admin" if _is_admin_role(current_user.get("role")) else "user",
+            str(current_user.get("username") or ""),
+            f"ws:{_normalize_workspace(None, current_user)}",
+            f"project:{active_project.lower()}",
+        ]
     )
     cached = _cache_get(_ingestions_cache, viewer_scope, _INGESTIONS_CACHE_TTL_SECONDS)
     if cached is not None:
@@ -2916,7 +3073,14 @@ async def list_ingestions(current_user: dict = Depends(get_current_user)):
                 # half-written build as a usable one.
                 continue
             owner = build_owner.read_owner(path)
-            if not build_owner.can_view(owner, current_user):
+            if not _can_access_build(current_user, path.name):
+                continue
+            build_project = _build_project_id(path.name)
+            # Project scoping: a build belongs to exactly one project, so the
+            # build dropdown only ever lists the current project's builds.
+            # Without this an account with two projects saw one merged list
+            # and every project looked like it held everyone's data.
+            if active_project and build_project.lower() != active_project.lower():
                 continue
             summary_json = path / "summary.json"
             summary_text = ""
@@ -2940,6 +3104,7 @@ async def list_ingestions(current_user: dict = Depends(get_current_user)):
                 "summary": summary_text,
                 "created": path.stat().st_mtime,
                 "workspace_id": owner.get("workspace_id", ""),
+                "project_id": build_project,
                 "created_by": owner.get("created_by", ""),
                 "source": owner.get("source", ""),
                 "display_name": owner.get("display_name", ""),
@@ -3008,6 +3173,7 @@ def _purge_build_state(ingestion_id: str) -> None:
 
     ingestion_jobs.forget(ingestion_id)
     schema_context.invalidate_cache(ingestion_id)
+    project_builds.remove_build(ingestion_id)
 
 
 @app.delete("/ingestions/{ingestion_id}")
@@ -3034,7 +3200,7 @@ async def delete_ingestion(
         raise HTTPException(status_code=404, detail=f"Ingestion {ingestion_id} not found")
 
     owner = build_owner.read_owner(ingestion_path)
-    if not build_owner.can_view(owner, current_user):
+    if not _can_access_build(current_user, ingestion_id):
         # Same reasoning as the middleware: don't confirm it exists.
         raise HTTPException(status_code=404, detail=f"Ingestion {ingestion_id} not found")
     # Role gate first, ownership second: a viewer/developer role has no
@@ -3213,7 +3379,264 @@ async def list_projects(current_user: dict = Depends(get_current_user)):
     if state.project_manager is None:
         from .project_manager import ProjectManager
         state.project_manager = ProjectManager()
-    return {"projects": state.project_manager.list_projects()}
+    available = state.project_manager.list_projects()
+    visible = project_access.get_visible_projects(
+        username=str(current_user.get("username") or ""),
+        role=str(current_user.get("role") or ""),
+        available_projects=available,
+    )
+    return {"projects": visible}
+
+
+@app.post("/admin/projects")
+async def admin_create_project(
+    payload: AdminCreateProjectRequest,
+    admin: dict = Depends(require_admin),
+):
+    project_id = str(payload.project_id or "").strip()
+    if not project_id:
+        raise HTTPException(status_code=400, detail="project_id is required")
+    if not re.match(r"^[A-Za-z0-9_.-]{2,64}$", project_id):
+        raise HTTPException(
+            status_code=400,
+            detail="project_id must be 2-64 chars with letters, numbers, dot, underscore or hyphen",
+        )
+
+    if state.project_manager is None:
+        from .project_manager import ProjectManager
+        state.project_manager = ProjectManager()
+    existing_projects = state.project_manager.list_projects()
+
+    projects_root = Path(config.PROJECTS_ROOT)
+    project_dir = projects_root / project_id
+    context_path = project_dir / "context.md"
+    if project_dir.exists():
+        raise HTTPException(status_code=409, detail="Project already exists")
+
+    project_dir.mkdir(parents=True, exist_ok=False)
+    context_text = (payload.context_markdown or "").strip() or (
+        f"# {project_id}\n\n"
+        "Project context placeholder.\n"
+        "Add product, quality and test-domain details for better AI responses.\n"
+    )
+    context_path.write_text(context_text, encoding="utf-8")
+
+    # Bootstrap only. On a brand-new install the very first project is the
+    # whole product, so every existing account gets it - otherwise the admin
+    # would have to hand-assign each user before anyone could log in and see
+    # anything. Every project after the first grants nothing implicitly:
+    # creating a project must not widen anyone's access.
+    all_users = get_user_store().list_users()
+    seeded = 0
+    if not existing_projects:
+        seeded = project_access.seed_project_for_users(
+            [str(u.get("username") or "") for u in all_users],
+            project_id,
+        )
+
+    audit_log.record(
+        "project_create",
+        admin.get("username"),
+        target=project_id,
+        workspace_id=str(admin.get("workspace_id") or ""),
+        details={"first_project": not existing_projects, "seeded_users": seeded},
+    )
+    return {
+        "project": project_id,
+        "created": True,
+        "first_project": not existing_projects,
+        "seeded_users": seeded,
+    }
+
+
+@app.delete("/admin/projects/{project_id}")
+async def admin_delete_project(project_id: str, admin: dict = Depends(require_admin)):
+    """Remove an empty project.
+
+    Refuses while builds still point at it. Deleting the project directory
+    would not delete those builds - it would strand them as unassigned, which
+    is a data-loss-shaped surprise rather than a delete.
+    """
+    pid = str(project_id or "").strip()
+    if not pid:
+        raise HTTPException(status_code=400, detail="project_id is required")
+
+    project_dir = Path(config.PROJECTS_ROOT) / pid
+    if not project_dir.is_dir() or not (project_dir / "context.md").exists():
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    build_count = project_builds.count_builds_for_project(pid)
+    if build_count:
+        raise HTTPException(
+            status_code=409,
+            detail=f"{build_count} build(s) still belong to this project - reassign or delete them first",
+        )
+
+    shutil.rmtree(project_dir)
+    removed_from = project_access.remove_project_everywhere(pid)
+    _ingestions_cache.clear()
+
+    audit_log.record(
+        "project_delete",
+        admin.get("username"),
+        target=pid,
+        workspace_id=str(admin.get("workspace_id") or ""),
+        details={"access_entries_cleared": removed_from},
+    )
+    return {"project": pid, "deleted": True, "access_entries_cleared": removed_from}
+
+
+@app.get("/admin/projects/access")
+async def admin_list_project_access(admin: dict = Depends(require_admin)):
+    store = get_user_store()
+    users = store.list_users()
+    mapping = project_access.list_access_map()
+    rows = []
+    for user in users:
+        username = str(user.get("username") or "").strip().lower()
+        rows.append(
+            {
+                "username": username,
+                "role": user.get("role", ""),
+                "workspace_id": user.get("workspace_id", ""),
+                "projects": mapping.get(username, []),
+            }
+        )
+    audit_log.record("project_access_view", admin.get("username"))
+    return {"users": rows}
+
+
+@app.put("/admin/projects/access/{username}")
+async def admin_set_project_access(
+    username: str,
+    payload: AdminProjectAccessRequest,
+    admin: dict = Depends(require_admin),
+):
+    target = str(username or "").strip().lower()
+    if not target:
+        raise HTTPException(status_code=400, detail="username is required")
+
+    store = get_user_store()
+    if store.get_user_record(target) is None:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    if state.project_manager is None:
+        from .project_manager import ProjectManager
+        state.project_manager = ProjectManager()
+
+    available = state.project_manager.list_projects()
+    available_by_lower = {p.lower(): p for p in available}
+    normalized_projects = []
+    for raw in list(payload.projects or []):
+        key = str(raw or "").strip().lower()
+        if not key:
+            continue
+        if key not in available_by_lower:
+            raise HTTPException(status_code=400, detail=f"Unknown project '{raw}'")
+        normalized_projects.append(available_by_lower[key])
+
+    updated = project_access.set_user_projects(target, normalized_projects)
+    audit_log.record(
+        "project_access_update",
+        admin.get("username"),
+        target=target,
+        workspace_id=str(admin.get("workspace_id") or ""),
+        details={"projects": updated},
+    )
+    return {"username": target, "projects": updated}
+
+
+@app.post("/admin/projects/{project_id}/grant-all")
+async def admin_grant_project_to_all(project_id: str, admin: dict = Depends(require_admin)):
+    """Give every existing account access to one project.
+
+    The "this project is everyone's" shortcut, so an admin onboarding a team
+    doesn't tick the same box twenty times. It only ever adds - nobody loses
+    an assignment they already had.
+    """
+    resolved = _resolve_existing_project(project_id)
+    users = get_user_store().list_users()
+    changed = project_access.grant_project_to_users(
+        [str(u.get("username") or "") for u in users],
+        resolved,
+    )
+    _ingestions_cache.clear()
+    audit_log.record(
+        "project_access_grant_all",
+        admin.get("username"),
+        target=resolved,
+        workspace_id=str(admin.get("workspace_id") or ""),
+        details={"updated_users": changed},
+    )
+    return {"project": resolved, "updated_users": changed}
+
+
+@app.get("/admin/projects/build-mapping")
+async def admin_get_build_project_mapping(admin: dict = Depends(require_admin)):
+    """Every build on disk with the project that owns it.
+
+    `unassigned` is the interesting list: builds that predate projects, or
+    that were ingested before their project existed. They are admin-only
+    until somebody assigns them.
+    """
+    snapshot = project_builds.get_snapshot()
+    snapshot["unassigned"] = project_builds.list_unassigned_build_ids()
+    audit_log.record(
+        "project_build_map_view",
+        admin.get("username"),
+        workspace_id=str(admin.get("workspace_id") or ""),
+    )
+    return snapshot
+
+
+@app.put("/admin/projects/build-mapping/{build_id}")
+async def admin_set_build_project(
+    build_id: str,
+    payload: AdminBuildProjectRequest,
+    admin: dict = Depends(require_admin),
+):
+    """Move one build into a project (or into a different one)."""
+    if not build_owner.is_safe_build_id(build_id):
+        raise HTTPException(status_code=400, detail="Invalid build id")
+    build_path = build_owner.resolve_build_path(build_id)
+    if build_path is None or not build_path.is_dir():
+        raise HTTPException(status_code=404, detail="Build not found")
+
+    resolved = _resolve_existing_project(payload.project_id)
+    project_builds.set_build_project(build_id, resolved)
+    _ingestions_cache.clear()
+
+    audit_log.record(
+        "project_build_assign",
+        admin.get("username"),
+        target=build_id,
+        workspace_id=str(admin.get("workspace_id") or ""),
+        details={"project": resolved},
+    )
+    return {"build_id": build_id, "project": resolved}
+
+
+@app.post("/admin/projects/{project_id}/claim-unassigned-builds")
+async def admin_claim_unassigned_builds(project_id: str, admin: dict = Depends(require_admin)):
+    """Assign every currently unassigned build to this project.
+
+    The one-shot migration for an install that had builds before it had
+    projects. Idempotent, and it never touches a build that already belongs
+    somewhere - re-parenting an owned build is a per-build decision.
+    """
+    resolved = _resolve_existing_project(project_id)
+    result = project_builds.claim_unassigned_builds(resolved)
+    _ingestions_cache.clear()
+
+    audit_log.record(
+        "project_builds_claim_unassigned",
+        admin.get("username"),
+        target=resolved,
+        workspace_id=str(admin.get("workspace_id") or ""),
+        details=result,
+    )
+    return {"project": resolved, **result}
+
 
 @app.get("/roles")
 async def list_roles(current_user: dict = Depends(get_current_user)):
@@ -3521,6 +3944,24 @@ async def admin_overview(_admin: dict = Depends(require_permission(permissions.P
         llm_settings.get("keyless") or llm_settings.get("api_key_set")
     )
 
+    all_users = store.list_users()
+    if state.project_manager is None:
+        from .project_manager import ProjectManager
+        state.project_manager = ProjectManager()
+    available_projects = state.project_manager.list_projects()
+    users_without_project_access = 0
+    for user in all_users:
+        visible = project_access.get_visible_projects(
+            username=str(user.get("username") or ""),
+            role=str(user.get("role") or ""),
+            available_projects=available_projects,
+        )
+        if not visible:
+            users_without_project_access += 1
+
+    mapped_builds = project_builds.list_map()
+    unmapped_builds = len(project_builds.list_unassigned_build_ids())
+
     return {
         "users": {
             "total": sum(status_counts.values()),
@@ -3533,6 +3974,14 @@ async def admin_overview(_admin: dict = Depends(require_permission(permissions.P
             "ready": llm_ready,
             "provider": llm_settings.get("provider"),
             "model": llm_settings.get("model"),
+        },
+        "projects": {
+            "count": len(available_projects),
+            "names": available_projects,
+            "users_without_access": users_without_project_access,
+            "users_with_access": max(0, len(all_users) - users_without_project_access),
+            "mapped_builds": len(mapped_builds),
+            "unmapped_builds": unmapped_builds,
         },
         "server_time": datetime.now(timezone.utc).isoformat(),
     }

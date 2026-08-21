@@ -21,6 +21,7 @@ import {
   type DashboardInsights,
 } from "@/lib/api";
 import { useIngestion } from "@/lib/IngestionContext";
+import { useRB } from "@/lib/RBContext";
 import { usePermissions } from "@/lib/usePermissions";
 
 const statGridVariants = {
@@ -103,6 +104,7 @@ function StatTile({
 export default function Dashboard() {
   const router = useRouter();
   const { selectedIngestion, setSelectedIngestion } = useIngestion();
+  const { selectedProject, loading: projectsLoading } = useRB();
   const { has: hasPermission } = usePermissions();
   const canIngest = hasPermission("data.ingest");
   const [dataStatus, setDataStatus] = useState<{
@@ -257,6 +259,20 @@ export default function Dashboard() {
       .catch(() => {});
   }, [router]);
 
+  useEffect(() => {
+    // The dashboard is project-scoped: with no project there is nothing to
+    // scope to, so send the user to /projects, which explains why (no access
+    // yet, or - for a first-run admin - no project created yet).
+    //
+    // Deliberately keyed on the resolved project rather than on the raw list:
+    // RBContext picks one automatically when the account has any, so this
+    // only fires in the genuinely empty case and never as a flash on load.
+    if (projectsLoading) return;
+    if (!selectedProject) {
+      router.replace("/projects");
+    }
+  }, [projectsLoading, selectedProject, router]);
+
   return (
     <div className="relative min-h-screen overflow-hidden bg-[var(--background)] text-[var(--foreground)] selection:bg-cyan-500/30 font-sans">
       <div className="pointer-events-none absolute inset-0 dashboard-mesh" />
@@ -275,8 +291,12 @@ export default function Dashboard() {
         label="Dashboard"
         controls={
           <>
-            <IngestionSelector />
+            {/* Project first, then build: the build list is a *subset* of the
+                project, so reading the row left-to-right matches how the two
+                actually nest. The project name is not repeated in the page
+                label - one place per fact. */}
             <ProjectSelector />
+            <IngestionSelector />
             <RoleSelector />
             {canIngest && (
               <div className="relative shrink-0">
