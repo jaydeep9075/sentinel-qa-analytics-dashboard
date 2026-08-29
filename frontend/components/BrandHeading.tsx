@@ -4,7 +4,7 @@ import type { ReactNode } from "react";
 import BrandLockup from "./BrandLockup";
 
 interface BrandHeadingProps {
-  /** Page name shown after the Sentinel wordmark, e.g. "Dashboard", "Admin Console". */
+  /** Page name shown after the TR-Insight wordmark, e.g. "Dashboard", "Admin Console". */
   label?: string;
   /**
    * Replaces the tagline on the second line — used by the sub-pages to put a
@@ -15,8 +15,8 @@ interface BrandHeadingProps {
 }
 
 /**
- * The signed-in header's brand block: the shared <BrandLockup/> (the official
- * Testrig logo · the Sentinel mark · "Sentinel"), plus the page name after it.
+ * The signed-in header's brand block: the shared <BrandLockup/> (green "TR" ·
+ * "-Insight"), plus the page name after it.
  *
  * The lockup itself lives in one component so the header, the auth cards and
  * the landing page cannot drift apart again — this file only decides what the

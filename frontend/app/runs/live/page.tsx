@@ -123,7 +123,7 @@ export default function LiveRunsListPage() {
 
         {runs.length === 0 && (
           <div className="rounded-xl border border-dashed border-slate-300 bg-white/60 p-6 text-sm text-slate-500 dark:border-white/[0.12] dark:bg-black/20 dark:text-white/40">
-            Nothing running right now. Start a test run with Sentinel reporting enabled — Playwright,
+            Nothing running right now. Start a test run with TR-Insight reporting enabled — Playwright,
             Cypress, or any other framework — and it will appear here within a couple of seconds.
             {connection && (
               <>

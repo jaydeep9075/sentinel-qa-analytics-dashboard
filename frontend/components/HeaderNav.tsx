@@ -4,7 +4,7 @@ import Link from "next/link";
 import type { ComponentType } from "react";
 
 /**
- * The one nav style every Sentinel header uses.
+ * The one nav style every TR-Insight header uses.
  *
  * Every header link used to pick its own hue — Live Runs emerald, Build
  * Trends cyan, Admin purple, Account slate, Logout red — so the top of the

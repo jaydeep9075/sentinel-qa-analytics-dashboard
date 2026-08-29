@@ -226,7 +226,7 @@ export default function LoginPage() {
             {/* subtle footer badge */}
             <div className="mt-8 flex items-center justify-center gap-1.5 text-[10px] text-slate-500 dark:text-white/20 uppercase tracking-widest">
               <Sparkles className="w-3 h-3" />
-              Testrig Sentinel · QA Intelligence Platform
+              TR-Insight · QA Intelligence Platform
             </div>
           </div>
         </div>

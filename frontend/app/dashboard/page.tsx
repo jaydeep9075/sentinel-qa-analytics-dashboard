@@ -316,7 +316,7 @@ export default function Dashboard() {
             )}
 
             <span
-              title={backendConnected ? "Connected to the Sentinel API" : "Cannot reach the Sentinel API"}
+              title={backendConnected ? "Connected to the TR-Insight API" : "Cannot reach the TR-Insight API"}
               className="flex shrink-0 items-center gap-1.5 px-1"
             >
               {backendConnected ? (

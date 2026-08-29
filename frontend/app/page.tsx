@@ -255,7 +255,7 @@ function HeroDemo() {
           <span className="h-2.5 w-2.5 rounded-full bg-amber-400/70" />
           <span className="h-2.5 w-2.5 rounded-full bg-emerald-400/70" />
           <span className="ml-2 text-[11px] font-medium text-slate-400 dark:text-white/30">
-            Sentinel · Build #147
+            TR-Insight · Build #147
           </span>
           <span className="ml-auto flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-wider text-emerald-500">
             <span className="relative flex h-1.5 w-1.5">
@@ -492,7 +492,7 @@ export default function LandingPage() {
             transition={{ duration: 0.7, delay: 0.2 }}
             className="mx-auto mb-10 max-w-2xl text-base leading-relaxed text-slate-600 dark:text-white/55 md:text-lg"
           >
-            Your team already produces the test results. Sentinel turns them into answers anyone can
+            Your team already produces the test results. TR-Insight turns them into answers anyone can
             get in seconds — ask a question in plain English and receive the summary, the chart and a
             clear release call. No manual reporting, no waiting on the one person who knows where the
             data lives.
@@ -591,7 +591,7 @@ export default function LandingPage() {
                 <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-cyan-500/10">
                   <Check className="h-4 w-4 text-cyan-500" />
                 </div>
-                <h3 className="text-lg font-bold text-slate-900 dark:text-white">With Sentinel</h3>
+                <h3 className="text-lg font-bold text-slate-900 dark:text-white">With TR-Insight</h3>
               </div>
               <ul className="space-y-4">
                 {solutions.map((s) => (
@@ -613,7 +613,7 @@ export default function LandingPage() {
             eyebrow="Who It's For"
             title="One view of quality,"
             accent="four different questions"
-            sub="The same test data means something different depending on who's asking. Sentinel answers each of them in their own language."
+            sub="The same test data means something different depending on who's asking. TR-Insight answers each of them in their own language."
           />
 
           <div className="grid gap-5 sm:grid-cols-2 lg:grid-cols-4">
@@ -859,7 +859,7 @@ export default function LandingPage() {
                 Your quality data never leaves your control
               </h3>
               <p className="text-sm leading-relaxed text-slate-600 dark:text-white/45">
-                Sentinel runs inside your own environment, so release information, defect detail and
+                TR-Insight runs inside your own environment, so release information, defect detail and
                 customer-sensitive test data stay with you — which keeps security review short and
                 procurement simple. A single Docker Compose command brings the whole thing up.
               </p>
@@ -908,7 +908,7 @@ export default function LandingPage() {
         <div className="mx-auto flex max-w-6xl flex-col items-center justify-between gap-6 px-6 md:flex-row">
           <BrandLockup scale={16} />
           <div className="flex flex-wrap items-center justify-center gap-6 text-xs text-slate-600 dark:text-white/40">
-            <span>© {new Date().getFullYear()} Testrig Sentinel — Testrig Technologies Pvt. Ltd.</span>
+            <span>© {new Date().getFullYear()} TR-Insight — Testrig Technologies Pvt. Ltd.</span>
             <a href="#" className="transition-colors hover:text-cyan-400">Privacy</a>
             <a href="#" className="transition-colors hover:text-cyan-400">Terms</a>
           </div>
@@ -938,7 +938,7 @@ const solutions = [
   "Anyone with a login can self-serve, so analysis stops being a bottleneck.",
 ];
 
-/* The four roles Sentinel actually ships accounts for. Each card names the
+/* The four roles TR-Insight actually ships accounts for. Each card names the
    role, the one question that role opens the dashboard to answer, and what
    they get instead of the work they do today. */
 const audiences = [
@@ -1011,7 +1011,7 @@ const steps = [
   {
     num: "01",
     title: "Connect",
-    desc: "Point Sentinel at the results you already produce — a report, a spreadsheet, an existing system or a live run.",
+    desc: "Point TR-Insight at the results you already produce — a report, a spreadsheet, an existing system or a live run.",
   },
   {
     num: "02",
@@ -1021,7 +1021,7 @@ const steps = [
   {
     num: "03",
     title: "Ask",
-    desc: "Ask the question the way you'd say it out loud. Sentinel picks the right data, the right chart and the right framing.",
+    desc: "Ask the question the way you'd say it out loud. TR-Insight picks the right data, the right chart and the right framing.",
   },
   {
     num: "04",

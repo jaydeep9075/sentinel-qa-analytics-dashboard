@@ -119,7 +119,7 @@ export default function AIChatbot() {
     return {
       role: "ai",
       content:
-        "**Sentinel Online.** Ask me anything about your test results — pass rates, failures, modules, release readiness, and more.",
+        "**TR-Insight Online.** Ask me anything about your test results — pass rates, failures, modules, release readiness, and more.",
       timestamp: Date.now(),
     };
   }
@@ -176,7 +176,7 @@ export default function AIChatbot() {
         <div className="flex items-center gap-2">
           <div className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
           <span className="text-xs font-mono text-gray-400 tracking-widest uppercase">
-            Sentinel Chat
+            TR-Insight Chat
           </span>
           {selectedIngestion && (
             <span className="text-xs text-gray-600 font-mono">· {selectedIngestion}</span>

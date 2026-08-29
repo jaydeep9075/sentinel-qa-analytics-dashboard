@@ -5,16 +5,19 @@ import { useCallback, useEffect, useSyncExternalStore } from "react";
 export type ThemeMode = "dark" | "light";
 
 const THEME_KEY = "theme";
-let currentTheme: ThemeMode = "dark";
+// Light is the default for anyone who hasn't chosen yet — a first-time
+// visitor (or someone who just signed out) should land in light mode, not
+// carry over dark from a previous build's default.
+let currentTheme: ThemeMode = "light";
 let isInitialized = false;
 const listeners = new Set<() => void>();
 
 export function getStoredTheme(): ThemeMode {
   if (typeof window === "undefined") {
-    return "dark";
+    return "light";
   }
   const savedTheme = localStorage.getItem(THEME_KEY);
-  return savedTheme === "light" ? "light" : "dark";
+  return savedTheme === "dark" ? "dark" : "light";
 }
 
 export function applyTheme(theme: ThemeMode) {
@@ -55,7 +58,7 @@ function setThemeInternal(nextTheme: ThemeMode) {
 }
 
 export function useTheme() {
-  const theme = useSyncExternalStore(subscribe, getSnapshot, () => "dark");
+  const theme = useSyncExternalStore(subscribe, getSnapshot, () => "light");
 
   useEffect(() => {
     initializeThemeStore();
