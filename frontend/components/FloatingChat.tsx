@@ -31,6 +31,15 @@ import BrandLogo from "./BrandLogo";
 
 type ChatMessage = { role: "user" | "ai"; content: string };
 
+const REGEN_QUESTION_CAP = 900;
+const REGEN_ANSWER_CAP = 1200;
+
+function capText(value: string, maxChars: number): string {
+  const text = String(value || "").trim();
+  if (text.length <= maxChars) return text;
+  return `${text.slice(0, maxChars).trimEnd()}\n...[truncated]`;
+}
+
 export default function FloatingChat() {
   const { selectedRole, selectedProject } = useRB();
   const { selectedIngestion, selectedBuildLabel } = useIngestion();
@@ -131,7 +140,7 @@ export default function FloatingChat() {
     setRegeneratingIndex(aiIndex);
     setIsLoading(true);
     try {
-      const regenPrompt = `${question}\n\nRegenerate this answer with a noticeably improved structure and apply the user's latest feedback preferences.`;
+      const regenPrompt = `${capText(question, REGEN_QUESTION_CAP)}\n\nRegenerate this answer with a noticeably improved structure and apply the user's latest feedback preferences.`;
       const answer = await sendChatMessage(regenPrompt, selectedIngestion, selectedRole, selectedProject);
       setMessages((prev) =>
         prev.map((m, idx) => (idx === aiIndex ? { ...m, content: answer } : m)),
@@ -163,13 +172,13 @@ export default function FloatingChat() {
     setIsLoading(true);
     try {
       const strongPrompt = [
-        question,
+        capText(question, REGEN_QUESTION_CAP),
         "",
         "Previous answer was not accepted by user feedback.",
         `Feedback type: ${feedbackType}`,
-        `User notes: ${notes || "No additional note provided"}`,
+        `User notes: ${capText(notes || "No additional note provided", 320)}`,
         "Previous answer:",
-        previous,
+        capText(previous, REGEN_ANSWER_CAP),
         "",
         "Return a clearly improved answer:",
         "- more accurate and directly actionable",

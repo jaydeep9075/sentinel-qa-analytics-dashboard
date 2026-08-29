@@ -2,7 +2,7 @@
 
 import { useCallback, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
-import { FolderOpen, ArrowRight, FolderPlus, ShieldAlert } from "lucide-react";
+import { FolderOpen, ArrowRight, FolderPlus, ShieldAlert, GitBranch } from "lucide-react";
 import AppHeader from "@/components/AppHeader";
 import { useRB } from "@/lib/RBContext";
 import { usePermissions } from "@/lib/usePermissions";
@@ -27,11 +27,12 @@ const API = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
  */
 export default function ProjectsPage() {
   const router = useRouter();
-  const { projects, loading, selectedProject, setSelectedProject, refreshProjects } = useRB();
+  const { projects, projectItems, loading, selectedProject, setSelectedProject, refreshProjects } = useRB();
   const { permissions, loaded: permissionsLoaded } = usePermissions();
   const isAdmin = permissions.is_admin;
 
   const [newProjectId, setNewProjectId] = useState("");
+  const [parentProjectId, setParentProjectId] = useState("");
   const [creating, setCreating] = useState(false);
   const [error, setError] = useState("");
 
@@ -39,6 +40,43 @@ export default function ProjectsPage() {
     () => [...projects].sort((a, b) => a.localeCompare(b)),
     [projects],
   );
+
+  const sortedProjectItems = useMemo(
+    () => [...projectItems].sort((a, b) => a.project_id.localeCompare(b.project_id)),
+    [projectItems],
+  );
+
+  const projectTree = useMemo(() => {
+    const roots: string[] = [];
+    const children = new Map<string, string[]>();
+    const all = new Set(sortedProjects.map((p) => p.toLowerCase()));
+
+    for (const item of sortedProjectItems) {
+      if (!all.has(item.project_id.toLowerCase())) continue;
+      const parent = String(item.parent_project_id || "").trim();
+      if (!parent || !all.has(parent.toLowerCase())) {
+        roots.push(item.project_id);
+        continue;
+      }
+      const key = parent.toLowerCase();
+      const list = children.get(key) || [];
+      list.push(item.project_id);
+      children.set(key, list);
+    }
+
+    for (const project of sortedProjects) {
+      if (!roots.some((r) => r.toLowerCase() === project.toLowerCase()) && !Array.from(children.values()).some((row) => row.some((c) => c.toLowerCase() === project.toLowerCase()))) {
+        roots.push(project);
+      }
+    }
+
+    roots.sort((a, b) => a.localeCompare(b));
+    for (const [k, list] of children.entries()) {
+      children.set(k, [...list].sort((a, b) => a.localeCompare(b)));
+    }
+
+    return { roots, children };
+  }, [sortedProjectItems, sortedProjects]);
 
   const openProject = useCallback(
     (project: string) => {
@@ -62,12 +100,16 @@ export default function ProjectsPage() {
           "Content-Type": "application/json",
           ...(token ? { Authorization: `Bearer ${token}` } : {}),
         },
-        body: JSON.stringify({ project_id: projectId }),
+        body: JSON.stringify({
+          project_id: projectId,
+          parent_project_id: parentProjectId || null,
+        }),
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(data.detail || "Failed to create project");
 
       setNewProjectId("");
+      setParentProjectId("");
       await refreshProjects();
       openProject(data.project || projectId);
     } catch (err: unknown) {
@@ -75,7 +117,7 @@ export default function ProjectsPage() {
     } finally {
       setCreating(false);
     }
-  }, [newProjectId, openProject, refreshProjects]);
+  }, [newProjectId, openProject, parentProjectId, refreshProjects]);
 
   const busy = loading || !permissionsLoaded;
 
@@ -102,23 +144,15 @@ export default function ProjectsPage() {
           </div>
         )}
 
-        {busy ? (
-          <div className="rounded-2xl border border-slate-200 bg-white p-6 text-sm text-slate-500 dark:border-white/[0.08] dark:bg-white/[0.02] dark:text-white/40">
-            Loading projects...
-          </div>
-        ) : sortedProjects.length === 0 && isAdmin ? (
-          <div className="rounded-2xl border border-slate-200 bg-white p-6 dark:border-white/[0.08] dark:bg-white/[0.02]">
+        {!busy && isAdmin && (
+          <div className="mb-4 rounded-2xl border border-slate-200 bg-white p-6 dark:border-white/[0.08] dark:bg-white/[0.02]">
             <div className="mb-3 inline-flex h-9 w-9 items-center justify-center rounded-lg bg-cyan-500/10 text-cyan-600 dark:text-cyan-400">
               <FolderPlus className="h-4 w-4" />
             </div>
-            <h2 className="text-base font-semibold text-slate-900 dark:text-white">
-              No projects yet
-            </h2>
-            <p className="mt-1 max-w-xl text-sm text-slate-600 dark:text-white/50">
-              Name your first one - usually the product or storefront under test. Everyone who
-              already has an account gets access to it, because on a fresh install the first project
-              is the whole system. Later projects grant nothing implicitly; you assign those in
-              Admin &rarr; Projects.
+            <h2 className="text-base font-semibold text-slate-900 dark:text-white">Add a project</h2>
+            <p className="mt-1 max-w-2xl text-sm text-slate-600 dark:text-white/50">
+              Create a top-level project for a product line, or select a parent to create a sub-project
+              (for example: XYZ as parent, and XYZ-Web / XYZ-Mobile as sub-projects).
             </p>
             <div className="mt-4 flex flex-wrap items-center gap-2">
               <input
@@ -127,9 +161,21 @@ export default function ProjectsPage() {
                 onKeyDown={(e) => {
                   if (e.key === "Enter") createProject();
                 }}
-                placeholder="e.g. FSA"
+                placeholder="e.g. XYZ-Mobile"
                 className="w-56 rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-800 outline-none focus:border-cyan-500/50 dark:border-white/[0.12] dark:bg-white/[0.03] dark:text-white"
               />
+              <select
+                value={parentProjectId}
+                onChange={(e) => setParentProjectId(e.target.value)}
+                className="w-56 rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-800 outline-none focus:border-cyan-500/50 dark:border-white/[0.12] dark:bg-white/[0.03] dark:text-white"
+              >
+                <option value="">No parent (top-level)</option>
+                {sortedProjects.map((project) => (
+                  <option key={project} value={project}>
+                    {project}
+                  </option>
+                ))}
+              </select>
               <button
                 onClick={createProject}
                 disabled={creating || !newProjectId.trim()}
@@ -139,11 +185,14 @@ export default function ProjectsPage() {
                 {creating ? "Creating..." : "Create project"}
               </button>
             </div>
-            <p className="mt-2 text-xs text-slate-500 dark:text-white/35">
-              2-64 characters: letters, numbers, dot, underscore or hyphen.
-            </p>
           </div>
-        ) : sortedProjects.length === 0 ? (
+        )}
+
+        {busy ? (
+          <div className="rounded-2xl border border-slate-200 bg-white p-6 text-sm text-slate-500 dark:border-white/[0.08] dark:bg-white/[0.02] dark:text-white/40">
+            Loading projects...
+          </div>
+        ) : sortedProjects.length === 0 && !isAdmin ? (
           <div className="flex items-start gap-3 rounded-2xl border border-amber-300/40 bg-amber-50 p-6 text-sm text-amber-800 dark:border-amber-500/30 dark:bg-amber-500/[0.08] dark:text-amber-200">
             <ShieldAlert className="mt-0.5 h-5 w-5 shrink-0" />
             <div>
@@ -154,30 +203,65 @@ export default function ProjectsPage() {
               </p>
             </div>
           </div>
+        ) : sortedProjects.length === 0 ? (
+          <div className="rounded-2xl border border-cyan-300/40 bg-cyan-50 p-6 text-sm text-cyan-800 dark:border-cyan-500/30 dark:bg-cyan-500/[0.08] dark:text-cyan-200">
+            Create your first project using the panel above.
+          </div>
         ) : (
-          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-            {sortedProjects.map((project) => {
+          <div className="space-y-4">
+            {projectTree.roots.map((project) => {
+              const children = projectTree.children.get(project.toLowerCase()) || [];
               const active = selectedProject === project;
               return (
-                <button
-                  key={project}
-                  onClick={() => openProject(project)}
-                  className="group rounded-2xl border border-slate-200 bg-white p-5 text-left transition-all hover:-translate-y-0.5 hover:border-cyan-500/40 dark:border-white/[0.08] dark:bg-white/[0.02]"
-                >
-                  <div className="mb-3 inline-flex h-9 w-9 items-center justify-center rounded-lg bg-cyan-500/10 text-cyan-600 dark:text-cyan-400">
-                    <FolderOpen className="h-4 w-4" />
-                  </div>
-                  <h2 className="truncate text-base font-semibold text-slate-900 dark:text-white">
-                    {project}
-                  </h2>
-                  <p className="mt-1 text-xs text-slate-500 dark:text-white/40">
-                    {active ? "Current project" : "Open project dashboard"}
-                  </p>
-                  <div className="mt-4 inline-flex items-center gap-1.5 text-xs font-semibold text-cyan-600 dark:text-cyan-400">
-                    Open
-                    <ArrowRight className="h-3.5 w-3.5 transition-transform group-hover:translate-x-0.5" />
-                  </div>
-                </button>
+                <div key={project} className="rounded-2xl border border-slate-200 bg-white p-5 dark:border-white/[0.08] dark:bg-white/[0.02]">
+                  <button
+                    onClick={() => openProject(project)}
+                    className="group w-full text-left"
+                  >
+                    <div className="mb-3 inline-flex h-9 w-9 items-center justify-center rounded-lg bg-cyan-500/10 text-cyan-600 dark:text-cyan-400">
+                      <FolderOpen className="h-4 w-4" />
+                    </div>
+                    <h2 className="truncate text-base font-semibold text-slate-900 dark:text-white">
+                      {project}
+                    </h2>
+                    <p className="mt-1 text-xs text-slate-500 dark:text-white/40">
+                      {active ? "Current project" : "Open project dashboard"}
+                    </p>
+                    <div className="mt-4 inline-flex items-center gap-1.5 text-xs font-semibold text-cyan-600 dark:text-cyan-400">
+                      Open
+                      <ArrowRight className="h-3.5 w-3.5 transition-transform group-hover:translate-x-0.5" />
+                    </div>
+                  </button>
+
+                  {children.length > 0 && (
+                    <div className="mt-4 rounded-xl border border-slate-200/80 bg-slate-50/70 p-3 dark:border-white/[0.06] dark:bg-white/[0.02]">
+                      <p className="mb-2 inline-flex items-center gap-1.5 text-xs font-semibold uppercase tracking-widest text-slate-500 dark:text-white/40">
+                        <GitBranch className="h-3.5 w-3.5" />
+                        Sub-projects
+                      </p>
+                      <div className="grid gap-2 sm:grid-cols-2">
+                        {children.map((child) => {
+                          const childActive = selectedProject === child;
+                          return (
+                            <button
+                              key={child}
+                              onClick={() => openProject(child)}
+                              className="group flex items-center justify-between rounded-lg border border-slate-200 bg-white px-3 py-2 text-left hover:border-cyan-500/40 dark:border-white/[0.08] dark:bg-white/[0.02]"
+                            >
+                              <div>
+                                <p className="text-sm font-semibold text-slate-900 dark:text-white">{child}</p>
+                                <p className="text-[11px] text-slate-500 dark:text-white/40">
+                                  {childActive ? "Current sub-project" : "Open sub-project dashboard"}
+                                </p>
+                              </div>
+                              <ArrowRight className="h-3.5 w-3.5 text-cyan-600 transition-transform group-hover:translate-x-0.5 dark:text-cyan-400" />
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )}
+                </div>
               );
             })}
           </div>

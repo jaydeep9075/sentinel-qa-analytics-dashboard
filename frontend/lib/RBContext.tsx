@@ -4,6 +4,12 @@ import { useRouter } from "next/navigation";
 import { usePermissions } from "./usePermissions";
 import { ACTIVE_PROJECT_KEY, PROJECT_CHANGED_EVENT, purgeProjectScopedCache } from "./api";
 
+export type ProjectItem = {
+  project_id: string;
+  parent_project_id: string | null;
+  is_subproject: boolean;
+};
+
 interface RBContextType {
   selectedRole: string | null;
   setSelectedRole: (role: string) => void;
@@ -11,6 +17,7 @@ interface RBContextType {
   setSelectedProject: (project: string) => void;
   roles: string[];
   projects: string[];
+  projectItems: ProjectItem[];
   refreshProjects: () => Promise<void>;
   loading: boolean;
   userRole: string | null;
@@ -51,6 +58,7 @@ function defaultAnswerStyleFor(accountRole: string | null, available: string[]):
 type RBCacheShape = {
   roles: string[];
   projects: string[];
+  projectItems?: ProjectItem[];
   selectedProject: string | null;
 };
 
@@ -87,6 +95,7 @@ export function RBProvider({ children }: { children: React.ReactNode }) {
   const [selectedProject, setSelectedProject] = useState<string | null>(null);
   const [roles, setRoles] = useState<string[]>([]);
   const [projects, setProjects] = useState<string[]>([]);
+  const [projectItems, setProjectItems] = useState<ProjectItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [storedUserRole, setStoredUserRole] = useState<string | null>(null);
   // /auth/permissions is authoritative for the account role. localStorage is
@@ -123,8 +132,29 @@ export function RBProvider({ children }: { children: React.ReactNode }) {
       const projectsData = await projectsRes.json();
 
       const availableRoles: string[] = rolesData.roles || [];
+      const availableProjects: string[] = Array.isArray(projectsData.projects)
+        ? projectsData.projects.map((p: unknown) => String(p))
+        : [];
+      const availableProjectItems: ProjectItem[] = Array.isArray(projectsData.project_items)
+        ? projectsData.project_items
+            .map((item: unknown) => {
+              const row = item as Partial<ProjectItem>;
+              return {
+                project_id: String(row.project_id || "").trim(),
+                parent_project_id: row.parent_project_id ? String(row.parent_project_id) : null,
+                is_subproject: Boolean(row.is_subproject),
+              };
+            })
+            .filter((row) => row.project_id)
+        : availableProjects.map((project_id) => ({
+            project_id,
+            parent_project_id: null,
+            is_subproject: false,
+          }));
+
       setRoles(availableRoles);
-      setProjects(projectsData.projects || []);
+      setProjects(availableProjects);
+      setProjectItems(availableProjectItems);
 
       // Resolve the answer style against the personas that actually exist.
       // Done here rather than on mount because roles/*.md is server-side:
@@ -136,11 +166,11 @@ export function RBProvider({ children }: { children: React.ReactNode }) {
 
       const savedProject = localStorage.getItem(ACTIVE_PROJECT_KEY);
       let resolvedProject: string | null = null;
-      if (savedProject && projectsData.projects?.includes(savedProject)) {
+      if (savedProject && availableProjects.includes(savedProject)) {
         resolvedProject = savedProject;
         setSelectedProject(savedProject);
-      } else if (projectsData.projects?.length > 0) {
-        const firstProject = String(projectsData.projects[0]);
+      } else if (availableProjects.length > 0) {
+        const firstProject = String(availableProjects[0]);
         resolvedProject = firstProject;
         setSelectedProject(firstProject);
         localStorage.setItem(ACTIVE_PROJECT_KEY, firstProject);
@@ -154,13 +184,15 @@ export function RBProvider({ children }: { children: React.ReactNode }) {
 
       writeRBCache({
         roles: rolesData.roles || [],
-        projects: projectsData.projects || [],
+        projects: availableProjects,
+        projectItems: availableProjectItems,
         selectedProject: resolvedProject,
       });
     } catch (err) {
       console.error("Error fetching roles/projects:", err);
       setRoles([]);
       setProjects([]);
+      setProjectItems([]);
     } finally {
       setLoading(false);
     }
@@ -182,6 +214,7 @@ export function RBProvider({ children }: { children: React.ReactNode }) {
     if (cached) {
       setRoles(cached.roles || []);
       setProjects(cached.projects || []);
+      setProjectItems(Array.isArray(cached.projectItems) ? cached.projectItems : []);
       if (cached.selectedProject) {
         setSelectedProject(cached.selectedProject);
       }
@@ -190,6 +223,32 @@ export function RBProvider({ children }: { children: React.ReactNode }) {
 
     fetchData();
   }, [fetchData]);
+
+  useEffect(() => {
+    const onStorage = (event: StorageEvent) => {
+      if (event.storageArea !== localStorage) return;
+      if (event.key === ANSWER_STYLE_KEY) {
+        const nextRole = String(event.newValue || "").trim();
+        if (!nextRole) return;
+        setSelectedRole(nextRole);
+        return;
+      }
+      if (event.key === ACTIVE_PROJECT_KEY) {
+        const nextProject = String(event.newValue || "").trim();
+        if (!nextProject) return;
+        setSelectedProject((current) => {
+          if (current === nextProject) return current;
+          purgeProjectScopedCache();
+          sessionStorage.removeItem(RB_CACHE_KEY);
+          window.dispatchEvent(new CustomEvent(PROJECT_CHANGED_EVENT, { detail: nextProject }));
+          return nextProject;
+        });
+      }
+    };
+
+    window.addEventListener("storage", onStorage);
+    return () => window.removeEventListener("storage", onStorage);
+  }, []);
 
 
   const handleSetSelectedRole = (role: string) => {
@@ -225,6 +284,7 @@ export function RBProvider({ children }: { children: React.ReactNode }) {
         setSelectedProject: handleSetSelectedProject,
         roles,
         projects,
+        projectItems,
         refreshProjects: fetchData,
         loading,
         userRole,

@@ -14,7 +14,32 @@ import { FolderOpen, ChevronDown } from "lucide-react";
  * a label rather than a dropdown that can only be set to what it already is.
  */
 export default function ProjectSelector() {
-  const { projects, selectedProject, setSelectedProject, loading } = useRB();
+  const { projects, projectItems, selectedProject, setSelectedProject, loading } = useRB();
+
+  const byId = new Map(projectItems.map((item) => [item.project_id.toLowerCase(), item]));
+  const rootProjects = projects.filter((project) => {
+    const item = byId.get(project.toLowerCase());
+    return !item?.parent_project_id;
+  });
+  const subProjectsByParent = new Map<string, string[]>();
+  for (const project of projects) {
+    const item = byId.get(project.toLowerCase());
+    const parent = item?.parent_project_id;
+    if (!parent) continue;
+    const key = parent.toLowerCase();
+    const list = subProjectsByParent.get(key) || [];
+    list.push(project);
+    subProjectsByParent.set(key, list);
+  }
+
+  const orderedProjects = [
+    ...rootProjects,
+    ...projects.filter((project) => {
+      const item = byId.get(project.toLowerCase());
+      const parent = String(item?.parent_project_id || "").trim();
+      return parent && !projects.some((p) => p.toLowerCase() === parent.toLowerCase());
+    }),
+  ];
 
   if (loading) {
     return (
@@ -48,11 +73,26 @@ export default function ProjectSelector() {
         aria-label="Active project"
         className="cursor-pointer appearance-none rounded-lg border border-slate-300 bg-white px-3 py-1.5 pr-8 text-xs text-slate-700 transition-all hover:border-purple-500/30 focus:border-purple-500/40 focus:outline-none focus:ring-1 focus:ring-purple-500/20 dark:border-white/[0.08] dark:bg-white/[0.03] dark:text-white/60 dark:hover:border-purple-500/20 dark:focus:border-purple-500/30"
       >
-        {projects.map((project) => (
-          <option key={project} value={project} className="bg-white text-slate-700 dark:bg-black dark:text-white">
-            {project}
-          </option>
-        ))}
+        {orderedProjects.map((project) => {
+          const children = subProjectsByParent.get(project.toLowerCase()) || [];
+          const optionRows = [
+            <option key={project} value={project} className="bg-white text-slate-700 dark:bg-black dark:text-white">
+              {project}
+            </option>,
+            ...children
+              .sort((a, b) => a.localeCompare(b))
+              .map((child) => (
+                <option
+                  key={child}
+                  value={child}
+                  className="bg-white text-slate-700 dark:bg-black dark:text-white"
+                >
+                  {`  - ${child}`}
+                </option>
+              )),
+          ];
+          return optionRows;
+        })}
       </select>
       <ChevronDown className="pointer-events-none absolute right-2 top-1/2 h-3 w-3 -translate-y-1/2 text-slate-400 dark:text-white/20" />
     </div>

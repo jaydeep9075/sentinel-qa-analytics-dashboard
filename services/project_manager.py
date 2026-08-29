@@ -34,6 +34,66 @@ class ProjectManager:
         return [p.name for p in self.projects_root.iterdir() 
                 if p.is_dir() and (p / "context.md").exists()]
 
+    def _project_meta_path(self, project_id: str) -> Path:
+        return self.projects_root / project_id / "project.json"
+
+    def read_project_meta(self, project_id: str) -> Dict:
+        """Metadata for one project.
+
+        `project.json` is optional so existing installs keep working without
+        migration. Missing or invalid files resolve to a safe default.
+        """
+        path = self._project_meta_path(project_id)
+        if not path.exists():
+            return {"parent_project_id": None}
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+            if not isinstance(payload, dict):
+                return {"parent_project_id": None}
+            raw_parent = payload.get("parent_project_id")
+            parent = str(raw_parent).strip() if raw_parent is not None else ""
+            return {"parent_project_id": parent or None}
+        except Exception:
+            logger.warning("Invalid project metadata at %s", path)
+            return {"parent_project_id": None}
+
+    def write_project_meta(self, project_id: str, *, parent_project_id: Optional[str]) -> None:
+        path = self._project_meta_path(project_id)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        payload = {
+            "parent_project_id": str(parent_project_id).strip() if parent_project_id else None,
+        }
+        path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+
+    def list_project_catalog(self, visible_projects: Optional[List[str]] = None) -> List[Dict]:
+        """Project list with optional hierarchy data.
+
+        Returns only visible projects when `visible_projects` is provided.
+        """
+        all_projects = self.list_projects()
+        visible_lookup = None
+        if visible_projects is not None:
+            visible_lookup = {str(p).lower() for p in visible_projects}
+
+        by_lower = {p.lower(): p for p in all_projects}
+        catalog: List[Dict] = []
+        for project_id in sorted(all_projects, key=lambda s: s.lower()):
+            if visible_lookup is not None and project_id.lower() not in visible_lookup:
+                continue
+            meta = self.read_project_meta(project_id)
+            parent = str(meta.get("parent_project_id") or "").strip()
+            resolved_parent = by_lower.get(parent.lower()) if parent else None
+            if resolved_parent and resolved_parent.lower() == project_id.lower():
+                resolved_parent = None
+            catalog.append(
+                {
+                    "project_id": project_id,
+                    "parent_project_id": resolved_parent,
+                    "is_subproject": bool(resolved_parent),
+                }
+            )
+        return catalog
+
     def load_project(self, project_id: str) -> bool:
         project_path = self.projects_root / project_id
         context_file = project_path / "context.md"

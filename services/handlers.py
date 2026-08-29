@@ -865,7 +865,18 @@ def _build_trend_dataframe(limit: int = None) -> pd.DataFrame:
     ])
 
 
-_HISTORY_TURN_CHAR_CAP = 220
+_HISTORY_TURN_CHAR_CAP = 160
+
+
+def _history_turn_limit(user_message: str) -> int:
+    """Adaptive history depth: keep enough context for follow-ups without
+    re-sending long transcripts on every request."""
+    size = len(str(user_message or "").strip())
+    if size >= 700:
+        return 6
+    if size >= 350:
+        return 8
+    return 12
 
 
 def _build_history(session_id: str, user_id: str, ingestion_id: str, limit: int = 20) -> str:
@@ -895,7 +906,7 @@ def _build_history(session_id: str, user_id: str, ingestion_id: str, limit: int 
 
 
 
-def _build_schema_context(schema_summary: dict, max_tables: int = 8, max_columns: int = 25) -> str:
+def _build_schema_context(schema_summary: dict, max_tables: int = 6, max_columns: int = 16) -> str:
     """Renders the '[RUNTIME TABLE PROFILE]' prompt block from an
     already-computed schema_context.build_schema_summary() result, rather
     than issuing its own fresh DESCRIBE/COUNT/SELECT burst against every
@@ -1066,10 +1077,10 @@ async def handle_chat(user_message: str, session_id: str, ingestion_id: str,
     augmented_message = user_message
     if learning_context:
         snippets = []
-        for item in learning_context[:4]:
+        for item in learning_context[:3]:
             p = str(item.get("prompt", "")).strip()
             r = str(item.get("response", "")).strip()
-            snippets.append(f"Q: {p}\nA: {r[:300]}")
+            snippets.append(f"Q: {p[:180]}\nA: {r[:220]}")
         augmented_message += "\n\n[LEARNED USER CONTEXT]\n" + "\n\n".join(snippets)
     if related_concepts:
         concepts = ", ".join([c["concept"] for c in related_concepts])
@@ -1089,7 +1100,12 @@ async def handle_chat(user_message: str, session_id: str, ingestion_id: str,
 
     raw = await llm.agenerate(
         CHAT_DECISION_PROMPT.format(
-            history=_build_history(session_id, user_id, nid),
+            history=_build_history(
+                session_id,
+                user_id,
+                nid,
+                limit=_history_turn_limit(user_message),
+            ),
             user_message=augmented_message,
             schema_examples=schema_context.render_prompt_examples(schema_summary),
         ),

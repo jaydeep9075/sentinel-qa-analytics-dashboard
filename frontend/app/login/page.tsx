@@ -263,7 +263,7 @@ export default function LoginPage() {
                 type="button"
                 onClick={() => {
                   setShowDefaultPasswordPrompt(false);
-                  router.push("/dashboard");
+                  router.push("/projects");
                 }}
                 className="w-full rounded-xl border border-slate-300 dark:border-white/15 px-4 py-3 text-sm font-semibold text-slate-700 dark:text-white/80"
               >

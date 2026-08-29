@@ -224,6 +224,7 @@ class FeedbackRequest(BaseModel):
 class AdminCreateProjectRequest(BaseModel):
     project_id: str
     context_markdown: Optional[str] = None
+    parent_project_id: Optional[str] = None
 
 
 class AdminProjectAccessRequest(BaseModel):
@@ -232,6 +233,10 @@ class AdminProjectAccessRequest(BaseModel):
 
 class AdminBuildProjectRequest(BaseModel):
     project_id: str
+
+
+class AdminProjectParentRequest(BaseModel):
+    parent_project_id: Optional[str] = None
 
 
 def _normalize_workspace(workspace_id: Optional[str], current_user: Optional[dict] = None) -> str:
@@ -351,6 +356,42 @@ def _resolve_existing_project(project_id: str) -> str:
     if match is None:
         raise HTTPException(status_code=404, detail=f"Project '{project_id}' not found")
     return match
+
+
+def _project_parent_map() -> dict[str, Optional[str]]:
+    """Canonical project -> canonical direct parent, when set."""
+    if state.project_manager is None:
+        from .project_manager import ProjectManager
+        state.project_manager = ProjectManager()
+
+    catalog = state.project_manager.list_project_catalog()
+    return {
+        str(item.get("project_id") or ""): item.get("parent_project_id")
+        for item in catalog
+        if str(item.get("project_id") or "")
+    }
+
+
+def _ensure_no_project_cycle(project_id: str, parent_project_id: Optional[str]) -> None:
+    """Reject parent assignment that would create a hierarchy cycle."""
+    if not parent_project_id:
+        return
+    if project_id.lower() == str(parent_project_id).lower():
+        raise HTTPException(status_code=400, detail="A project cannot be its own parent")
+
+    parent_map = _project_parent_map()
+    cursor = str(parent_project_id)
+    seen: set[str] = set()
+    while cursor:
+        key = cursor.lower()
+        if key in seen:
+            # Existing invalid state elsewhere; stop following.
+            break
+        seen.add(key)
+        if key == project_id.lower():
+            raise HTTPException(status_code=400, detail="Parent project assignment would create a cycle")
+        next_parent = parent_map.get(cursor)
+        cursor = str(next_parent).strip() if next_parent else ""
 
 
 def _resolve_target_project_for_new_build(current_user: dict, requested_project: Optional[str]) -> str:
@@ -2509,7 +2550,7 @@ async def chat(
         return {"response": response, "session_id": session_id}
     except Exception as e:
         logger.exception(f"Chat error: {e}")
-        return {"response": f"An error occurred: {str(e)}", "session_id": session_id}
+        raise HTTPException(status_code=500, detail=f"Chat request failed: {str(e)}") from e
 
 @app.post("/chart")
 async def chart(
@@ -3385,7 +3426,11 @@ async def list_projects(current_user: dict = Depends(get_current_user)):
         role=str(current_user.get("role") or ""),
         available_projects=available,
     )
-    return {"projects": visible}
+    catalog = state.project_manager.list_project_catalog(visible)
+    return {
+        "projects": visible,
+        "project_items": catalog,
+    }
 
 
 @app.post("/admin/projects")
@@ -3402,10 +3447,16 @@ async def admin_create_project(
             detail="project_id must be 2-64 chars with letters, numbers, dot, underscore or hyphen",
         )
 
+    requested_parent = str(payload.parent_project_id or "").strip()
+
     if state.project_manager is None:
         from .project_manager import ProjectManager
         state.project_manager = ProjectManager()
     existing_projects = state.project_manager.list_projects()
+    parent_project_id: Optional[str] = None
+    if requested_parent:
+        parent_project_id = _resolve_existing_project(requested_parent)
+        _ensure_no_project_cycle(project_id, parent_project_id)
 
     projects_root = Path(config.PROJECTS_ROOT)
     project_dir = projects_root / project_id
@@ -3420,6 +3471,10 @@ async def admin_create_project(
         "Add product, quality and test-domain details for better AI responses.\n"
     )
     context_path.write_text(context_text, encoding="utf-8")
+    state.project_manager.write_project_meta(
+        project_id,
+        parent_project_id=parent_project_id,
+    )
 
     # Bootstrap only. On a brand-new install the very first project is the
     # whole product, so every existing account gets it - otherwise the admin
@@ -3439,13 +3494,50 @@ async def admin_create_project(
         admin.get("username"),
         target=project_id,
         workspace_id=str(admin.get("workspace_id") or ""),
-        details={"first_project": not existing_projects, "seeded_users": seeded},
+        details={
+            "first_project": not existing_projects,
+            "seeded_users": seeded,
+            "parent_project_id": parent_project_id,
+        },
     )
     return {
         "project": project_id,
         "created": True,
         "first_project": not existing_projects,
         "seeded_users": seeded,
+        "parent_project_id": parent_project_id,
+    }
+
+
+@app.put("/admin/projects/{project_id}/parent")
+async def admin_set_project_parent(
+    project_id: str,
+    payload: AdminProjectParentRequest,
+    admin: dict = Depends(require_admin),
+):
+    """Assign or clear a project's parent to manage sub-project hierarchy."""
+    child = _resolve_existing_project(project_id)
+    requested_parent = str(payload.parent_project_id or "").strip()
+    parent: Optional[str] = None
+    if requested_parent:
+        parent = _resolve_existing_project(requested_parent)
+    _ensure_no_project_cycle(child, parent)
+
+    if state.project_manager is None:
+        from .project_manager import ProjectManager
+        state.project_manager = ProjectManager()
+    state.project_manager.write_project_meta(child, parent_project_id=parent)
+
+    audit_log.record(
+        "project_parent_update",
+        admin.get("username"),
+        target=child,
+        workspace_id=str(admin.get("workspace_id") or ""),
+        details={"parent_project_id": parent},
+    )
+    return {
+        "project": child,
+        "parent_project_id": parent,
     }
 
 
@@ -3470,6 +3562,26 @@ async def admin_delete_project(project_id: str, admin: dict = Depends(require_ad
         raise HTTPException(
             status_code=409,
             detail=f"{build_count} build(s) still belong to this project - reassign or delete them first",
+        )
+
+    if state.project_manager is None:
+        from .project_manager import ProjectManager
+        state.project_manager = ProjectManager()
+    canonical_pid = _resolve_existing_project(pid)
+    catalog = state.project_manager.list_project_catalog()
+    children = [
+        str(item.get("project_id") or "")
+        for item in catalog
+        if str(item.get("parent_project_id") or "").lower() == canonical_pid.lower()
+    ]
+    if children:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "This project still has sub-projects: "
+                + ", ".join(sorted(children))
+                + ". Re-parent or delete them first."
+            ),
         )
 
     shutil.rmtree(project_dir)

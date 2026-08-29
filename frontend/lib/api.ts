@@ -256,13 +256,24 @@ export async function sendChatMessage(
   if (role) headers["x-role"] = role;
   if (project) headers["x-project"] = project;
 
-  const res = await fetch(`${API_BASE}/chat`, {
-    method: "POST",
-    headers,
-    body: JSON.stringify({ message, session_id: sessionId }),
-  });
-  const data = await res.json();
-  return data.response;
+  const res = await timedFetch(
+    `${API_BASE}/chat`,
+    {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ message, session_id: sessionId }),
+    },
+    "api:chat",
+  );
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok || data?.error) {
+    throw new Error(data?.error || data?.detail || "Failed to get chat response");
+  }
+  const response = typeof data?.response === "string" ? data.response : "";
+  if (!response.trim()) {
+    throw new Error("AI service returned an empty response");
+  }
+  return response;
 }
 
 export async function generateChart(

@@ -28,6 +28,12 @@ type AccessUser = {
   projects: string[];
 };
 
+type ProjectItem = {
+  project_id: string;
+  parent_project_id: string | null;
+  is_subproject: boolean;
+};
+
 type BuildMapping = Record<string, string>;
 type UserFilter = "all" | "no-access" | "multi";
 
@@ -46,13 +52,17 @@ export default function AdminProjectsPage() {
   const [notice, setNotice] = useState("");
 
   const [projects, setProjects] = useState<string[]>([]);
+  const [projectItems, setProjectItems] = useState<ProjectItem[]>([]);
   const [users, setUsers] = useState<AccessUser[]>([]);
   const [mapping, setMapping] = useState<BuildMapping>({});
   const [unassignedBuilds, setUnassignedBuilds] = useState<string[]>([]);
 
   const [newProjectId, setNewProjectId] = useState("");
+  const [newParentProjectId, setNewParentProjectId] = useState("");
   const [creating, setCreating] = useState(false);
   const [busyProject, setBusyProject] = useState("");
+  const [savingParentProject, setSavingParentProject] = useState("");
+  const [parentDrafts, setParentDrafts] = useState<Record<string, string>>({});
 
   const [draftAssignments, setDraftAssignments] = useState<Record<string, string[]>>({});
   const [savingUser, setSavingUser] = useState("");
@@ -77,12 +87,32 @@ export default function AdminProjectsPage() {
       const mappingData = await mappingRes.json();
 
       const nextProjects: string[] = Array.isArray(projectsData.projects) ? projectsData.projects : [];
+      const nextProjectItems: ProjectItem[] = Array.isArray(projectsData.project_items)
+        ? projectsData.project_items
+            .map((row: Partial<ProjectItem>) => ({
+              project_id: String(row.project_id || "").trim(),
+              parent_project_id: row.parent_project_id ? String(row.parent_project_id) : null,
+              is_subproject: Boolean(row.is_subproject),
+            }))
+            .filter((row: ProjectItem) => row.project_id)
+        : nextProjects.map((project) => ({
+            project_id: project,
+            parent_project_id: null,
+            is_subproject: false,
+          }));
       const nextUsers: AccessUser[] = Array.isArray(accessData.users) ? accessData.users : [];
 
       setProjects(nextProjects);
+      setProjectItems(nextProjectItems);
       setUsers(nextUsers);
       setMapping((mappingData.builds || {}) as BuildMapping);
       setUnassignedBuilds(Array.isArray(mappingData.unassigned) ? mappingData.unassigned : []);
+
+      const parentMap: Record<string, string> = {};
+      for (const item of nextProjectItems) {
+        parentMap[item.project_id] = item.parent_project_id || "";
+      }
+      setParentDrafts(parentMap);
 
       const drafts: Record<string, string[]> = {};
       for (const user of nextUsers) {
@@ -109,6 +139,14 @@ export default function AdminProjectsPage() {
     () => [...users].sort((a, b) => a.username.localeCompare(b.username)),
     [users],
   );
+
+  const projectItemById = useMemo(() => {
+    const map = new Map<string, ProjectItem>();
+    for (const item of projectItems) {
+      map.set(item.project_id.toLowerCase(), item);
+    }
+    return map;
+  }, [projectItems]);
 
   /** Builds per project and users per project, both derived rather than stored:
    *  a second copy of a count is a second thing that can be wrong. */
@@ -185,15 +223,40 @@ export default function AdminProjectsPage() {
         fetch(`${API}/admin/projects`, {
           method: "POST",
           headers: jsonHeaders(),
-          body: JSON.stringify({ project_id: projectId }),
+          body: JSON.stringify({
+            project_id: projectId,
+            parent_project_id: newParentProjectId || null,
+          }),
         }),
       (payload) =>
         payload.first_project
           ? `Project ${projectId} created and granted to all ${payload.seeded_users || 0} existing account(s) — it is this install's first project.`
-          : `Project ${projectId} created. Nobody has access to it yet — assign it below.`,
+          : `Project ${projectId} created. Nobody has access to it yet - assign it below.`,
     );
-    if (ok) setNewProjectId("");
+    if (ok) {
+      setNewProjectId("");
+      setNewParentProjectId("");
+    }
     setCreating(false);
+  };
+
+  const saveProjectParent = async (project: string) => {
+    setSavingParentProject(project);
+    const draftParent = String(parentDrafts[project] || "").trim();
+    await run(
+      "save project parent",
+      () =>
+        fetch(`${API}/admin/projects/${encodeURIComponent(project)}/parent`, {
+          method: "PUT",
+          headers: jsonHeaders(),
+          body: JSON.stringify({ parent_project_id: draftParent || null }),
+        }),
+      (payload) =>
+        payload.parent_project_id
+          ? `${project} moved under ${payload.parent_project_id}.`
+          : `${project} is now a top-level project.`,
+    );
+    setSavingParentProject("");
   };
 
   const deleteProject = async (project: string) => {
@@ -346,6 +409,18 @@ export default function AdminProjectsPage() {
               placeholder="Project id (2-64 chars: letters, numbers, . _ -)"
               className="min-w-[18rem] flex-1 rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm outline-none focus:border-cyan-500/50 dark:border-white/[0.12] dark:bg-white/[0.03]"
             />
+            <select
+              value={newParentProjectId}
+              onChange={(e) => setNewParentProjectId(e.target.value)}
+              className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm outline-none focus:border-cyan-500/50 dark:border-white/[0.12] dark:bg-white/[0.03]"
+            >
+              <option value="">No parent (top-level)</option>
+              {sortedProjects.map((project) => (
+                <option key={project} value={project}>
+                  {project}
+                </option>
+              ))}
+            </select>
             <button
               onClick={createProject}
               disabled={creating || !newProjectId.trim()}
@@ -382,6 +457,11 @@ export default function AdminProjectsPage() {
                     <p className="truncate text-sm font-semibold text-slate-900 dark:text-white">
                       {project}
                     </p>
+                    {projectItemById.get(project.toLowerCase())?.parent_project_id && (
+                      <p className="mt-0.5 text-[11px] text-slate-500 dark:text-white/40">
+                        Sub-project of {projectItemById.get(project.toLowerCase())?.parent_project_id}
+                      </p>
+                    )}
                     <p className="mt-1 flex items-center gap-3 text-xs text-slate-500 dark:text-white/40">
                       <span className="inline-flex items-center gap-1">
                         <Database className="h-3 w-3" /> {stats.builds} build
@@ -393,6 +473,32 @@ export default function AdminProjectsPage() {
                       </span>
                     </p>
                     <div className="mt-3 flex flex-wrap gap-2">
+                      <select
+                        value={parentDrafts[project] || ""}
+                        onChange={(e) =>
+                          setParentDrafts((prev) => ({
+                            ...prev,
+                            [project]: e.target.value,
+                          }))
+                        }
+                        className="rounded-lg border border-slate-300 bg-white px-2.5 py-1 text-xs dark:border-white/[0.12] dark:bg-white/[0.03]"
+                      >
+                        <option value="">Top-level</option>
+                        {sortedProjects
+                          .filter((candidate) => candidate.toLowerCase() !== project.toLowerCase())
+                          .map((candidate) => (
+                            <option key={candidate} value={candidate}>
+                              Parent: {candidate}
+                            </option>
+                          ))}
+                      </select>
+                      <button
+                        onClick={() => saveProjectParent(project)}
+                        disabled={savingParentProject === project}
+                        className="rounded-lg border border-slate-300 px-2.5 py-1 text-xs font-semibold hover:border-cyan-500/40 disabled:opacity-60 dark:border-white/[0.12]"
+                      >
+                        {savingParentProject === project ? "Saving parent..." : "Save parent"}
+                      </button>
                       <button
                         onClick={() => grantToAllUsers(project)}
                         disabled={busy}
