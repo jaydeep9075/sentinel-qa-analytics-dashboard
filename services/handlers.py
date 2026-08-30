@@ -309,18 +309,30 @@ def _fallback_would_drop_entity(original_sql: str, fallback_sql: str, mentions: 
     return False
 
 
+_CONTRADICTION_COLUMN_HINTS = ("status", "platform")
+
+
 def _detect_contradiction(user_message: str, schema_summary: dict):
     """Detect prompts that logically AND together two mutually-exclusive
-    known status values (e.g. 'failed tests that passed'). Returns the
-    list of conflicting values, or None."""
+    known values of the SAME single-valued-per-row column - e.g. 'failed
+    tests that passed' (status), or 'tests that are both mobile and desktop'
+    (platform_type). A test row has exactly one status and one
+    platform_type, so naming two values from the same column with a
+    contradiction joiner between them can never match a real row. Returns
+    the list of conflicting values, or None.
+
+    Checked one column at a time (not across columns) - "failed tests on
+    mobile" names one status AND one platform, which is a perfectly normal
+    filter, not a contradiction."""
     p = (user_message or "").lower()
-    status_values = [v.lower() for v in schema_context.all_known_values(schema_summary, column_hint="status")]
-    mentioned = [v for v in status_values if re.search(rf"(?<![a-z0-9]){re.escape(v)}(?![a-z0-9])", p)]
-    distinct_mentioned = list(dict.fromkeys(mentioned))
-    if len(distinct_mentioned) < 2:
+    if not any(j in p for j in _CONTRADICTION_JOINERS):
         return None
-    if any(j in p for j in _CONTRADICTION_JOINERS):
-        return distinct_mentioned
+    for hint in _CONTRADICTION_COLUMN_HINTS:
+        values = [v.lower() for v in schema_context.all_known_values(schema_summary, column_hint=hint)]
+        mentioned = [v for v in values if re.search(rf"(?<![a-z0-9]){re.escape(v)}(?![a-z0-9])", p)]
+        distinct_mentioned = list(dict.fromkeys(mentioned))
+        if len(distinct_mentioned) >= 2:
+            return distinct_mentioned
     return None
 
 
@@ -1487,6 +1499,18 @@ async def handle_chart(user_prompt: str, session_id: str, ingestion_id: str,
         ),
         run_in_threadpool(schema_context.build_schema_summary),
     )
+
+    # Same contradiction guard as chat: "chart of tests that are both passed
+    # and failed" can never match a real row - catch it before spending an
+    # LLM call and a query on SQL that's guaranteed to return nothing, and
+    # say why instead of a bare "no data returned for this chart."
+    chart_contradiction = _detect_contradiction(user_prompt, chart_schema_summary)
+    if chart_contradiction:
+        return None, (
+            "⚠️ That request combines conditions that can't both be true for the same "
+            "test (" + " + ".join(chart_contradiction) + "). Could you clarify which one you meant?"
+        ), None
+
     prompt_for_llm = user_prompt
     if feedback_hints:
         prompt_for_llm += f"\n\n[USER FEEDBACK PREFERENCES]\n{feedback_hints}"

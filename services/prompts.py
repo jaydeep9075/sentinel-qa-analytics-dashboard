@@ -167,6 +167,20 @@ SELECT ROUND(SUM(CASE WHEN status='passed' THEN 1.0 ELSE 0 END)*100.0/COUNT(*), 
        SUM(CASE WHEN status='failed' THEN 1 ELSE 0 END) AS failed_count
 FROM flattened_tests WHERE status IN ('passed','failed')
 
+-- tests that did NOT fail (negation of a status — every other status, not "answer with failed anyway")
+SELECT test_name, project_name, module_name, status
+FROM flattened_tests WHERE status <> 'failed'
+
+-- everything EXCEPT a named project/module (substitute the real value from ACTUAL VALUES)
+SELECT * FROM module_metrics WHERE module_name NOT ILIKE '%<module keyword>%'
+
+-- projects that have NEVER failed a test (negation of an aggregate, not "failed > 0")
+SELECT project_name, platform_type FROM project_metrics WHERE failed = 0
+
+-- tests without an error message recorded
+SELECT test_name, project_name, module_name FROM flattened_tests
+WHERE status = 'failed' AND (error IS NULL OR error = '')
+
 === DECISION RULES ===
 1. Data question about counts, rates, comparisons, filters, or anything the
    tables/columns above can express (tests, metrics, pass rates, failures,
@@ -197,6 +211,23 @@ FROM flattened_tests WHERE status IN ('passed','failed')
 10. For questions asking "top N" or "highest/lowest", always ORDER BY and LIMIT explicitly
 11. When in doubt between sql and vector, prefer sql — it's precise and
     verifiable; vector is a fallback for questions sql genuinely can't answer.
+12. NEGATION: words like "not", "except", "excluding", "other than",
+    "besides", "without", "isn't/aren't", "never", "non-" must become real
+    SQL negation (<>, NOT IN, NOT ILIKE, = 0, IS NULL) against the correct
+    column — never silently drop the negation and answer the positive case.
+    "tests that did NOT fail" is `status <> 'failed'`, not `status = 'failed'`.
+    "modules other than Checkout" is `module_name NOT ILIKE '%Checkout%'`.
+    "projects that never fail" is `failed = 0`, not `failed > 0`. Read the
+    whole sentence before writing the WHERE clause — "not" can sit several
+    words before the column it negates ("don't show me the ones that passed"
+    still means `status <> 'passed'`).
+13. AMBIGUOUS COMPARISON: if the question says "compare"/"vs"/"the other
+    one"/"between them" but names fewer than two concrete things to compare
+    (no second project/module/platform, and history doesn't supply one) →
+    action="answer" asking which two things to compare, rather than
+    guessing one arbitrarily. Do NOT ask for clarification on ordinary
+    single-entity or aggregate questions — only when the comparison itself
+    has no resolvable second side.
 
 RESPONSE_QUALITY_HINTS:
 - SQL should return data that DIRECTLY answers the user's question
@@ -543,6 +574,17 @@ PATTERNS BY CHART TYPE:
   FROM flattened_tests WHERE status IN ('passed','failed')
   GROUP BY platform_type ORDER BY platform_type
 
+[negation examples]
+  -- modules EXCLUDING a named one (substitute the real value from ACTUAL VALUES)
+  SELECT module_name, project_name, failed AS failure_count
+  FROM module_metrics WHERE module_name NOT ILIKE '%<module keyword>%' ORDER BY failure_count DESC
+
+  -- tests that did NOT fail
+  SELECT status, COUNT(*) AS count FROM flattened_tests WHERE status <> 'failed' GROUP BY status
+
+  -- projects that have NEVER failed a test
+  SELECT project_name, platform_type FROM project_metrics WHERE failed = 0
+
 RULES:
 1. Return ONLY raw SQL — no markdown, no semicolon at end
 2. Use ILIKE for string matching
@@ -557,6 +599,11 @@ RULES:
    the renderer resolves the measure by column name
 7. If the request is genuinely impossible against these tables →
    SELECT status, COUNT(*) AS count FROM flattened_tests GROUP BY status
+8. NEGATION in the request ("not", "except", "excluding", "other than",
+   "without", "never", "non-") must become real SQL negation (<>, NOT IN,
+   NOT ILIKE, = 0) against the correct column — do not drop the negation
+   and chart the positive case instead. "failures EXCLUDING mobile" is
+   `platform_type <> 'mobile'`, not a mobile-only chart.
 
 SQL:"""
 
