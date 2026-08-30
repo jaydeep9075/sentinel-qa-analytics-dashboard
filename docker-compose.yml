@@ -125,22 +125,11 @@ services:
         NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:8000}
     # See the backend's `image:` comment above - same reasoning.
     image: ${IMAGE_NAMESPACE:-jaydeepjoshi9403}/sentinel-qa-frontend:${IMAGE_TAG:-latest}
-    environment:
-      # Two route handlers run server-side inside this container and read
-      # files that live at the REPO ROOT when you run from a checkout
-      # (frontend/ -> ../data, ../config2.json). There is no repo root above
-      # /app in the image, so point them at the mounts below instead:
-      #   /api/builds        -> the Build Trends page's build list
-      #   /api/config2-path  -> the dashboard's "Add Build" path box
-      SENTINEL_DATA_DIR: /app/data
-      SENTINEL_CONFIG2_PATH: /app/state/config2.json
-    volumes:
-      # Read-only: the frontend only lists ingestion folders/summary.json,
-      # it never writes here - the backend and the ingester own this dir.
-      - ${DATA_DIR:-./data}:/app/data:ro
-      # Writable: PUT /api/config2-path persists the path you type in the
-      # dashboard back into config2.json inside this directory.
-      - ${STATE_DIR:-./state}:/app/state
+    # No filesystem mounts here on purpose: the frontend talks to the backend
+    # exclusively over HTTP (NEXT_PUBLIC_API_URL, baked in at build time
+    # above) and shares no volume with it. That's what makes it deployable
+    # to Vercel/any static-friendly host independently of where the backend
+    # runs - see docs/08-split-hosting-and-production-readiness.md.
     ports:
       - "${FRONTEND_PORT:-3000}:3000"
     logging:

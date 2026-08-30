@@ -120,10 +120,11 @@ USER appuser
 
 # Backend: same set as services/Dockerfile - deliberately NOT .env,
 # config.json/config2.json, users.db, data/ - all runtime state/secrets,
-# bind-mounted instead (see docker-compose.pull.allinone.yml).
+# bind-mounted instead (see docker-compose.pull.allinone.yml). projects/ is
+# ALSO deliberately not copied - see services/Dockerfile's comment on why
+# baking it in used to ship real client data in every image.
 COPY --chown=appuser:appuser services ./services
 COPY --chown=appuser:appuser roles ./roles
-COPY --chown=appuser:appuser projects ./projects
 COPY --chown=appuser:appuser universal_ingester ./universal_ingester
 
 COPY --from=reporter-builder --chown=appuser:appuser /out /app/packages/dist-pack

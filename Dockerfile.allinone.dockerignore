@@ -29,6 +29,9 @@ users.db
 users.db-journal
 data/
 ingest-source/
+# Real per-customer project context - never baked into the image, created
+# at runtime via POST /admin/projects. Not COPYd by Dockerfile.allinone.
+projects/
 
 # Everything else not needed to run the combined image
 reports/

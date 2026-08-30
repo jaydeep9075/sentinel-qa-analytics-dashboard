@@ -110,8 +110,7 @@ python verify_system.py
   - `app/page.tsx` — Landing page
   - `app/login/` — Login UI with JWT token storage
   - `app/dashboard/` — Main analytics UI
-  - `app/build-trends/` — Multi-build comparison charts
-  - `app/api/` — Route handlers for builds.json, config2-path
+  - `app/build-trends/` — Multi-build comparison charts (data from `GET /ingestions` via `lib/api.ts`, not a local route handler)
 - **Key Components**:
   - `FloatingChat.tsx` — Conversational AI interface
   - `AIGeneratedChart.tsx` — Dynamic chart rendering from LLM output
@@ -280,7 +279,6 @@ prompt → chart_spec.parse()      intent: form, measure, dimension, breakdown,
 - **Multi-Table Fallback**: If new schema exists, queries fall back to old names for compatibility (`structured_test_results` → `flattened_tests`)
 
 ### Frontend Build Pipeline
-- **Pre-build Script** (`scripts/generate-builds-json.js`): Runs on `npm install`, `npm run dev`, `npm run build`
 - **Theme Persistence**: `data-theme` attribute on `<root>` (light | dark)
 - **CORS**: Allowed origins in `.env` via `CORS_ALLOWED_ORIGINS`; dev-only IP allowlist in `frontend/next.config.ts`
 
@@ -325,9 +323,7 @@ frontend/
 │   ├── page.tsx              # Landing
 │   ├── login/page.tsx        # Login UI
 │   ├── dashboard/            # Analytics dashboard
-│   ├── build-trends/         # Multi-build trends
-│   ├── api/builds/route.ts   # builds.json endpoint
-│   └── api/config2-path/     # config2.json path setter
+│   └── build-trends/         # Multi-build trends
 ├── components/
 │   ├── FloatingChat.tsx       # AI chat UI
 │   ├── AIGeneratedChart.tsx   # Chart rendering
@@ -396,14 +392,13 @@ frontend/
 
 ## Frontend Build System
 
-The frontend has a custom pre-build step that generates `builds.json`:
-
-1. **Script**: `frontend/scripts/generate-builds-json.js`
-2. **Trigger**: Runs automatically via `predev`, `prebuild`, `preinstall` npm hooks
-3. **Source**: Reads from `frontend/public/builds.json` or API `/api/builds`
-4. **Usage**: Used by build selector components
-
-Make sure to run `npm install` or `npm run dev` at least once after pulling changes to regenerate this file.
+No pre-build step. The build list comes from `GET /ingestions` (see
+`lib/api.ts`'s `listIngestions()`), called live over HTTP — there is no
+generated `builds.json` and no filesystem dependency. (A `frontend/scripts/
+generate-builds-json.js` pre-build step existed historically; it was removed
+because nothing consumed its output and it was baking real ingested test
+data into a git-tracked, publicly-served static file — see
+`docs/08-split-hosting-and-production-readiness.md` §2.)
 
 ## Environment Variable Reference
 

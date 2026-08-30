@@ -65,12 +65,7 @@ services:
 
   frontend:
     image: ${IMAGE_NAMESPACE:-jaydeepjoshi9403}/sentinel-qa-frontend:${IMAGE_TAG:-latest}
-    environment:
-      SENTINEL_DATA_DIR: /app/data
-      SENTINEL_CONFIG2_PATH: /app/state/config2.json
-    volumes:
-      - ${DATA_DIR:-./data}:/app/data:ro
-      - ${STATE_DIR:-./state}:/app/state
+    # No filesystem mounts: the frontend only talks to `backend` over HTTP.
     ports:
       - "${FRONTEND_PORT:-3000}:3000"
     logging:

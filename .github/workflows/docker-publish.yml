@@ -1,0 +1,113 @@
+name: Build, test, and publish images
+
+# Replaces the manual `docker compose build && docker compose push` flow
+# described in docs/05-docker.md and docs/08-split-hosting-and-production-readiness.md.
+# Every push to main gets its own image tag (the commit SHA) in addition to
+# `latest`, so a bad release can be rolled back with IMAGE_TAG=<previous-sha>
+# instead of hoping someone remembers what they built last.
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install backend dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run backend tests
+        run: python -m pytest tests/ -q
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: "npm"
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install frontend dependencies
+        working-directory: frontend
+        run: npm ci
+
+      - name: Lint frontend
+        working-directory: frontend
+        run: npm run lint
+
+  build-and-push:
+    needs: test
+    # Only publish from main/tags - a PR from a fork shouldn't be able to
+    # push images even if it had the secrets, and typically won't.
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Resolve image namespace and tags
+        id: meta
+        run: |
+          NAMESPACE="${{ vars.IMAGE_NAMESPACE }}"
+          if [ -z "$NAMESPACE" ]; then NAMESPACE="${{ secrets.DOCKERHUB_USERNAME }}"; fi
+          echo "namespace=$NAMESPACE" >> "$GITHUB_OUTPUT"
+          echo "sha_tag=sha-${GITHUB_SHA::12}" >> "$GITHUB_OUTPUT"
+
+      - name: Build and push backend image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: services/Dockerfile
+          push: true
+          tags: |
+            ${{ steps.meta.outputs.namespace }}/sentinel-qa-backend:${{ steps.meta.outputs.sha_tag }}
+            ${{ steps.meta.outputs.namespace }}/sentinel-qa-backend:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Build and push frontend image
+        uses: docker/build-push-action@v6
+        with:
+          context: ./frontend
+          file: frontend/Dockerfile
+          push: true
+          build-args: |
+            NEXT_PUBLIC_API_URL=${{ vars.NEXT_PUBLIC_API_URL || 'http://localhost:8000' }}
+          tags: |
+            ${{ steps.meta.outputs.namespace }}/sentinel-qa-frontend:${{ steps.meta.outputs.sha_tag }}
+            ${{ steps.meta.outputs.namespace }}/sentinel-qa-frontend:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+# Required repo configuration (Settings -> Secrets and variables -> Actions):
+#   Secrets:   DOCKERHUB_USERNAME, DOCKERHUB_TOKEN (a Docker Hub access token,
+#              not your account password)
+#   Variables: IMAGE_NAMESPACE      (optional - defaults to DOCKERHUB_USERNAME)
+#              NEXT_PUBLIC_API_URL  (your real backend URL, e.g.
+#                                    https://api.yourdomain.com - the frontend
+#                                    image bakes this in at build time, so it
+#                                    must be set here before this workflow's
+#                                    published frontend image is useful in
+#                                    production; until then it silently
+#                                    builds against localhost:8000)

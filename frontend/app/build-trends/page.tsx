@@ -5,6 +5,7 @@ import Link from "next/link";
 import dynamic from "next/dynamic";
 import { ChevronDown, BarChart3, AlertTriangle, LayoutDashboard } from "lucide-react";
 import AppHeader from "@/components/AppHeader";
+import { listIngestions } from "@/lib/api";
 
 const BuildTrendCharts = dynamic(() => import("@/components/BuildTrendCharts"), { 
   ssr: false,
@@ -36,11 +37,27 @@ export default function BuildTrends() {
       setLoading(true);
       setError(null);
       try {
-        const res = await fetch("/api/builds");
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        const data = await res.json();
-        if (data.builds && Array.isArray(data.builds)) {
-          const buildRows = data.builds as BuildSummary[];
+        // Builds come from the backend's /ingestions API (via lib/api.ts),
+        // never from reading data/ off disk - that's the only path that
+        // works once frontend and backend are deployed on separate hosts.
+        const data = await listIngestions();
+        const rawIngestions = (data?.ingestions || []) as Array<{
+          created?: number;
+          summary?: string;
+        }>;
+        if (Array.isArray(rawIngestions)) {
+          const buildRows: BuildSummary[] = rawIngestions.map((ing) => {
+            let metrics: BuildMetrics = {};
+            try {
+              metrics = ing.summary ? JSON.parse(ing.summary) : {};
+            } catch {
+              metrics = {};
+            }
+            return {
+              ingested_at: ing.created ? new Date(ing.created * 1000).toISOString() : undefined,
+              metrics,
+            };
+          });
           const sorted = [...buildRows].sort(
             (a, b) =>
               new Date(a.ingested_at || "1970-01-01T00:00:00Z").getTime() -

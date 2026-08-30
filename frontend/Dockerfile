@@ -12,11 +12,6 @@
 FROM node:24-alpine AS deps
 WORKDIR /app
 COPY package.json package-lock.json ./
-# npm's own predev/prebuild lifecycle hook would try to run
-# generate-builds-json.js against a data/ dir that doesn't exist in this
-# build context - --ignore-scripts skips it here; the builder stage below
-# runs `npm run build`, whose prebuild hook handles it with the real
-# fallback-to-empty-builds.json behavior already built into that script.
 RUN npm ci --ignore-scripts
 
 FROM node:24-alpine AS builder

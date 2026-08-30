@@ -51,7 +51,7 @@ flowchart TD
 - `app/build-trends/` — multi-build comparison charts
 - `app/runs/live/` — live test-run viewer
 - `app/admin/` — admin console (Overview/Users/Usage/Settings/Audit)
-- `app/api/` — server-side route handlers for `builds.json` and the `config2-path` setter (these read `data/`/`config2.json` directly, which is why Docker mounts those paths into the frontend container too — read-only for `data/`)
+- No server-side `app/api/` route handlers — the frontend has no filesystem dependency; every page/component calls the backend over HTTP (`lib/api.ts`, `NEXT_PUBLIC_API_URL`), which is what makes it deployable independently of where the backend runs (see `docs/08-split-hosting-and-production-readiness.md`)
 - `components/FloatingChat.tsx` — conversational AI interface
 - `components/AIGeneratedChart.tsx` — dynamic chart rendering from backend output
 - `components/BuildTrendCharts.tsx` — multi-build trend analysis

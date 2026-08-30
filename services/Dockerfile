@@ -121,20 +121,25 @@ RUN mkdir -p /app/data && chown -R appuser:appuser /app
 
 USER appuser
 
-# App code + the persona/context files it reads at runtime (roles/,
-# projects/ are markdown, not secrets - see role_manager.py/project_manager.py).
-# universal_ingester is included too so this same image can run ingestion
-# on demand (see the `ingest` service in docker-compose.yml) instead of
-# needing a second image - its dependencies (pandas/openpyxl/PyPDF2/Pillow/
-# pymysql/sqlalchemy) are already in requirements.txt either way.
+# App code + the persona files it reads at runtime (roles/ is markdown, not
+# secrets - see role_manager.py). universal_ingester is included too so this
+# same image can run ingestion on demand (see the `ingest` service in
+# docker-compose.yml) instead of needing a second image - its dependencies
+# (pandas/openpyxl/PyPDF2/Pillow/pymysql/sqlalchemy) are already in
+# requirements.txt either way.
 # Deliberately NOT copied: .env, config.json/config2.json (per-run ingestion
 # config, bind-mounted instead - see docker-compose.yml's `ingest` service),
 # auth_seed_users.json, users.db, data/ - all runtime state/secrets per
 # .gitignore, supplied via env_file and volumes, never baked into the image.
+# projects/ is ALSO deliberately not copied: it holds real per-customer
+# project context (created via POST /admin/projects), not app code - baking
+# it in here is what used to ship real client data (FSA/Lendingwise/clippd)
+# in every build of this image. ProjectManager creates PROJECTS_ROOT on
+# first use if it's missing (see project_manager.py), so an empty directory
+# is a fully supported starting state, not a degraded one.
 COPY --from=reporter-builder --chown=appuser:appuser /out /app/packages/dist-pack
 COPY --chown=appuser:appuser services ./services
 COPY --chown=appuser:appuser roles ./roles
-COPY --chown=appuser:appuser projects ./projects
 COPY --chown=appuser:appuser universal_ingester ./universal_ingester
 
 EXPOSE 8000
@@ -151,12 +156,18 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=45s --retries=3 \
 # the same worker's event loop (one could start querying the other's
 # ingestion mid-await). That's fixed: they're now contextvars, isolated per
 # request/asyncio Task (see state.py), so it's safe to raise this for more
-# throughput. The remaining caveat at any worker count: two requests for the
-# SAME ingestion, on the SAME worker, running truly concurrently (the
-# threadpool cold-load path allows this) share one DuckDB connection object
-# from the warm pool - DuckDB connections aren't guaranteed safe for
-# concurrent use from multiple threads without per-thread cursor()s, which
-# this codebase doesn't yet do.
+# throughput. The remaining caveat at any worker count used to be two
+# requests for the SAME ingestion, on the SAME worker, sharing one DuckDB
+# connection object from the warm pool concurrently - DuckDB connections
+# aren't guaranteed safe for concurrent use from multiple threads. That's
+# also handled now: every query site takes state._duck_query_lock (a
+# process-wide lock, not per-thread cursor()s - cursor() can't see the
+# pandas tables data_loader registers via conn.register(), so serializing
+# with a lock was the fix that actually works here). See state.py's comment
+# on _duck_query_lock for why. Net effect: raising WEB_CONCURRENCY is safe;
+# it buys you concurrent I/O/LLM-wait handling across workers, not parallel
+# DuckDB execution within one - queries against the same process still run
+# one at a time, which is fine at this app's traffic level.
 #
 # `exec` is load-bearing, not style. Without it `sh` stays PID 1 with uvicorn
 # as its child, and sh does not forward signals - so `docker stop` / `docker
