@@ -181,18 +181,83 @@ def all_known_values(schema_summary: Optional[dict] = None, column_hint: Optiona
     return values
 
 
-def render_prompt_examples(schema_summary: Optional[dict] = None) -> str:
+_TABLE_RELEVANCE_KEYWORDS = {
+    "flattened_tests": (
+        "test", "tests", "error", "errors", "failure", "failures", "fail",
+        "log", "logs", "stack", "trace", "duration", "browser", "retry",
+        "retries", "flaky", "slow", "slowest", "fastest",
+    ),
+    "test_cases": ("test case", "testcase", "test cases"),
+    "module_metrics": ("module", "modules"),
+    "project_metrics": ("project", "projects", "release", "overall", "ship", "deploy", "ready"),
+}
+
+
+def relevant_tables(user_message: str, schema_summary: Optional[dict] = None) -> Optional[set]:
+    """Best-effort guess at which tables a question actually needs, so
+    prompt-building code can skip rendering full column/value detail for the
+    rest instead of dumping every table's full profile into every LLM call
+    regardless of what was asked.
+
+    Returns None ("no confident signal - show everything") rather than an
+    empty set whenever nothing matches. An empty set would silently hide
+    every table's detail from the LLM; showing everything costs a few
+    hundred extra tokens but never produces a wrong answer, so ambiguity
+    always resolves toward the safe, unfiltered behavior."""
+    summary = schema_summary or build_schema_summary()
+    tables = summary.get("tables", {})
+    if not tables:
+        return None
+
+    p = (user_message or "").lower()
+    found: set = set()
+
+    for tbl in tables:
+        if any(kw in p for kw in _TABLE_RELEVANCE_KEYWORDS.get(tbl, ())):
+            found.add(tbl)
+
+    # A real ingested value mentioned by name (a specific project/module/
+    # platform/status) pins every table carrying that column - this catches
+    # cases the keyword lexicon above misses entirely, e.g. a bare project
+    # name mentioned with no literal word "project" anywhere in the prompt.
+    for tbl, info in tables.items():
+        for col, values in info.get("distinct_values", {}).items():
+            for value in values:
+                v = str(value).strip().lower()
+                if v and re.search(rf"(?<![a-z0-9]){re.escape(v)}(?![a-z0-9])", p):
+                    found.add(tbl)
+                    break
+
+    return found or None
+
+
+def render_prompt_examples(schema_summary: Optional[dict] = None, relevant: Optional[set] = None) -> str:
     """Render a short block of REAL values actually present in the ingested
     data (project/module/platform/status names, etc.), for injection into
     LLM prompts in place of hardcoded literal examples (e.g. 'FSA | HSA |
     WDH'). Grounds the LLM in whatever dataset is actually loaded, whether
-    that's this QA/Allure dataset or something else entirely."""
+    that's this QA/Allure dataset or something else entirely.
+
+    `relevant`, when given, restricts this to columns belonging to those
+    tables only (see relevant_tables()) - cuts token cost on a question that
+    only needs one or two of the ingested tables. Falls back to unfiltered
+    if that leaves nothing to show, since an empty result here would read as
+    "no data ingested" rather than "nothing relevant in the tables picked"."""
     summary = schema_summary or build_schema_summary()
-    seen_cols: Dict[str, List[str]] = {}
-    for info in summary.get("tables", {}).values():
-        for col, vals in info.get("distinct_values", {}).items():
-            if col not in seen_cols:
-                seen_cols[col] = list(vals)
+
+    def _collect(restrict: Optional[set]) -> Dict[str, List[str]]:
+        cols: Dict[str, List[str]] = {}
+        for tbl, info in summary.get("tables", {}).items():
+            if restrict is not None and tbl not in restrict:
+                continue
+            for col, vals in info.get("distinct_values", {}).items():
+                if col not in cols:
+                    cols[col] = list(vals)
+        return cols
+
+    seen_cols = _collect(relevant)
+    if not seen_cols and relevant is not None:
+        seen_cols = _collect(None)
 
     if not seen_cols:
         return "(No ingested data profile available yet.)"

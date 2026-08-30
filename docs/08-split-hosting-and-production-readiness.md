@@ -282,6 +282,22 @@ inefficiencies in that path got fixed:
   now skips the decision LLM call entirely; the SQL still executes against
   live data and the final answer is still generated fresh every time -
   only the *routing* decision is reused, never the wording.
+- **Schema/value detail sent to the LLM is now scoped to the question, not
+  every table.** `schema_context.relevant_tables()` guesses which of the 4
+  materialized tables (`flattened_tests`, `test_cases`, `module_metrics`,
+  `project_metrics`) a prompt actually needs, from two signals: table-name
+  keywords ("module", "project", "error", "duration", …) and any real
+  ingested value mentioned by name (a specific project/module/platform/
+  status - caught even with no keyword at all, e.g. a bare project name).
+  `_build_schema_context` and `schema_context.render_prompt_examples` then
+  render full column lists / distinct-value examples only for the tables
+  judged relevant; every other table is still listed by name and row count
+  (never hidden, so the model can still query it if the guess missed) but
+  without its column/value detail costing tokens on every turn. Ambiguity
+  always resolves to `None` ("show everything, no confident signal") rather
+  than guessing narrow and risking a wrong answer - this only ever trims
+  detail the question didn't ask for, it never removes a table's visibility.
+  Applied identically to the chat decision prompt and the chart SQL prompt.
 
 **Still just a config knob, not changed by default**: `INGESTION_POOL_SIZE`
 (default 3) trades RAM for fewer cold reloads when several builds are being

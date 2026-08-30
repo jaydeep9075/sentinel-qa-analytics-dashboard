@@ -23,6 +23,7 @@ import json
 import re
 import logging
 from datetime import datetime
+from typing import Optional
 
 import numpy as np
 import pandas as pd
@@ -914,12 +915,19 @@ def _build_history(session_id: str, user_id: str, ingestion_id: str, limit: int 
 
 
 
-def _build_schema_context(schema_summary: dict, max_tables: int = 6, max_columns: int = 16) -> str:
+def _build_schema_context(schema_summary: dict, max_tables: int = 6, max_columns: int = 16,
+                          relevant: Optional[set] = None) -> str:
     """Renders the '[RUNTIME TABLE PROFILE]' prompt block from an
     already-computed schema_context.build_schema_summary() result, rather
     than issuing its own fresh DESCRIBE/COUNT/SELECT burst against every
     table - that summary is cached per ingestion_id and carries the same
-    row_count/columns data this needs."""
+    row_count/columns data this needs.
+
+    `relevant` (see schema_context.relevant_tables) narrows the full column
+    list to tables the question actually looks like it needs. A table left
+    out of `relevant` is still listed by name and row count - so the model
+    always knows it exists and can still query it if the guess was wrong -
+    just without its full column dump costing tokens on every turn."""
     tables = schema_summary.get("tables", {}) if isinstance(schema_summary, dict) else {}
     if not tables:
         return ""
@@ -931,6 +939,9 @@ def _build_schema_context(schema_summary: dict, max_tables: int = 6, max_columns
         if not isinstance(info, dict):
             continue
         row_count = info.get("row_count", "?")
+        if relevant is not None and tbl not in relevant:
+            lines.append(f"- {tbl} ({row_count} rows)")
+            continue
         cols = info.get("columns", [])
         col_names = ", ".join(c.get("name", "") for c in cols[:max_columns] if isinstance(c, dict))
         lines.append(f"- {tbl} ({row_count} rows): {col_names}")
@@ -1095,7 +1106,13 @@ async def handle_chat(user_message: str, session_id: str, ingestion_id: str,
         augmented_message += f"\n\n[RELATED CONCEPTS]\n{concepts}"
     if feedback_hints:
         augmented_message += f"\n\n[USER FEEDBACK PREFERENCES]\n{feedback_hints}"
-    schema_context_block = _build_schema_context(schema_summary)
+    # Scope the schema/value detail sent to the LLM to whichever tables this
+    # question actually looks like it needs (relevant_tables falls back to
+    # None - "show everything" - on any ambiguity), instead of always
+    # spelling out every table's full column list and every categorical
+    # column's values regardless of what was asked.
+    _relevant_tables = schema_context.relevant_tables(user_message, schema_summary)
+    schema_context_block = _build_schema_context(schema_summary, relevant=_relevant_tables)
     if schema_context_block:
         augmented_message += f"\n\n{schema_context_block}"
     if wants_cross_build_rows:
@@ -1138,7 +1155,7 @@ async def handle_chat(user_message: str, session_id: str, ingestion_id: str,
                     limit=_history_turn_limit(user_message),
                 ),
                 user_message=augmented_message,
-                schema_examples=schema_context.render_prompt_examples(schema_summary),
+                schema_examples=schema_context.render_prompt_examples(schema_summary, relevant=_relevant_tables),
             ),
             temperature=0.05,
             user_id=user_id,
@@ -1428,7 +1445,7 @@ def _spec_sql_directives(spec) -> str:
 
 
 async def _chart_sql(llm, spec, user_prompt, prompt_for_llm, schema_summary,
-                     user_id, workspace_id):
+                     user_id, workspace_id, relevant: Optional[set] = None):
     """Produce SQL for a chart request, in order of decreasing confidence:
     a deterministic structured query, then the LLM, then the fallback map."""
     structured_intent = _detect_structured_intent(user_prompt)
@@ -1440,7 +1457,7 @@ async def _chart_sql(llm, spec, user_prompt, prompt_for_llm, schema_summary,
             user_prompt=prompt_for_llm,
             chart_type=spec.chart_type,
             spec_directives=_spec_sql_directives(spec),
-            schema_examples=schema_context.render_prompt_examples(schema_summary),
+            schema_examples=schema_context.render_prompt_examples(schema_summary, relevant=relevant),
         ),
         temperature=0.05,
         user_id=user_id,
@@ -1473,7 +1490,8 @@ async def handle_chart(user_prompt: str, session_id: str, ingestion_id: str,
     prompt_for_llm = user_prompt
     if feedback_hints:
         prompt_for_llm += f"\n\n[USER FEEDBACK PREFERENCES]\n{feedback_hints}"
-    schema_context_block = _build_schema_context(chart_schema_summary)
+    _chart_relevant_tables = schema_context.relevant_tables(user_prompt, chart_schema_summary)
+    schema_context_block = _build_schema_context(chart_schema_summary, relevant=_chart_relevant_tables)
     if schema_context_block:
         prompt_for_llm += f"\n\n{schema_context_block}"
 
@@ -1510,6 +1528,7 @@ async def handle_chart(user_prompt: str, session_id: str, ingestion_id: str,
     if not sql:
         sql, _source = await _chart_sql(
             llm, spec, user_prompt, prompt_for_llm, chart_schema_summary, user_id, workspace_id,
+            relevant=_chart_relevant_tables,
         )
     if not sql:
         return None, "Could not determine what data to chart.", None
