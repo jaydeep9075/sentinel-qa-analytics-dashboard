@@ -74,7 +74,7 @@ def _get_test_results_table() -> str:
     """Get the actual table name for test results.
     Supports both old (flattened_tests) and new (structured_test_results) names."""
     try:
-        with state._duck_query_lock:
+        with state.duck_lock:
             tables = state.duck_conn.execute("SELECT table_name FROM information_schema.tables WHERE table_schema='memory'").df()
         table_names = tables['table_name'].tolist() if not tables.empty else []
 
@@ -814,7 +814,7 @@ def _get_status_payload(normalized_ingestion_id: str) -> dict:
         return _cache_set(_status_cache, normalized_ingestion_id, payload)
 
     test_table = _get_test_results_table()
-    with state._duck_query_lock:
+    with state.duck_lock:
         row = state.duck_conn.execute(
             f"""
             SELECT
@@ -1087,7 +1087,7 @@ def _wall_clock_runtime(
         return {}
 
     try:
-        with state._duck_query_lock:
+        with state.duck_lock:
             row = state.duck_conn.execute(
                 f"""
                 SELECT
@@ -1114,7 +1114,7 @@ def _wall_clock_runtime(
     hosts = 0
     if host_col:
         try:
-            with state._duck_query_lock:
+            with state.duck_lock:
                 hosts = int(
                     state.duck_conn.execute(
                         f"""
@@ -1158,7 +1158,7 @@ def _get_insights_payload(normalized_ingestion_id: str) -> dict:
     payload = copy.deepcopy(_EMPTY_INSIGHTS)
 
     try:
-        with state._duck_query_lock:
+        with state.duck_lock:
             columns = {c[0] for c in state.duck_conn.execute(f"DESCRIBE {test_table}").fetchall()}
     except Exception as e:
         logger.warning(f"Insights: could not describe {test_table}: {e}")
@@ -1177,7 +1177,7 @@ def _get_insights_payload(normalized_ingestion_id: str) -> dict:
     duration_expr = "COALESCE(TRY_CAST(duration AS DOUBLE), 0)" if "duration" in columns else "0"
 
     try:
-        with state._duck_query_lock:
+        with state.duck_lock:
             totals = state.duck_conn.execute(
                 f"""
                 SELECT
@@ -1226,7 +1226,7 @@ def _get_insights_payload(normalized_ingestion_id: str) -> dict:
 
     if area_col:
         try:
-            with state._duck_query_lock:
+            with state.duck_lock:
                 areas = state.duck_conn.execute(
                     f"""
                     SELECT
@@ -1257,7 +1257,7 @@ def _get_insights_payload(normalized_ingestion_id: str) -> dict:
 
     if has_error and failed > 0:
         try:
-            with state._duck_query_lock:
+            with state.duck_lock:
                 errors = state.duck_conn.execute(
                     f"""
                     SELECT CAST(error AS VARCHAR) AS err
@@ -2589,7 +2589,7 @@ async def get_chat_history_endpoint(
     normalized_ingestion_id = str(x_ingestion_id or "").strip()
     _entry = await run_in_threadpool(data_loader.get_or_load_ingestion, normalized_ingestion_id)
     if _entry is not None:
-        state.set_active_ingestion(normalized_ingestion_id, _entry["duck_conn"], _entry["lance_db"], _entry["embedder"])
+        state.set_active_ingestion(normalized_ingestion_id, _entry["duck_conn"], _entry["lance_db"], _entry["embedder"], _entry.get("duck_lock"))
     target = str(target_user or "").strip().lower()
     if target and target != str(current_user["username"]).strip().lower() and not _is_admin_role(current_user.get("role")):
         raise HTTPException(status_code=403, detail="Not allowed to access other users history")
@@ -2614,7 +2614,7 @@ async def get_chart_history_endpoint(
     normalized_ingestion_id = str(x_ingestion_id or "").strip()
     _entry = await run_in_threadpool(data_loader.get_or_load_ingestion, normalized_ingestion_id)
     if _entry is not None:
-        state.set_active_ingestion(normalized_ingestion_id, _entry["duck_conn"], _entry["lance_db"], _entry["embedder"])
+        state.set_active_ingestion(normalized_ingestion_id, _entry["duck_conn"], _entry["lance_db"], _entry["embedder"], _entry.get("duck_lock"))
     target = str(target_user or "").strip().lower()
     if target and target != str(current_user["username"]).strip().lower() and not _is_admin_role(current_user.get("role")):
         raise HTTPException(status_code=403, detail="Not allowed to access other users history")
@@ -2639,7 +2639,7 @@ async def delete_chart(
     normalized_ingestion_id = str(x_ingestion_id or "").strip()
     _entry = await run_in_threadpool(data_loader.get_or_load_ingestion, normalized_ingestion_id)
     if _entry is not None:
-        state.set_active_ingestion(normalized_ingestion_id, _entry["duck_conn"], _entry["lance_db"], _entry["embedder"])
+        state.set_active_ingestion(normalized_ingestion_id, _entry["duck_conn"], _entry["lance_db"], _entry["embedder"], _entry.get("duck_lock"))
 
     if state.lance_db is None:
         raise HTTPException(status_code=404, detail="Chart history not available for this build")
@@ -2678,16 +2678,16 @@ async def debug_data(
     normalized_ingestion_id = str(x_ingestion_id or "").strip()
     _entry = await run_in_threadpool(data_loader.get_or_load_ingestion, normalized_ingestion_id)
     if _entry is not None:
-        state.set_active_ingestion(normalized_ingestion_id, _entry["duck_conn"], _entry["lance_db"], _entry["embedder"])
+        state.set_active_ingestion(normalized_ingestion_id, _entry["duck_conn"], _entry["lance_db"], _entry["embedder"], _entry.get("duck_lock"))
     data = {}
     if state.duck_conn:
-        with state._duck_query_lock:
+        with state.duck_lock:
             tables = state.duck_conn.execute("SHOW TABLES").fetchall()
         data["tables"] = [t[0] for t in tables]
         test_table = _get_test_results_table()  # locks internally - must stay outside any `with` block here
         # Check if test table exists
         if test_table in data["tables"]:
-            with state._duck_query_lock:
+            with state.duck_lock:
                 sample = state.duck_conn.execute(f"SELECT * FROM {test_table} LIMIT 5").df()
                 data["test_results_count"] = state.duck_conn.execute(f"SELECT COUNT(*) FROM {test_table}").fetchone()[0]
             data["test_results_sample"] = sample.to_dict(orient="records")
@@ -2701,7 +2701,7 @@ async def data_status(
     normalized_ingestion_id = str(x_ingestion_id or "").strip()
     _entry = await run_in_threadpool(data_loader.get_or_load_ingestion, normalized_ingestion_id)
     if _entry is not None:
-        state.set_active_ingestion(normalized_ingestion_id, _entry["duck_conn"], _entry["lance_db"], _entry["embedder"])
+        state.set_active_ingestion(normalized_ingestion_id, _entry["duck_conn"], _entry["lance_db"], _entry["embedder"], _entry.get("duck_lock"))
 
     try:
         return _get_status_payload(normalized_ingestion_id)
@@ -2738,7 +2738,8 @@ async def data_tests(
             detail=f"Ingestion '{normalized_ingestion_id}' could not be loaded.",
         )
     state.set_active_ingestion(
-        normalized_ingestion_id, _entry["duck_conn"], _entry["lance_db"], _entry["embedder"]
+        normalized_ingestion_id, _entry["duck_conn"], _entry["lance_db"], _entry["embedder"],
+        _entry.get("duck_lock"),
     )
 
     status = str(status or "").strip().lower()
@@ -2775,7 +2776,7 @@ def _query_test_explorer(
         raise HTTPException(status_code=503, detail="No active ingestion loaded")
 
     test_table = _get_test_results_table()  # locks internally - keep outside the `with`
-    with state._duck_query_lock:
+    with state.duck_lock:
         columns = {c[0] for c in state.duck_conn.execute(f"DESCRIBE {test_table}").fetchall()}
 
     if "status" not in columns:
@@ -2796,7 +2797,7 @@ def _query_test_explorer(
         f"COUNT(DISTINCT NULLIF({c}, '')) FILTER (WHERE status = ?) AS d_{c}"
         for c in dimension_cols
     )
-    with state._duck_query_lock:
+    with state.duck_lock:
         summary = state.duck_conn.execute(
             f"""
             {cte}
@@ -2862,7 +2863,7 @@ def _query_test_explorer(
     groups: list[dict] = []
     status_total = status_counts.get(status, 0)
     if requested_group_by != "none":
-        with state._duck_query_lock:
+        with state.duck_lock:
             rows = state.duck_conn.execute(
                 f"""
                 {cte}
@@ -2889,7 +2890,7 @@ def _query_test_explorer(
             for r in rows
         ]
 
-    with state._duck_query_lock:
+    with state.duck_lock:
         matched = int(
             state.duck_conn.execute(
                 f"{cte} SELECT COUNT(*) FROM enriched WHERE {scoped_where_sql}", scoped_params
@@ -2905,7 +2906,7 @@ def _query_test_explorer(
         f"SUBSTR(error, 1, {_EXPLORER_ERROR_CHARS}) AS error",
         "failure_signature",
     ] + dimension_cols
-    with state._duck_query_lock:
+    with state.duck_lock:
         records = state.duck_conn.execute(
             f"""
             {cte}
@@ -2963,7 +2964,7 @@ async def data_profile(
     normalized_ingestion_id = str(x_ingestion_id or "").strip()
     _entry = await run_in_threadpool(data_loader.get_or_load_ingestion, normalized_ingestion_id)
     if _entry is not None:
-        state.set_active_ingestion(normalized_ingestion_id, _entry["duck_conn"], _entry["lance_db"], _entry["embedder"])
+        state.set_active_ingestion(normalized_ingestion_id, _entry["duck_conn"], _entry["lance_db"], _entry["embedder"], _entry.get("duck_lock"))
 
     if not state.duck_conn:
         return {"tables": {}}
@@ -2983,7 +2984,7 @@ async def data_quality(
     normalized_ingestion_id = str(x_ingestion_id or "").strip()
     _entry = await run_in_threadpool(data_loader.get_or_load_ingestion, normalized_ingestion_id)
     if _entry is not None:
-        state.set_active_ingestion(normalized_ingestion_id, _entry["duck_conn"], _entry["lance_db"], _entry["embedder"])
+        state.set_active_ingestion(normalized_ingestion_id, _entry["duck_conn"], _entry["lance_db"], _entry["embedder"], _entry.get("duck_lock"))
 
     try:
         return _get_quality_payload(normalized_ingestion_id)
@@ -3017,7 +3018,7 @@ async def dashboard_overview(
     if normalized_ingestion_id:
         _entry = await run_in_threadpool(data_loader.get_or_load_ingestion, normalized_ingestion_id)
         if _entry is not None:
-            state.set_active_ingestion(normalized_ingestion_id, _entry["duck_conn"], _entry["lance_db"], _entry["embedder"])
+            state.set_active_ingestion(normalized_ingestion_id, _entry["duck_conn"], _entry["lance_db"], _entry["embedder"], _entry.get("duck_lock"))
         if _entry is None:
             # Don't fall through to computing status/quality against
             # state.duck_conn - this request's context never got activated,
@@ -3283,7 +3284,7 @@ async def role_suggestions(
     normalized_ingestion_id = str(x_ingestion_id or "").strip()
     _entry = await run_in_threadpool(data_loader.get_or_load_ingestion, normalized_ingestion_id)
     if _entry is not None:
-        state.set_active_ingestion(normalized_ingestion_id, _entry["duck_conn"], _entry["lance_db"], _entry["embedder"])
+        state.set_active_ingestion(normalized_ingestion_id, _entry["duck_conn"], _entry["lance_db"], _entry["embedder"], _entry.get("duck_lock"))
 
     role_id = str(x_role or current_user.get("role") or "sdet").strip()
     project_id = str(x_project or "all").strip()
@@ -3379,7 +3380,7 @@ async def submit_feedback(
     normalized_ingestion_id = str(x_ingestion_id or "").strip()
     _entry = await run_in_threadpool(data_loader.get_or_load_ingestion, normalized_ingestion_id)
     if _entry is not None:
-        state.set_active_ingestion(normalized_ingestion_id, _entry["duck_conn"], _entry["lance_db"], _entry["embedder"])
+        state.set_active_ingestion(normalized_ingestion_id, _entry["duck_conn"], _entry["lance_db"], _entry["embedder"], _entry.get("duck_lock"))
 
     if state.lance_db is None:
         raise HTTPException(status_code=500, detail="Data store not initialized")
@@ -3775,10 +3776,10 @@ async def test_sql(
     normalized_ingestion_id = str(x_ingestion_id or "").strip()
     _entry = await run_in_threadpool(data_loader.get_or_load_ingestion, normalized_ingestion_id)
     if _entry is not None:
-        state.set_active_ingestion(normalized_ingestion_id, _entry["duck_conn"], _entry["lance_db"], _entry["embedder"])
+        state.set_active_ingestion(normalized_ingestion_id, _entry["duck_conn"], _entry["lance_db"], _entry["embedder"], _entry.get("duck_lock"))
     if state.duck_conn:
         try:
-            with state._duck_query_lock:
+            with state.duck_lock:
                 result = state.duck_conn.execute("SELECT COUNT(*) FROM flattened_tests").fetchone()
             return {"count": result[0]}
         except Exception as e:

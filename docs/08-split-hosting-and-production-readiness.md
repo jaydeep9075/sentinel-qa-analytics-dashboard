@@ -1,13 +1,12 @@
 # Split Hosting & Production Readiness
 
 > **Status (2026-08-30): §1's two routes are removed, §2's `projects/`/`builds.json`
-> leak is fixed, and §4's CI workflow now exists** (`.github/workflows/docker-publish.yml`).
-> The `WEB_CONCURRENCY` caveat in §3 was already fixed in code (a process-wide
-> `state._duck_query_lock`) when this doc was written — that bullet describes
-> what raising it does and doesn't buy you, not an open bug. Remaining open
-> items: picking and provisioning an actual backend host with a persistent
-> volume, and the Redis/image-size/backup items in §3, which are inherent to
-> this architecture rather than bugs to fix.
+> leak is fixed, §4's CI workflow now exists** (`.github/workflows/docker-publish.yml`),
+> **and §3's DuckDB lock is now per-ingestion, not process-wide — see §6 for
+> this and the other chat/chart request-path efficiency work done the same
+> day.** Remaining open items: picking and provisioning an actual backend
+> host with a persistent volume, and the Redis/image-size/backup items in
+> §3, which are inherent to this architecture rather than bugs to fix.
 
 You're planning to host frontend and backend **separately** (e.g. frontend on
 Vercel, backend on its own Docker host) instead of the single-host
@@ -232,3 +231,62 @@ the backend needs, it just moves where it runs.
    reflects that); Redis-for-multi-replica-live-exec, image size, and
    backup/failover are architectural trade-offs to know about, not bugs
    waiting on a fix.
+
+## 6. Chat/chart request-path efficiency (2026-08-30)
+
+A prompt's round trip is: resolve the ingestion (warm pool or cold LanceDB
+load) → one LLM call to decide `sql`/`vector`/`answer` → execute → one LLM
+call to phrase the answer → background bookkeeping writes. Three concrete
+inefficiencies in that path got fixed:
+
+- **DuckDB lock is now per-ingestion, not process-wide.** Every ingestion in
+  `state._ingestion_pool` has its own `duckdb.connect()` - they share no
+  memory or catalog - but every query, regardless of ingestion, used to take
+  the same single `state._duck_query_lock`. Two users looking at two
+  different builds queued behind each other for no correctness reason. The
+  lock now lives in each pool entry (`data_loader.init_data` creates one
+  alongside its `duck_conn`) and is exposed via `state.duck_lock`, which
+  resolves - via the same per-request contextvar pattern as `duck_conn` -
+  to whichever ingestion is active in the current request. Queries against
+  the *same* ingestion still serialize (correctly - that's the actual
+  correctness need); queries against *different* ingestions no longer wait
+  on each other at all. `state.set_active_ingestion()` gained a 5th
+  `duck_lock` argument; every call site in `data_loader.py`, `handlers.py`,
+  and `main.py` was updated to pass it.
+- **Knowledge-graph writes batched from up to 46 transactions to 2.**
+  `memory._update_knowledge_graph` ran one `table.update()` per co-occurring
+  keyword pair (up to C(10,2)=45) plus one `table.add()` for new pairs, on
+  every single chat/chart interaction - each a separate LanceDB write
+  transaction (its own manifest/version file on disk; this is the same
+  versioned-storage pattern visible in any `*.lance/**/_versions/*.manifest`
+  directory). It's now one read of the existing edges for that scope, one
+  Python-side weight increment, and one `table.merge_insert(...)
+  .when_matched_update_all().when_not_matched_insert_all().execute(rows)` -
+  a single upsert transaction regardless of how many pairs are in the
+  prompt. This runs in a background task either way (`_persist_in_background`
+  already made it non-blocking for the user's response), so the win is
+  reduced disk/CPU load and slower LanceDB version bloat over time, not
+  chat latency.
+- **Chat decision cache, mirroring the existing chart SQL cache.**
+  `CHAT_DECISION_PROMPT` (schema summary + conversation history + the fully
+  augmented message) is the single most expensive call in a chat turn, in
+  both latency and tokens. It's now cached per session
+  (`chat-decision:<ingestion>:<session>:<question>`, sharing `handlers._sql_cache`
+  with the chart pipeline's own `chart-sql:` keys, explicitly namespaced so
+  the two can never collide) - but ONLY when the raw question is
+  self-contained: a detected structured intent, or a concrete entity name
+  the user actually typed. A pronoun/follow-up question ("what about that?",
+  "and mobile?") is never cached, because its correct SQL depends on
+  whatever was asked immediately before, which a text-keyed cache can't see.
+  Repeating (or closely re-asking) the same anchored question in a session
+  now skips the decision LLM call entirely; the SQL still executes against
+  live data and the final answer is still generated fresh every time -
+  only the *routing* decision is reused, never the wording.
+
+**Still just a config knob, not changed by default**: `INGESTION_POOL_SIZE`
+(default 3) trades RAM for fewer cold reloads when several builds are being
+actively viewed at once - each slot holds one ingestion's full flattened
+dataset in memory. Raise it via `.env` if the host has headroom above the
+3GB/2vCPU baseline in `06-hosting-and-resources.md`; left at the default
+here since the right value depends on the actual host, not something to
+guess at in code.

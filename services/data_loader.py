@@ -261,7 +261,10 @@ def execute_sql_across_builds(sql: str, build_ids: list[str]) -> tuple[pd.DataFr
 
 def init_data(ingestion_id: str) -> Optional[dict]:
     """Cold-build the LanceDB/DuckDB handles for `ingestion_id` and return
-    them as {"lance_db", "duck_conn", "embedder"}, or None on failure.
+    them as {"lance_db", "duck_conn", "embedder", "duck_lock"}, or None on
+    failure. `duck_lock` is a fresh threading.Lock() unique to this
+    ingestion's duck_conn - see state.py's comment on why the lock is
+    per-ingestion rather than one process-wide lock.
 
     Deliberately builds into LOCAL variables, not state.* - this runs inside
     get_or_load_ingestion's lock, dispatched via run_in_threadpool from
@@ -305,7 +308,8 @@ def init_data(ingestion_id: str) -> Optional[dict]:
             duck_conn.register("test_cases", tc)
 
             _log_summary(duck_conn)
-            return {"lance_db": lance_db, "duck_conn": duck_conn, "embedder": embedder}
+            return {"lance_db": lance_db, "duck_conn": duck_conn, "embedder": embedder,
+                     "duck_lock": threading.Lock()}
         except Exception as exc:
             logger.error(f"Generalized fallback init failed: {exc}", exc_info=True)
             return None
@@ -365,7 +369,8 @@ def init_data(ingestion_id: str) -> Optional[dict]:
         logger.info(f"Registered test_cases: {len(tc)} rows")
 
         _log_summary(duck_conn)
-        return {"lance_db": lance_db, "duck_conn": duck_conn, "embedder": embedder}
+        return {"lance_db": lance_db, "duck_conn": duck_conn, "embedder": embedder,
+                 "duck_lock": threading.Lock()}
 
     except Exception as exc:
         logger.error(f"init_data failed: {exc}", exc_info=True)
@@ -438,7 +443,8 @@ def ensure_ingestion_loaded(ingestion_id: str) -> bool:
     entry = get_or_load_ingestion(ingestion_id)
     if entry is None:
         return False
-    state.set_active_ingestion(str(ingestion_id or "").strip(), entry["duck_conn"], entry["lance_db"], entry["embedder"])
+    state.set_active_ingestion(str(ingestion_id or "").strip(), entry["duck_conn"], entry["lance_db"],
+                                entry["embedder"], entry.get("duck_lock"))
     return True
 
 
@@ -872,7 +878,7 @@ def _coerce_generic_to_flattened_tests(df: pd.DataFrame) -> pd.DataFrame:
 def get_schema_info():
     schemas = {}
     if state.duck_conn:
-        with state._duck_query_lock:
+        with state.duck_lock:
             for (tbl,) in state.duck_conn.execute("SHOW TABLES").fetchall():
                 info = state.duck_conn.execute(f"DESCRIBE {tbl}").fetchall()
                 schemas[tbl] = [(r[0], r[1]) for r in info]
@@ -884,7 +890,7 @@ def get_data_profile(sample_rows: int = 5):
     if not state.duck_conn:
         return profile
 
-    with state._duck_query_lock:
+    with state.duck_lock:
         try:
             tables = [r[0] for r in state.duck_conn.execute("SHOW TABLES").fetchall()]
         except Exception:
@@ -921,7 +927,7 @@ def get_ingestion_quality_report():
         report["guidance"].append("Data connection not initialized. Run ingestion first.")
         return report
 
-    with state._duck_query_lock:
+    with state.duck_lock:
         try:
             tables = [r[0] for r in state.duck_conn.execute("SHOW TABLES").fetchall()]
         except Exception as exc:
@@ -971,7 +977,7 @@ def get_ingestion_quality_report():
         mandatory_cols = [
             "test_name", "status", "duration", "project_name", "module_name", "platform_type"
         ]
-        with state._duck_query_lock:
+        with state.duck_lock:
             present = [c[0] for c in state.duck_conn.execute("DESCRIBE flattened_tests").fetchall()]
         missing = [c for c in mandatory_cols if c not in present]
         _add_check(
@@ -982,7 +988,7 @@ def get_ingestion_quality_report():
         )
 
         try:
-            with state._duck_query_lock:
+            with state.duck_lock:
                 status_df = state.duck_conn.execute(
                     "SELECT status, COUNT(*) AS cnt FROM flattened_tests GROUP BY status"
                 ).df()
@@ -1032,14 +1038,14 @@ def get_ingestion_quality_report():
     # Collect parser strategy insights from schema/source metadata when available.
     if "ingestion_schema_profiles" in tables:
         try:
-            with state._duck_query_lock:
+            with state.duck_lock:
                 prof_count = int(state.duck_conn.execute("SELECT COUNT(*) FROM ingestion_schema_profiles").fetchone()[0])
             report["parser_insights"]["schema_profiles"] = prof_count
         except Exception:
             pass
     if "sources" in tables:
         try:
-            with state._duck_query_lock:
+            with state.duck_lock:
                 src_count = int(state.duck_conn.execute("SELECT COUNT(*) FROM sources").fetchone()[0])
             report["parser_insights"]["sources"] = src_count
         except Exception:
@@ -1058,7 +1064,7 @@ def execute_sql(query: str):
         ok, clean = validate_sql(query)
         if not ok:
             return pd.DataFrame(), clean
-        with state._duck_query_lock:
+        with state.duck_lock:
             return state.duck_conn.execute(clean).df(), None
     except Exception as exc:
         logger.error(f"SQL error: {exc}")

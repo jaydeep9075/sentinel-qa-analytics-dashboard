@@ -8,13 +8,21 @@ from collections import OrderedDict
 # tables via conn.register() throughout data_loader.init_data(), and
 # register()'d tables are NOT visible from a cursor() derived off the same
 # connection (verified directly against the pinned duckdb version - a
-# cursor sees only real catalog tables, not registered views). Moving the
-# whole data model off register() onto real CREATE TABLE ... AS SELECT
-# would be the "proper" fix but is a much larger change than this app's
-# scale (small teams, sub-second analytical queries) justifies. A single
-# process-wide lock around every DuckDB execute() call serializes query
-# execution instead - simple, correct, and the cost is negligible at this
-# traffic level. See data_loader.py's query helpers for where this is held.
+# cursor sees only real catalog tables, not registered views). A lock
+# around every DuckDB execute() call serializes query execution instead -
+# simple and correct.
+#
+# One lock PER INGESTION, not one process-wide lock: every ingestion in
+# state._ingestion_pool has its own separate duckdb.connect() - they share
+# no memory or catalog with each other, so two requests against two
+# different builds have no correctness reason to queue behind one another.
+# A single global lock used to do exactly that. The lock now lives in each
+# pool entry (see data_loader.init_data) and is exposed here the same way
+# duck_conn/lance_db are: read via state.duck_lock, which resolves to
+# WHICHEVER ingestion is active in the current request's context - always
+# the lock guarding the connection state.duck_conn also currently points
+# at. _duck_query_lock survives as the default for calls made before any
+# ingestion is active (e.g. process startup).
 _duck_query_lock = threading.Lock()
 
 # `_ingestion_pool` keeps a small LRU of recently used ingestions warm (see
@@ -51,11 +59,12 @@ _lance_db_var: "contextvars.ContextVar" = contextvars.ContextVar("lance_db", def
 _duck_conn_var: "contextvars.ContextVar" = contextvars.ContextVar("duck_conn", default=None)
 _embedder_var: "contextvars.ContextVar" = contextvars.ContextVar("embedder", default=None)
 _current_ingestion_id_var: "contextvars.ContextVar" = contextvars.ContextVar("current_ingestion_id", default=None)
+_duck_lock_var: "contextvars.ContextVar" = contextvars.ContextVar("duck_lock", default=_duck_query_lock)
 
 
 def __getattr__(name):
     # PEP 562 module __getattr__: only fires for names not already set as a
-    # real module attribute, i.e. exactly the four names below (nothing else
+    # real module attribute, i.e. exactly the five names below (nothing else
     # in this module shadows them).
     if name == "lance_db":
         return _lance_db_var.get()
@@ -65,16 +74,27 @@ def __getattr__(name):
         return _embedder_var.get()
     if name == "current_ingestion_id":
         return _current_ingestion_id_var.get()
+    if name == "duck_lock":
+        return _duck_lock_var.get()
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
-def set_active_ingestion(ingestion_id, duck_conn, lance_db, embedder) -> None:
+def set_active_ingestion(ingestion_id, duck_conn, lance_db, embedder, duck_lock=None) -> None:
     """Point this request's context at a resolved ingestion. Call once, in
-    async code, right after `await run_in_threadpool(data_loader.get_or_load_ingestion, ...)`."""
+    async code, right after `await run_in_threadpool(data_loader.get_or_load_ingestion, ...)`.
+
+    `duck_lock` should be the SAME lock object stored in that ingestion's
+    state._ingestion_pool entry (data_loader.init_data creates one lock per
+    pool entry, alongside its duck_conn) - passing a fresh lock here would
+    let two requests against the same ingestion's connection run
+    unsynchronized. Falls back to the process-wide default lock only for
+    callers that haven't been updated to pass one; every real call site in
+    this codebase does."""
     _current_ingestion_id_var.set(ingestion_id)
     _duck_conn_var.set(duck_conn)
     _lance_db_var.set(lance_db)
     _embedder_var.set(embedder)
+    _duck_lock_var.set(duck_lock or _duck_query_lock)
 
 
 def set_embedder(embedder) -> None:
@@ -88,6 +108,7 @@ def clear_active_ingestion() -> None:
     _duck_conn_var.set(None)
     _lance_db_var.set(None)
     _embedder_var.set(None)
+    _duck_lock_var.set(_duck_query_lock)
 
 # RBA: project and role managers (initialized lazily)
 project_manager = None

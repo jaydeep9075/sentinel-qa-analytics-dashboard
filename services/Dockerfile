@@ -160,14 +160,18 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=45s --retries=3 \
 # requests for the SAME ingestion, on the SAME worker, sharing one DuckDB
 # connection object from the warm pool concurrently - DuckDB connections
 # aren't guaranteed safe for concurrent use from multiple threads. That's
-# also handled now: every query site takes state._duck_query_lock (a
-# process-wide lock, not per-thread cursor()s - cursor() can't see the
-# pandas tables data_loader registers via conn.register(), so serializing
-# with a lock was the fix that actually works here). See state.py's comment
-# on _duck_query_lock for why. Net effect: raising WEB_CONCURRENCY is safe;
-# it buys you concurrent I/O/LLM-wait handling across workers, not parallel
-# DuckDB execution within one - queries against the same process still run
-# one at a time, which is fine at this app's traffic level.
+# also handled now: every query site takes state.duck_lock - not per-thread
+# cursor()s (cursor() can't see the pandas tables data_loader registers via
+# conn.register()), so serializing with a lock is the fix that actually
+# works here. That lock is PER INGESTION (one per state._ingestion_pool
+# entry, resolved via a contextvar to whichever ingestion is active in the
+# current request), not one process-wide lock - two requests against two
+# different builds' connections have no reason to queue behind each other.
+# See state.py's comment on _duck_lock_var for why. Net effect: raising
+# WEB_CONCURRENCY is safe, and now actually buys concurrent DuckDB execution
+# across different ingestions too, not just I/O/LLM-wait overlap - queries
+# against the SAME ingestion still serialize, which is fine at this app's
+# traffic level.
 #
 # `exec` is load-bearing, not style. Without it `sh` stays PID 1 with uvicorn
 # as its child, and sh does not forward signals - so `docker stop` / `docker

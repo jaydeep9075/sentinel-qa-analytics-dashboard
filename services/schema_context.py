@@ -79,7 +79,7 @@ def _fetch_distinct_values(table: str, column: str, limit: int = _MAX_DISTINCT_V
     if not state.duck_conn:
         return []
     try:
-        with state._duck_query_lock:
+        with state.duck_lock:
             rows = state.duck_conn.execute(
                 f'SELECT DISTINCT "{column}" FROM "{table}" WHERE "{column}" IS NOT NULL LIMIT {int(limit)}'
             ).fetchall()

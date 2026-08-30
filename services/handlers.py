@@ -47,7 +47,7 @@ def _get_test_results_table() -> str:
     """Get the actual table name for test results.
     Supports both old (flattened_tests) and new (structured_test_results) names."""
     try:
-        with state._duck_query_lock:
+        with state.duck_lock:
             tables = state.duck_conn.execute("SELECT table_name FROM information_schema.tables WHERE table_schema='memory'").df()
         table_names = tables['table_name'].tolist() if not tables.empty else []
 
@@ -62,6 +62,14 @@ def _get_test_results_table() -> str:
         return "flattened_tests"
 
 logger = logging.getLogger(__name__)
+# Shared, session-scoped cache for two things that are expensive to
+# re-derive for a question this session already asked verbatim: chart SQL
+# (handle_chart, keys prefixed "chart-sql:") and chat's decision-prompt
+# output (handle_chat, keys prefixed "chat-decision:" - the SQL/vector
+# routing decision, not the final natural-language answer, which is always
+# generated fresh). Both key spaces are namespaced so they can never collide
+# even for byte-identical prompt text. Bounded to 100 entries total, trimmed
+# from whichever side inserts past the cap.
 _sql_cache: dict = {}
 
 
@@ -1018,7 +1026,7 @@ async def handle_chat(user_message: str, session_id: str, ingestion_id: str,
     _entry = await run_in_threadpool(data_loader.get_or_load_ingestion, nid)
     if _entry is None:
         return f"❌ Ingestion '{ingestion_id}' not found or data unavailable."
-    state.set_active_ingestion(nid, _entry["duck_conn"], _entry["lance_db"], _entry["embedder"])
+    state.set_active_ingestion(nid, _entry["duck_conn"], _entry["lance_db"], _entry["embedder"], _entry.get("duck_lock"))
 
     # Layer 1: deterministic intent handler for critical analytical prompts.
     structured_intent = _detect_structured_intent(user_message)
@@ -1098,31 +1106,65 @@ async def handle_chat(user_message: str, session_id: str, ingestion_id: str,
             f"combined, with a build_id column added to identify which build each row came from."
         )
 
-    raw = await llm.agenerate(
-        CHAT_DECISION_PROMPT.format(
-            history=_build_history(
-                session_id,
-                user_id,
-                nid,
-                limit=_history_turn_limit(user_message),
-            ),
-            user_message=augmented_message,
-            schema_examples=schema_context.render_prompt_examples(schema_summary),
-        ),
-        temperature=0.05,
-        user_id=user_id,
-        workspace_id=workspace_id,
+    # Decision cache: skip the CHAT_DECISION_PROMPT round trip entirely for a
+    # question this session has already asked in this exact form - that
+    # prompt carries the full schema summary plus conversation history, so
+    # it's the single most expensive call in a chat turn, both in latency
+    # and tokens. Only cacheable when the raw (non-augmented) question is
+    # self-contained: a detected structured intent, or a concrete entity
+    # name the user actually typed - never a pronoun/follow-up phrasing
+    # ("what about that", "and mobile?") whose correct SQL depends on
+    # whatever was asked immediately before, which the cache key can't see.
+    # Cross-build questions are excluded too, since the same SQL text is
+    # executed differently there (against several builds, not one).
+    # Scoped to THIS session (not shared across users) for the same reason
+    # the chart cache below is: an ambiguous match replayed into an
+    # unrelated conversation is worse than one extra LLM call.
+    entity_mentions_for_cache = schema_context.find_entity_mentions(user_message, schema_summary)
+    is_cacheable_decision = (
+        not wants_cross_build_rows
+        and (bool(_detect_structured_intent(user_message)) or bool(entity_mentions_for_cache))
     )
-    if not raw:
-        return "⚠️ AI service unavailable. Please try again."
+    decision_cache_key = f"chat-decision:{nid}:{session_id or 'global'}:{user_message.lower().strip()}"
+    decision = _sql_cache.get(decision_cache_key) if is_cacheable_decision else None
 
-    decision = _extract_json_object(raw)
     if decision is None:
-        if "SELECT" in raw.upper():
-            sm = re.search(r'SELECT.+', raw, re.IGNORECASE | re.DOTALL)
-            decision = {"action": "sql", "data": sm.group() if sm else ""}
-        else:
-            decision = {"action": "answer", "data": raw.strip()}
+        raw = await llm.agenerate(
+            CHAT_DECISION_PROMPT.format(
+                history=_build_history(
+                    session_id,
+                    user_id,
+                    nid,
+                    limit=_history_turn_limit(user_message),
+                ),
+                user_message=augmented_message,
+                schema_examples=schema_context.render_prompt_examples(schema_summary),
+            ),
+            temperature=0.05,
+            user_id=user_id,
+            workspace_id=workspace_id,
+        )
+        if not raw:
+            return "⚠️ AI service unavailable. Please try again."
+
+        decision = _extract_json_object(raw)
+        if decision is None:
+            if "SELECT" in raw.upper():
+                sm = re.search(r'SELECT.+', raw, re.IGNORECASE | re.DOTALL)
+                decision = {"action": "sql", "data": sm.group() if sm else ""}
+            else:
+                decision = {"action": "answer", "data": raw.strip()}
+
+        # Only "sql"/"vector" are worth caching - both mean "here is exactly
+        # how to fetch the data for this question", independent of who asks
+        # it. "answer" is the model's own freeform reply (nothing to
+        # re-derive) and "sql_multi" is a decomposition specific to this
+        # phrasing's LLM run, not worth the added risk for a rarer case.
+        if is_cacheable_decision and isinstance(decision, dict) and decision.get("action") in ("sql", "vector"):
+            _sql_cache[decision_cache_key] = decision
+            if len(_sql_cache) > 100:
+                for k in list(_sql_cache.keys())[:20]:
+                    del _sql_cache[k]
 
     action = decision.get("action", "answer")
     data   = decision.get("data", "")
@@ -1417,7 +1459,7 @@ async def handle_chart(user_prompt: str, session_id: str, ingestion_id: str,
     _entry = await run_in_threadpool(data_loader.get_or_load_ingestion, nid)
     if _entry is None:
         return None, f"❌ Ingestion '{ingestion_id}' not found.", None
-    state.set_active_ingestion(nid, _entry["duck_conn"], _entry["lance_db"], _entry["embedder"])
+    state.set_active_ingestion(nid, _entry["duck_conn"], _entry["lance_db"], _entry["embedder"], _entry.get("duck_lock"))
 
     llm = llm_client.LLMClient()
     # Independent of each other, and both are blocking reads — see the same
@@ -1463,7 +1505,7 @@ async def handle_chart(user_prompt: str, session_id: str, ingestion_id: str,
     # stale, wrong-context query across unrelated sessions and datasets.
     chart_entity_mentions = schema_context.find_entity_mentions(user_prompt, chart_schema_summary)
     is_cacheable_prompt = bool(_detect_structured_intent(user_prompt)) or bool(chart_entity_mentions)
-    cache_key = f"{nid}:{session_id or 'global'}:{user_prompt.lower().strip()}"
+    cache_key = f"chart-sql:{nid}:{session_id or 'global'}:{user_prompt.lower().strip()}"
     sql = _sql_cache.get(cache_key) if is_cacheable_prompt else None
     if not sql:
         sql, _source = await _chart_sql(

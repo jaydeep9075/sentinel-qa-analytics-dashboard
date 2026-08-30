@@ -374,6 +374,8 @@ frontend/
 - **Status Cache**: 10-second TTL on `/data/status` (see `_STATUS_CACHE_TTL_SECONDS`)
 - **Quality Cache**: 20-second TTL on `/data/quality` (see `_QUALITY_CACHE_TTL_SECONDS`)
 - **Schema Context**: Computed from table metadata and cached per ingestion_id for the process lifetime (`schema_context.py`, capped at 50 ingestions); first computation per ingestion can be slow on large datasets, subsequent lookups are free until `invalidate_cache()` or the process restarts
+- **DuckDB lock is per-ingestion**: `state.duck_lock` resolves (via the same contextvar pattern as `state.duck_conn`) to whichever ingestion is active in the current request - each pool entry in `state._ingestion_pool` has its own lock alongside its own `duck_conn`. Queries against the same ingestion still serialize (DuckDB connections aren't thread-safe for concurrent `.execute()`); queries against different ingestions no longer wait on each other. Any code resolving an ingestion must call `state.set_active_ingestion(id, duck_conn, lance_db, embedder, duck_lock)` with that entry's `duck_lock` - a stale/missing one falls back to a process-wide default lock, silently re-introducing the old contention.
+- **Chat/chart decision & SQL cache**: `handlers._sql_cache` is shared, session-scoped, and namespaced by prefix - `chart-sql:` for chart SQL, `chat-decision:` for chat's `CHAT_DECISION_PROMPT` output. Only caches a question when it's self-contained (a detected structured intent or a concrete entity name), never a pronoun/follow-up phrasing whose meaning depends on prior turns. Skips the decision LLM call entirely on a cache hit; SQL execution and the final answer are still always fresh.
 
 ### Multi-Ingestion Support
 - Each ingestion creates a timestamped folder under `data/`

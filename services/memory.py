@@ -565,41 +565,50 @@ def _update_knowledge_graph(workspace_id: str, user_id: str, ingestion_id: str, 
 
     table = state.lance_db.open_table("knowledge_graph_edges")
     now = datetime.now(timezone.utc).isoformat()
-    new_rows = []
+    pairs = list(combinations(sorted(set(keywords)), 2))
 
-    # One targeted update per co-occurring pair (at most C(10,2)=45) instead
-    # of loading the entire edges table into pandas and rewriting it whole
-    # (drop_table + create_table) on every interaction - that was O(table
-    # size) work per chat message no matter how many pairs this call
-    # touches. weight is incremented atomically via values_sql, so there's
-    # no read-modify-write race either.
-    for a, b in combinations(sorted(set(keywords)), 2):
-        match_clause = " AND ".join([
-            _eq_clause("workspace_id", workspace_id),
-            _eq_clause("user_id", user_id),
-            _eq_clause("ingestion_id", ingestion_id),
-            _eq_clause("source", a),
-            _eq_clause("target", b),
-        ])
-        result = table.update(
-            where=match_clause,
-            values_sql={"weight": "weight + 1", "updated_at": f"'{_sql_escape(now)}'"},
-        )
-        if result.rows_updated == 0:
-            new_rows.append({
-                "id": str(uuid.uuid4()),
-                "workspace_id": workspace_id,
-                "user_id": user_id,
-                "ingestion_id": ingestion_id,
-                "source": a,
-                "target": b,
-                "weight": 1,
-                "edge_type": "cooccurrence",
-                "updated_at": now,
-            })
+    # One read + one write for the whole batch of co-occurring pairs (up to
+    # C(10,2)=45), not one read-then-write round trip PER pair. The previous
+    # version ran up to 45 individual table.update() calls plus a table.add()
+    # - each a separate LanceDB write transaction (its own manifest/version
+    # file on disk) - for a single chat message. merge_insert does the
+    # matched-row-update-or-insert in one transaction: existing weights for
+    # this scope are read once into pandas, incremented locally, and the
+    # whole batch is upserted together keyed on the columns that define a
+    # unique edge (not `id`, which is regenerated either way - nothing else
+    # references a knowledge_graph_edges row by id).
+    clauses = [
+        _eq_clause("workspace_id", workspace_id),
+        _eq_clause("user_id", user_id),
+        _eq_clause("ingestion_id", ingestion_id),
+    ]
+    existing = _filtered_pandas(table, clauses)
+    existing_weight = {}
+    if not existing.empty:
+        for _, row in existing.iterrows():
+            existing_weight[(str(row["source"]), str(row["target"]))] = int(row.get("weight", 0) or 0)
 
-    if new_rows:
-        table.add(new_rows)
+    rows = [
+        {
+            "id": str(uuid.uuid4()),
+            "workspace_id": workspace_id,
+            "user_id": user_id,
+            "ingestion_id": ingestion_id,
+            "source": a,
+            "target": b,
+            "weight": existing_weight.get((a, b), 0) + 1,
+            "edge_type": "cooccurrence",
+            "updated_at": now,
+        }
+        for a, b in pairs
+    ]
+
+    (
+        table.merge_insert(["workspace_id", "user_id", "ingestion_id", "source", "target"])
+        .when_matched_update_all()
+        .when_not_matched_insert_all()
+        .execute(rows)
+    )
 
 
 def learn_from_interaction(
