@@ -197,3 +197,43 @@ services:
       retries: 3
     restart: unless-stopped
     mem_limit: 256m
+
+  # Optional reverse proxy giving the backend real HTTPS with zero manual
+  # certbot/nginx setup - for when the backend is hosted here (its own VM)
+  # while the frontend deploys separately to Vercel (which already
+  # terminates TLS for you, so it needs none of this). Skip this service
+  # entirely if something else in front of the backend already does TLS
+  # (a cloud load balancer, Cloudflare, the terraform/ nginx path, etc).
+  # Enable with: docker compose --profile proxy up -d
+  # Needs PUBLIC_DOMAIN in .env pointed at this host's public IP via DNS
+  # before Caddy can issue a real Let's Encrypt cert - see Caddyfile.
+  caddy:
+    image: caddy:2-alpine
+    profiles: ["proxy"]
+    environment:
+      PUBLIC_DOMAIN: ${PUBLIC_DOMAIN:-localhost}
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      backend:
+        condition: service_healthy
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    restart: unless-stopped
+    mem_limit: 256m
+
+volumes:
+  # Let's Encrypt account key + issued certs, and Caddy's runtime config -
+  # named (not bind-mounted) so a `docker compose down` doesn't lose them
+  # and force re-issuing a cert on every restart. Only created/used when
+  # the `proxy` profile actually runs.
+  caddy_data:
+  caddy_config:

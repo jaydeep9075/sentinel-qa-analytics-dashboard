@@ -1,0 +1,340 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>TR-Insight Business Overview</title>
+<style>
+  @page { size: A4; margin: 18mm 16mm 20mm 16mm; }
+  * { box-sizing: border-box; }
+  body {
+    font-family: 'Segoe UI', Calibri, Arial, sans-serif;
+    color: #232a33;
+    font-size: 11pt;
+    line-height: 1.6;
+    margin: 0;
+  }
+  h1, h2, h3, h4 { color: #0f3d3e; }
+  h1 { font-size: 21pt; margin: 0 0 4mm 0; }
+  h2 { font-size: 16pt; border-bottom: 2px solid #14867a; padding-bottom: 2mm; margin-top: 0; }
+  h3 { font-size: 12.5pt; color: #14867a; margin-bottom: 2mm; }
+  p { margin: 0 0 3.5mm 0; }
+  table { width: 100%; border-collapse: collapse; margin: 3mm 0 5mm 0; font-size: 10pt; }
+  th, td { border: 1px solid #d8e2df; padding: 2.2mm 3mm; text-align: left; vertical-align: top; }
+  th { background: #0f3d3e; color: #ffffff; font-weight: 600; }
+  tr:nth-child(even) td { background: #f2f8f6; }
+  ul, ol { margin: 0 0 3.5mm 0; padding-left: 5.5mm; }
+  li { margin-bottom: 1.6mm; }
+  .section { page-break-before: always; padding-top: 2mm; }
+  .section:first-of-type { page-break-before: avoid; }
+  .no-break { page-break-inside: avoid; }
+  .callout {
+    background: #eefaf3;
+    border-left: 4px solid #14867a;
+    padding: 3mm 4.5mm;
+    margin: 3.5mm 0;
+    font-size: 10.5pt;
+  }
+  .quote {
+    background: #f7f4e9;
+    border-left: 4px solid #c99a2e;
+    padding: 3mm 4.5mm;
+    margin: 3.5mm 0;
+    font-style: italic;
+    font-size: 11pt;
+    color: #4a4230;
+  }
+  .stat-row { display: flex; gap: 4mm; margin: 4mm 0 6mm 0; }
+  .stat-card {
+    flex: 1;
+    background: #0f3d3e;
+    color: white;
+    border-radius: 6px;
+    padding: 5mm 4mm;
+    text-align: center;
+  }
+  .stat-card .num { font-size: 19pt; font-weight: 700; display: block; margin-bottom: 1.5mm; color: #7fe0c9; }
+  .stat-card .lbl { font-size: 8.5pt; color: #cfe9e2; }
+  .toc { margin-top: 4mm; }
+  .toc-item { display: flex; justify-content: space-between; border-bottom: 1px dotted #bcd0cb; padding: 1.6mm 0; font-size: 11pt; }
+  .toc-item .num { color: #14867a; font-weight: 600; width: 8mm; display: inline-block; }
+  .cover {
+    height: 250mm;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    align-items: flex-start;
+    background: linear-gradient(160deg, #0f3d3e 0%, #14625a 55%, #14867a 100%);
+    color: white;
+    margin: -18mm -16mm 0 -16mm;
+    padding: 0 20mm;
+  }
+  .cover .kicker { letter-spacing: 3px; font-size: 10.5pt; text-transform: uppercase; color: #a6ecd9; margin-bottom: 6mm; }
+  .cover h1 { color: white; font-size: 34pt; margin-bottom: 4mm; }
+  .cover .tagline { font-size: 13pt; color: #dcf5ec; margin-bottom: 14mm; font-style: italic; }
+  .cover .meta { font-size: 10pt; color: #bfe6da; border-top: 1px solid rgba(255,255,255,0.25); padding-top: 5mm; width: 60%; }
+  .cover .meta div { margin-bottom: 1.5mm; }
+  .footer-note { font-size: 8pt; color: #7c8f89; margin-top: 8mm; text-align: center; }
+  .problem-solution { display: flex; gap: 4mm; margin-bottom: 3mm; }
+  .problem-solution .box { flex: 1; padding: 3mm 4mm; border-radius: 5px; }
+  .problem-solution .problem { background: #fdeeee; border-left: 4px solid #b83a3a; }
+  .problem-solution .solution { background: #eefaf3; border-left: 4px solid #14867a; }
+  .problem-solution h4 { margin: 0 0 1.5mm 0; font-size: 9.5pt; text-transform: uppercase; letter-spacing: 0.5px; }
+  .problem-solution .problem h4 { color: #b83a3a; }
+  .problem-solution .solution h4 { color: #14867a; }
+  .problem-solution p { margin: 0; font-size: 9.8pt; }
+  .persona-card {
+    border: 1px solid #d8e2df;
+    border-radius: 6px;
+    padding: 3.5mm 4mm;
+    margin-bottom: 3mm;
+    background: #fbfdfc;
+  }
+  .persona-card h4 { margin: 0 0 1mm 0; color: #0f3d3e; font-size: 11pt; }
+  .persona-card .q { font-style: italic; color: #5c6b66; font-size: 9.8pt; margin-bottom: 1.5mm; }
+</style>
+</head>
+<body>
+
+<!-- COVER -->
+<div class="cover">
+  <div class="kicker">Business Overview</div>
+  <h1>TR-Insight</h1>
+  <div class="tagline">AI QE that knows your results — how it solves the test-reporting problem, for the people who fund it and rely on it.</div>
+  <div class="meta">
+    <div><strong>Product:</strong> TR-Insight (part of the TR-TestIntelligence suite)</div>
+    <div><strong>Publisher:</strong> Testrig Technologies</div>
+    <div><strong>Audience:</strong> Executives, QA Leadership, Test Managers, Procurement</div>
+    <div><strong>Document version:</strong> 1.0 &nbsp;|&nbsp; <strong>Date:</strong> September 2, 2026</div>
+  </div>
+</div>
+
+<!-- TOC -->
+<div class="section">
+<h2>Table of Contents</h2>
+<div class="toc">
+  <div class="toc-item"><span><span class="num">1</span>Executive Summary</span></div>
+  <div class="toc-item"><span><span class="num">2</span>The Problem TR-Insight Solves</span></div>
+  <div class="toc-item"><span><span class="num">3</span>How TR-Insight Solves It</span></div>
+  <div class="toc-item"><span><span class="num">4</span>Who It's For</span></div>
+  <div class="toc-item"><span><span class="num">5</span>What You Can Do With It</span></div>
+  <div class="toc-item"><span><span class="num">6</span>Bring the Data You Already Have</span></div>
+  <div class="toc-item"><span><span class="num">7</span>Why AI, and Why It's Safe to Rely On</span></div>
+  <div class="toc-item"><span><span class="num">8</span>Cost You Can Predict</span></div>
+  <div class="toc-item"><span><span class="num">9</span>Data Security &amp; Ownership</span></div>
+  <div class="toc-item"><span><span class="num">10</span>Getting Started — What It Takes</span></div>
+  <div class="toc-item"><span><span class="num">11</span>Deployment Choices &amp; Indicative Cost</span></div>
+  <div class="toc-item"><span><span class="num">12</span>Roles &amp; Access, in Plain Terms</span></div>
+  <div class="toc-item"><span><span class="num">13</span>The Outcome</span></div>
+  <div class="toc-item"><span><span class="num">14</span>Part of a Larger Suite</span></div>
+</div>
+</div>
+
+<!-- 1. EXEC SUMMARY -->
+<div class="section">
+<h2>1. Executive Summary</h2>
+<p>Your team already runs tests and already produces results. What's missing isn't more testing — it's a fast, trustworthy way to turn those results into an answer a leader can act on. <strong>TR-Insight</strong> is an AI-powered test analytics dashboard that sits on top of the test results you already have and answers plain-English questions about them — instantly, with a chart, and with a release call you can defend.</p>
+<div class="stat-row no-break">
+  <div class="stat-card"><span class="num">Minutes</span><span class="lbl">not afternoons, to answer a release-readiness question</span></div>
+  <div class="stat-card"><span class="num">0</span><span class="lbl">manual spreadsheet exports required</span></div>
+  <div class="stat-card"><span class="num">4</span><span class="lbl">audiences served from one source of truth</span></div>
+</div>
+<p>It runs entirely inside your own environment — nothing about your releases, defects, or customer-sensitive test data leaves your infrastructure. It is deployed with a single command and starts answering questions the same day.</p>
+</div>
+
+<!-- 2. PROBLEM -->
+<div class="section">
+<h2>2. The Problem TR-Insight Solves</h2>
+<p>Every QA organization running at any real scale eventually runs into the same five problems:</p>
+<ul>
+<li><strong>No defensible answer, under time pressure.</strong> A release is hours away and nobody can say, with evidence, whether it's safe to ship.</li>
+<li><strong>Reporting is manual labor.</strong> Every status update starts with someone exporting results into a spreadsheet by hand.</li>
+<li><strong>One result, two stories.</strong> The same failure means one thing to leadership and something else entirely to the engineer who owns the suite — there's no shared, role-appropriate framing.</li>
+<li><strong>Flaky tests hide in the noise</strong> until they take down a release nobody saw coming.</li>
+<li><strong>Tribal knowledge is a single point of failure.</strong> Insight depends on the one person who knows where the data lives — and they're on leave the week it matters.</li>
+</ul>
+<div class="quote">"We can't tell the CTO whether we're safe to ship without someone spending an hour building a slide first." — the exact situation TR-Insight is built to eliminate.</div>
+</div>
+
+<!-- 3. SOLUTION -->
+<div class="section">
+<h2>3. How TR-Insight Solves It</h2>
+<p>Each problem above maps directly to a capability in the product:</p>
+<div class="problem-solution no-break">
+  <div class="box problem"><h4>Problem</h4><p>No defensible go/no-go under time pressure</p></div>
+  <div class="box solution"><h4>TR-Insight</h4><p>A clear release-readiness verdict, with the failing evidence one click away when someone challenges it</p></div>
+</div>
+<div class="problem-solution no-break">
+  <div class="box problem"><h4>Problem</h4><p>Manual spreadsheet exports for every status update</p></div>
+  <div class="box solution"><h4>TR-Insight</h4><p>Summaries and charts produced on demand, in plain English, with no reporting chore</p></div>
+</div>
+<div class="problem-solution no-break">
+  <div class="box problem"><h4>Problem</h4><p>Same failure, different story for different audiences</p></div>
+  <div class="box solution"><h4>TR-Insight</h4><p>One set of results, role-aware answers — executive risk framing for leadership, full engineering detail for the team that owns the suite</p></div>
+</div>
+<div class="problem-solution no-break">
+  <div class="box problem"><h4>Problem</h4><p>Flaky tests hiding in the noise</p></div>
+  <div class="box solution"><h4>TR-Insight</h4><p>Regressions, flaky tests and recurring patterns surfaced automatically across builds, ranked by impact</p></div>
+</div>
+<div class="problem-solution no-break">
+  <div class="box problem"><h4>Problem</h4><p>Insight locked inside one person's head</p></div>
+  <div class="box solution"><h4>TR-Insight</h4><p>Anyone with a login can self-serve — analysis stops being a bottleneck tied to one individual</p></div>
+</div>
+</div>
+
+<!-- 4. WHO IT'S FOR -->
+<div class="section">
+<h2>4. Who It's For</h2>
+<p>TR-Insight is built around the questions different people actually open a dashboard to answer — not a one-size-fits-all report.</p>
+<div class="persona-card no-break">
+  <h4>CTO / Engineering Leadership</h4>
+  <div class="q">"Are we safe to ship?"</div>
+  <p>Release risk and quality trend in plain language — a defensible go/no-go in one screen, no deck required.</p>
+</div>
+<div class="persona-card no-break">
+  <h4>QA Lead</h4>
+  <div class="q">"Where is quality actually weak?"</div>
+  <p>The modules dragging the pass rate down, ranked by impact — effort goes where it actually changes the number.</p>
+</div>
+<div class="persona-card no-break">
+  <h4>Test Manager</h4>
+  <div class="q">"What do I report this week?"</div>
+  <p>Coverage, pass rate and regressions across builds, on demand — reporting time collapses to a question, asked and answered.</p>
+</div>
+<div class="persona-card no-break">
+  <h4>SDET / QA Engineer</h4>
+  <div class="q">"Why did this fail?"</div>
+  <p>The failing tests, their errors, the flaky ones and the slowest ones — straight to what's actually worth debugging.</p>
+</div>
+</div>
+
+<!-- 5. WHAT YOU CAN DO -->
+<div class="section">
+<h2>5. What You Can Do With It</h2>
+<ul>
+<li><strong>Ask in plain English</strong> — e.g. "is the payment module stable?" — and get a direct, sourced answer, not a raw data dump.</li>
+<li><strong>Get charts and dashboards on demand</strong> — presentation-ready visuals, ready to drop into a status update or a steering call, no design effort required.</li>
+<li><strong>See trends and patterns automatically</strong> — recurring failures, regressions and flaky tests found, explained, and ranked, with a recommendation on what to fix first.</li>
+<li><strong>Get answers shaped for the reader</strong> — leadership gets risk and release framing, engineers get failing tests and technical detail, all from the same underlying source of truth.</li>
+<li><strong>Defend a go/no-go call</strong> — a clear release-readiness verdict, with the evidence one click away if someone pushes back.</li>
+<li><strong>Watch a test run live</strong> — follow execution as it happens, so problems surface during the run itself instead of in tomorrow's report.</li>
+</ul>
+</div>
+
+<!-- 6. BRING YOUR DATA -->
+<div class="section">
+<h2>6. Bring the Data You Already Have</h2>
+<p>There is no migration project and no rebuild required. TR-Insight connects, in a few clicks, to what your team is already producing:</p>
+<ul>
+<li>Automation reports (from your existing test frameworks)</li>
+<li>Spreadsheet exports and Excel workbooks maintained by hand</li>
+<li>Existing databases</li>
+<li>Internal reporting services, via API</li>
+<li>Live test runs, streamed while they're still executing</li>
+</ul>
+<p>Four practical routes get data in — a watched drop-box folder, a direct upload endpoint for CI systems that can't share a filesystem, a manual "Add Build" action inside the dashboard, or a one-shot bulk import. Whichever route is used, the result is the same: a new build appears in the dashboard, typically within seconds, with no restart or manual refresh needed.</p>
+</div>
+
+<!-- 7. WHY AI -->
+<div class="section">
+<h2>7. Why AI, and Why It's Safe to Rely On</h2>
+<h3>Why AI belongs here</h3>
+<ul>
+<li>Test data is large, repetitive, and dull to read line-by-line — exactly the work people postpone, and exactly what AI does instantly.</li>
+<li>It reads <em>every</em> result, not the sample someone had time to look at, so nothing quietly gets skipped.</li>
+<li>It explains what happened in language a non-technical stakeholder can act on, with no translation layer required.</li>
+<li>It ranks what actually matters — the one failure blocking the release, ahead of the twenty that don't.</li>
+</ul>
+<h3>Why the answers can be trusted</h3>
+<p>Charts and figures are <em>not</em> free-form AI output. The system deterministically parses what chart is being asked for, has the AI write only the underlying data query, and then validates and downgrades the result if the data can't actually support the requested chart form. In plain terms: the AI decides <em>what to look up</em>, but a fixed, testable process decides <em>what gets drawn</em> — so the same question reliably produces the same kind of answer, and visuals can't silently misrepresent the underlying numbers.</p>
+</div>
+
+<!-- 8. COST -->
+<div class="section">
+<h2>8. Cost You Can Predict</h2>
+<ul>
+<li><strong>Only what's needed reaches the AI</strong> — never the entire dataset for every question, which keeps per-question cost small and consistent.</li>
+<li><strong>Repeat and follow-up questions reuse work already done</strong> instead of paying for the same computation twice.</li>
+<li><strong>Every user and team has a spend limit</strong>, so AI cost cannot run away unnoticed between invoices.</li>
+<li><strong>Usage is visible per person and per project</strong> from an admin console, so what AI costs — and why — is never a surprise at the end of the month.</li>
+</ul>
+<div class="callout">AI spend becomes a known, budgeted line item — not an open-ended bill that leadership discovers after the fact.</div>
+</div>
+
+<!-- 9. DATA SECURITY -->
+<div class="section">
+<h2>9. Data Security &amp; Ownership</h2>
+<p>TR-Insight runs <strong>inside your own environment</strong> — on your own server, VM, or cloud account, brought up with a single command. Release information, defect detail, and customer-sensitive test data never leave your infrastructure by default, which keeps security review short and procurement simple compared to a SaaS product that requires sending your data to a third party for storage.</p>
+<ul>
+<li>Accounts are protected with industry-standard authentication and password hashing; every deployment gets its own unique credentials — there is no shared factory password across installs.</li>
+<li>Access is scoped by <strong>team</strong> ("workspace") — a person only sees the builds that belong to their own team unless they hold an administrator or leadership role.</li>
+<li>Every significant action — logins, account changes, permission changes, deletions — is recorded in a permanent audit trail that leadership and compliance can review at any time.</li>
+<li>The one place data does travel is to the AI provider your organization chooses (e.g., Gemini, OpenAI, Anthropic, or a fully local/offline model via Ollama) — and only the specific question and the minimal supporting data it needs, never the full dataset.</li>
+</ul>
+</div>
+
+<!-- 10. GETTING STARTED -->
+<div class="section">
+<h2>10. Getting Started — What It Takes</h2>
+<p>Standing TR-Insight up does not require a services engagement or a lengthy implementation project:</p>
+<ol>
+<li>One setup command brings up the entire application (dashboard + backend) on a server, VM, or laptop.</li>
+<li>The first login is a one-time administrator account, which is immediately forced to set a real password.</li>
+<li>The administrator picks an AI provider from a short list (or connects a fully private, offline model) — this can also be finished later without restarting anything.</li>
+<li>The first set of test results is dropped in, and it appears in the dashboard within about 30 seconds.</li>
+<li>Everyone else requests an account through a simple self-service sign-up, approved by an administrator into the right team.</li>
+</ol>
+<p>From a cold start to a working, populated dashboard is typically a same-day effort for a technical team member — not a multi-week rollout.</p>
+</div>
+
+<!-- 11. DEPLOYMENT CHOICES -->
+<div class="section">
+<h2>11. Deployment Choices &amp; Indicative Cost</h2>
+<table>
+<tr><th>Option</th><th>Best for</th><th>Indicative running cost</th></tr>
+<tr><td>Single server / VM you already own</td><td>Teams with existing infrastructure and IT support</td><td>No extra cloud spend</td></tr>
+<tr><td>A single cloud server (e.g., AWS), stood up via an included automated setup</td><td>Teams wanting a supported, documented, self-hosted path with minimal setup effort</td><td>Roughly $30–$60/month for the server, plus a few dollars/month for storage</td></tr>
+<tr><td>Split hosting — dashboard on a managed hosting service, backend on your own server</td><td>Teams who want the dashboard itself managed and updated automatically</td><td>Backend hosting cost only; the managed frontend hosting has its own separate (often free-tier-eligible) pricing</td></tr>
+</table>
+<p class="callout">In every option, all of your test data and accounts live on infrastructure your organization controls — the deployment choice only affects convenience and operating cost, never who owns the data.</p>
+</div>
+
+<!-- 12. ROLES -->
+<div class="section">
+<h2>12. Roles &amp; Access, in Plain Terms</h2>
+<table>
+<tr><th>Role</th><th>What they can do</th></tr>
+<tr><td>Administrator / CTO</td><td>See everything across every team, manage user accounts, configure the AI provider, view the full audit history</td></tr>
+<tr><td>QA Manager</td><td>Full read and import access, scoped to their own team's results</td></tr>
+<tr><td>SDET / QA Engineer</td><td>Full read and import access, scoped to their own team's results</td></tr>
+</table>
+<p>A "team" (called a workspace) is simply a boundary around which builds a person can see — assigning someone to a new team is all it takes to create one; there's no separate setup step. New sign-ups sit in a pending queue until an administrator approves them into the correct team and role, so access is always a deliberate decision, never automatic.</p>
+<p>Independently of account access, each person can also choose which "voice" the AI answers in — an executive risk summary versus full technical failure detail — without that choice changing what data they're allowed to see.</p>
+</div>
+
+<!-- 13. OUTCOME -->
+<div class="section">
+<h2>13. The Outcome</h2>
+<ul>
+<li><strong>Hours back every week</strong> — the export-and-summarize cycle disappears; questions that used to take an afternoon are answered while the meeting is still running.</li>
+<li><strong>Decisions you can defend</strong> — every answer carries the data it came from, so release calls stop being a matter of opinion.</li>
+<li><strong>Problems caught earlier</strong> — regressions and unstable areas surface while a fix is still cheap, not after they've already cost a release.</li>
+<li><strong>AI cost you can predict</strong> — spend is capped per person and per team, a known line item rather than an open-ended bill.</li>
+</ul>
+</div>
+
+<!-- 14. SUITE -->
+<div class="section">
+<h2>14. Part of a Larger Suite</h2>
+<p>TR-Insight is one piece of Testrig Technologies' <strong>TR-TestIntelligence</strong> suite of AI-driven QA tools, designed to work together across the testing lifecycle:</p>
+<table>
+<tr><th>Product</th><th>What it does</th></tr>
+<tr><td><strong>TR-Forge</strong></td><td>AI-assisted generation of test cases</td></tr>
+<tr><td><strong>TR-Automate</strong></td><td>AI-assisted Playwright test automation</td></tr>
+<tr><td><strong>TR-Insight</strong></td><td>Test reporting and analytics (this document)</td></tr>
+</table>
+<p>Together, the suite covers writing tests, running them, and understanding the results — with AI applied at each stage where it removes manual, repetitive work rather than adding process.</p>
+<div class="footer-note">TR-Insight Business Overview · Testrig Technologies · Confidential — for internal and evaluation use</div>
+</div>
+
+</body>
+</html>

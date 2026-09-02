@@ -104,4 +104,24 @@ This path looks actively maintained (the deploy script, `.tf` files and bootstra
 
 ### Bring your own VM (no Terraform)
 
-Anything that can run Docker works: install Docker, copy `docker-compose.yml` (or the `.pull` variant) and `.env`, `docker compose up -d`, put a reverse proxy (nginx, Caddy) in front for TLS. The `terraform/user_data.sh` bootstrap script is a reasonable reference for what a from-scratch Ubuntu setup needs even if you don't use Terraform itself.
+Anything that can run Docker works: install Docker, copy `docker-compose.yml` (or the `.pull` variant) and `.env`, `docker compose up -d`. The `terraform/user_data.sh` bootstrap script is a reasonable reference for what a from-scratch Ubuntu setup needs even if you don't use Terraform itself.
+
+For TLS in front of the backend, there's now a one-command option instead of hand-rolling nginx/certbot: point a domain's DNS A record at the VM's IP, set `PUBLIC_DOMAIN=that-domain` in `.env`, and run `docker compose --profile proxy up -d`. This starts a `caddy` container (config in the repo-root `Caddyfile`) that reverse-proxies to the backend and requests + auto-renews its own Let's Encrypt certificate — no certbot, no cron job, no nginx config to write by hand. Skip this profile entirely if the frontend is split off to Vercel (which already terminates TLS for itself) and something else — a cloud load balancer, Cloudflare, the `terraform/` nginx path — already handles TLS for the backend.
+
+### Split hosting (frontend on Vercel, backend on its own host)
+
+This is the shape most teams end up wanting: Vercel builds and hosts `frontend/` directly from the git repo (no Docker involved on that side — Vercel's own Next.js build pipeline handles it), while the backend runs from `services/Dockerfile` on any host with a persistent volume, per above.
+
+Frontend side (Vercel dashboard, one time):
+
+1. Import the repo, set **Root Directory** to `frontend`.
+2. Add environment variable `NEXT_PUBLIC_API_URL` = your backend's real public URL (e.g. `https://api.yourdomain.com`) — this is inlined at build time, so changing it later needs a redeploy, not just a restart.
+3. Deploy. No Dockerfile is used for this path; `frontend/Dockerfile` stays for teams who'd rather self-host the frontend too (see `05-docker.md`).
+
+Backend side, on the host you picked:
+
+1. Set `CORS_ALLOWED_ORIGINS` to the Vercel domain (and any preview domains you use), comma-separated.
+2. Give it a persistent volume for `DATA_DIR`/`STATE_DIR` (see storage layout above) — this is the one hard requirement; a purely serverless/ephemeral platform loses all data and accounts on every redeploy.
+3. Optionally put the `caddy` profile above in front of it for HTTPS, or terminate TLS however your platform already does.
+
+Full detail on what does and doesn't change when splitting this way — including the two now-fixed Next.js routes that used to read the backend's filesystem directly — is in [`08-split-hosting-and-production-readiness.md`](08-split-hosting-and-production-readiness.md).
