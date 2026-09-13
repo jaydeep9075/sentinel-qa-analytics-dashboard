@@ -6,7 +6,10 @@ import { AnimatePresence, motion } from "framer-motion";
 import { BarChart3, X, Loader2, Sparkles } from "lucide-react";
 import { useRB } from "@/lib/RBContext";
 import { useIngestion } from "@/lib/IngestionContext";
-import { generateChart, submitFeedback } from "@/lib/api";
+import { generateChart, speakText, submitFeedback } from "@/lib/api";
+import { readSentinelMeta } from "@/lib/chartTheme";
+import { playVoice } from "@/lib/voice";
+import MicButton from "./MicButton";
 import { useSuggestions } from "@/lib/SuggestionsContext";
 import { MAX_SUGGESTIONS } from "@/lib/roleSuggestions";
 
@@ -20,10 +23,36 @@ export default function FloatingChart() {
   const [customPrompt, setCustomPrompt] = useState("");
   const [recentPrompts, setRecentPrompts] = useState<string[]>([]);
   const [styleFeedback, setStyleFeedback] = useState("");
+  const [isListening, setIsListening] = useState(false);
+  const [voiceNote, setVoiceNote] = useState<string | null>(null);
 
   const suggestions = sharedSuggestions.chart.slice(0, MAX_SUGGESTIONS);
 
-  const handleGenerateChart = async (prompt: string) => {
+  useEffect(() => {
+    if (!voiceNote) return;
+    const t = setTimeout(() => setVoiceNote(null), 5000);
+    return () => clearTimeout(t);
+  }, [voiceNote]);
+
+  // A chart asked for by voice is answered by voice with its insight line -
+  // the one sentence the backend already computes from the drawn data. The
+  // chart is what was asked for, so a failed voice-over is only logged.
+  // playVoice's shared player keeps talking after this popover auto-closes.
+  const speakChartInsight = async (chart: unknown) => {
+    try {
+      const figure = typeof chart === "string" ? JSON.parse(chart) : chart;
+      const insight = readSentinelMeta((figure as { layout?: unknown } | null)?.layout)?.insight?.trim();
+      const { audio } = await speakText(
+        insight ? `Your chart is ready. ${insight}` : "Your chart is ready.",
+        "chart",
+      );
+      await playVoice(audio, "chart");
+    } catch (error) {
+      console.warn("[voice] could not speak the chart insight", error);
+    }
+  };
+
+  const handleGenerateChart = async (prompt: string, options: { voice?: boolean } = {}) => {
     const trimmedPrompt = String(prompt || "").trim();
     const styleHint = String(styleFeedback || "").trim();
     if (!trimmedPrompt) return;
@@ -80,6 +109,7 @@ export default function FloatingChart() {
           detail: { prompt: trimmedPrompt, chart, chartId },
         }),
       );
+      if (options.voice) void speakChartInsight(chart);
       // Auto‑close after a short delay
       setTimeout(() => {
         setIsOpen(false);
@@ -105,6 +135,13 @@ export default function FloatingChart() {
     const prompt = customPrompt.trim();
     if (!prompt || isGenerating) return;
     await handleGenerateChart(prompt);
+    setCustomPrompt("");
+  };
+
+  const handleVoicePrompt = async (text: string) => {
+    setVoiceNote(null);
+    setCustomPrompt(text);
+    await handleGenerateChart(text, { voice: true });
     setCustomPrompt("");
   };
 
@@ -173,9 +210,16 @@ export default function FloatingChart() {
                     type="text"
                     value={customPrompt}
                     onChange={(e) => setCustomPrompt(e.target.value)}
-                    placeholder="Type chart prompt..."
+                    placeholder={isListening ? "Listening… tap ■ when done" : "Type chart prompt..."}
                     disabled={isGenerating || !selectedIngestion}
-                    className="flex-1 rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs text-slate-700 placeholder:text-slate-400 focus:outline-none focus:ring-1 focus:ring-purple-500/40 focus:border-purple-500/40 disabled:opacity-50 dark:border-white/[0.1] dark:bg-black/40 dark:text-white/80 dark:placeholder:text-white/30"
+                    className="min-w-0 flex-1 rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs text-slate-700 placeholder:text-slate-400 focus:outline-none focus:ring-1 focus:ring-purple-500/40 focus:border-purple-500/40 disabled:opacity-50 dark:border-white/[0.1] dark:bg-black/40 dark:text-white/80 dark:placeholder:text-white/30"
+                  />
+                  <MicButton
+                    size="sm"
+                    disabled={isGenerating || !selectedIngestion}
+                    onTranscript={handleVoicePrompt}
+                    onError={setVoiceNote}
+                    onRecordingChange={setIsListening}
                   />
                   <button
                     type="submit"
@@ -185,6 +229,9 @@ export default function FloatingChart() {
                     Go
                   </button>
                 </form>
+                {voiceNote && (
+                  <p className="text-[10px] font-semibold text-amber-600 dark:text-amber-400">{voiceNote}</p>
+                )}
                 <textarea
                   value={styleFeedback}
                   onChange={(e) => setStyleFeedback(e.target.value)}

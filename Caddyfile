@@ -23,7 +23,7 @@
 
 	# Everything else the backend owns (see services/main.py for the current
 	# route list - keep this in sync if a new top-level prefix is added).
-	handle /health* /docs* /auth* /ingest* /chat* /chart* /data* /dashboard* /debug* /ingestions* /suggestions* /feedback* /projects* /roles* /test* /usage* {
+	handle /health* /docs* /auth* /ingest* /chat* /chart* /data* /dashboard* /debug* /ingestions* /suggestions* /feedback* /projects* /roles* /test* /usage* /voice* {
 		reverse_proxy backend:8000
 	}
 

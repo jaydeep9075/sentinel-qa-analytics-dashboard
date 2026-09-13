@@ -313,6 +313,45 @@ export async function generateChart(
   return { chart: data.chart, chartId: data.chart_id as string | undefined };
 }
 
+// FastAPI puts a string in `detail` for HTTPException but a list of
+// validation errors for a malformed body.
+function errorDetail(data: { detail?: unknown } | null, fallback: string): string {
+  return typeof data?.detail === "string" && data.detail ? data.detail : fallback;
+}
+
+/** A recorded question (WAV) as text, via Gemini. */
+export async function transcribeAudio(audio: Blob): Promise<string> {
+  const form = new FormData();
+  form.append("audio", audio, "question.wav");
+  const res = await timedFetch(
+    `${API_BASE}/voice/transcribe`,
+    // No Content-Type: the browser sets the multipart boundary itself.
+    { method: "POST", headers: getAuthHeaders(), body: form },
+    "api:voice-transcribe",
+  );
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(errorDetail(data, "Could not understand the recording"));
+  return String(data?.text || "").trim();
+}
+
+const MAX_SPEAK_CHARS = 6000;
+
+/** An answer as a short spoken reply: the words said and a base64 WAV. */
+export async function speakText(text: string, kind: "chat" | "chart") {
+  const res = await timedFetch(
+    `${API_BASE}/voice/speak`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...getAuthHeaders() },
+      body: JSON.stringify({ text: text.slice(0, MAX_SPEAK_CHARS), kind }),
+    },
+    "api:voice-speak",
+  );
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok || !data?.audio) throw new Error(errorDetail(data, "Could not create the spoken answer"));
+  return { spokenText: String(data.spoken_text || ""), audio: String(data.audio) };
+}
+
 /** Drop the cached chart history for one build (all sessions). */
 export function invalidateChartHistoryCache(ingestionId: string): void {
   const scope = String(ingestionId || "").trim();

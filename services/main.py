@@ -1,4 +1,5 @@
-﻿import logging
+﻿import base64
+import logging
 import os
 import copy
 import uuid
@@ -16,11 +17,12 @@ from contextlib import asynccontextmanager
 from pydantic import BaseModel, Field
 import asyncio
 import uvicorn
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, Literal
 from datetime import datetime, timezone
 from urllib.parse import urlparse
 from . import config, state, data_loader, handlers, memory, llm_client, ingestion_jobs, schema_context
 from . import token_usage_store, auto_ingest, build_owner, app_settings, audit_log, ingestion_service, project_access, project_builds
+from . import voice
 from jose import JWTError, jwt
 from . import auth as auth_module
 from .prompts import SUGGESTION_PROMPT
@@ -97,6 +99,12 @@ class ChatRequest(BaseModel):
 class ChartRequest(BaseModel):
     message: str
     session_id: Optional[str] = None
+
+class VoiceSpeakRequest(BaseModel):
+    text: str = Field(..., min_length=1, max_length=voice.MAX_SPEAK_CHARS)
+    # "chart" speaks the text as-is (a chart's one-line insight); "chat"
+    # condenses a long written answer first.
+    kind: Literal["chat", "chart"] = "chat"
 
 class IngestRequest(BaseModel):
     source_path: str
@@ -2507,8 +2515,8 @@ def _enforce_token_quota(current_user: dict) -> None:
     """Refuse a new LLM-backed request once an account has spent its lifetime
     quota. Raises HTTPException(429).
 
-    Checked here - once, at the top of the two routes that actually spend
-    tokens - rather than inside llm_client, which is called many times per
+    Checked here - once, at the top of each route that actually spends
+    tokens (/chat, /chart, /voice/*) - rather than inside llm_client, which is called many times per
     request (a chat turn can retry a SQL fix, regenerate chart code, etc.).
     Catching it before ANY of those calls also avoids burning further tokens
     on a request that's going to be refused anyway. 0 means unlimited, which
@@ -2577,6 +2585,68 @@ async def chart(
     # match it against the history list on the next fetch, instead of waiting
     # for that fetch to find out what it just generated.
     return {"chart": chart_json, "chart_id": chart_id, "session_id": session_id}
+
+
+# -------------------- VOICE (push-to-talk) --------------------
+# A spoken question is transcribed here and then sent by the browser through
+# the ordinary /chat or /chart route, so it gets exactly the same pipeline,
+# auth and build scoping as a typed one. These two routes only convert
+# between speech and text - see services/voice.py.
+
+@app.post("/voice/transcribe")
+async def voice_transcribe(
+    audio: UploadFile = File(...),
+    x_workspace_id: Optional[str] = Header(None),
+    current_user: dict = Depends(get_current_user),
+):
+    _enforce_token_quota(current_user)
+    mime_type = (audio.content_type or "").split(";")[0].strip().lower()
+    if not mime_type.startswith("audio/"):
+        raise HTTPException(status_code=415, detail="Upload must be an audio recording.")
+    data = await audio.read(voice.MAX_AUDIO_BYTES + 1)
+    if len(data) > voice.MAX_AUDIO_BYTES:
+        raise HTTPException(status_code=413, detail="Recording is too long - keep questions under a minute.")
+    if not data:
+        raise HTTPException(status_code=422, detail="The recording was empty.")
+    try:
+        text = await voice.transcribe(
+            data,
+            mime_type,
+            user_id=current_user["username"],
+            workspace_id=_normalize_workspace(x_workspace_id, current_user),
+        )
+    except voice.VoiceNotConfigured as e:
+        raise HTTPException(status_code=503, detail=str(e)) from e
+    except voice.VoiceError as e:
+        raise HTTPException(status_code=502, detail=str(e)) from e
+    if not text:
+        raise HTTPException(status_code=422, detail="Didn't catch that - try again a little closer to the mic.")
+    return {"text": text}
+
+
+@app.post("/voice/speak")
+async def voice_speak(
+    request: VoiceSpeakRequest,
+    x_workspace_id: Optional[str] = Header(None),
+    current_user: dict = Depends(get_current_user),
+):
+    _enforce_token_quota(current_user)
+    try:
+        spoken_text, wav = await voice.speak(
+            request.text,
+            request.kind,
+            user_id=current_user["username"],
+            workspace_id=_normalize_workspace(x_workspace_id, current_user),
+        )
+    except voice.VoiceNotConfigured as e:
+        raise HTTPException(status_code=503, detail=str(e)) from e
+    except voice.VoiceError as e:
+        raise HTTPException(status_code=502, detail=str(e)) from e
+    return {
+        "spoken_text": spoken_text,
+        "audio": base64.b64encode(wav).decode("ascii"),
+        "mime_type": "audio/wav",
+    }
 
 @app.get("/chat/history/{session_id}")
 async def get_chat_history_endpoint(

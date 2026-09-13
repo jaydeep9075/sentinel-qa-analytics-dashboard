@@ -204,7 +204,7 @@ reintroduce Playwright-specific wording into the UI or the schemas.
   of hardcoding role-name checks. Not to be confused with `roles/*.md` (`role_manager.py`), which
   are LLM chat personas selected per-request via `x-role` — a completely different "role".
 - **Token quotas**: `users.token_limit` (0 = unlimited), enforced in `main._enforce_token_quota()`
-  at the top of `/chat` and `/chart`, checked *before* any LLM call. Compared against
+  at the top of `/chat`, `/chart` and `/voice/*`, checked *before* any LLM call. Compared against
   `token_usage_store.get_lifetime_total()` — account-wide across workspaces, not per-workspace.
 - **Audit log**: `services/audit_log.py`, append-only, `GET /admin/audit`. Records logins,
   registrations, user/role/settings edits, credential changes, build deletions.
@@ -272,6 +272,28 @@ prompt → chart_spec.parse()      intent: form, measure, dimension, breakdown,
   question, so it must be last, not first).
 - `handlers._dataset_facts()` computes sums/extremes/distributions over **all**
   rows and injects them, since only the first 50 rows are sent to the model.
+
+### Voice (push-to-talk)
+```
+🎤 MicButton → AudioWorklet (public/worklets/pcm-recorder.js) → 16 kHz WAV
+  → POST /voice/transcribe   Gemini flash-lite → question text
+  → the ordinary /chat or /chart call, unchanged
+  → POST /voice/speak        chat: condensed to ≤2 sentences; chart: its insight line
+                             → Gemini TTS → WAV → lib/voice.ts playVoice()
+```
+- **Voice converts speech ↔ text and nothing else.** A spoken question goes through
+  the same `/chat`/`/chart` pipeline, auth and build scoping as a typed one — don't
+  give `/voice/*` its own answering path.
+- `services/voice.py` calls Gemini through `google-genai` directly (litellm's text
+  messages can't carry audio in or out), but records usage through
+  `LLMClient._record_usage`, so voice counts toward quotas like everything else.
+- The key is the active LLM key when the provider is `gemini`, else `GEMINI_API_KEY`
+  / `GOOGLE_API_KEY` — never another provider's key.
+- Short chat answers (≤35 words) skip the summary call; chart insights are never summarised.
+- The mic needs a secure context: `localhost` works, a plain-HTTP IP hides the button.
+- Grew out of the sibling ADK voice-workshop POC folder (Google ADK + Gemini Live over WebSocket).
+  That duplex design was deliberately not ported: a Live model answers from its
+  own knowledge, and a WebSocket skips the HTTP auth middlewares.
 
 ### Data Storage
 - **LanceDB**: Vector embeddings for semantic search (historical context retrieval)
@@ -432,6 +454,9 @@ ROLES_ROOT           # Path to roles/ directory
 INGEST_MAX_FILE_SIZE_BYTES # Max ingestion file size (default 200MB)
 INGEST_MAX_ROWS      # Max rows to ingest (default 500k)
 INGEST_TIMEOUT_SECONDS # Ingestion timeout (default 600s)
+VOICE_TEXT_MODEL     # Transcription + spoken summary (default gemini-3.5-flash-lite)
+VOICE_TTS_MODEL      # Spoken reply (default gemini-3.1-flash-tts-preview)
+VOICE_TTS_VOICE      # Gemini prebuilt voice (default Kore)
 ```
 
 **Test repo (live execution)** — set in the repo running the tests, not here:

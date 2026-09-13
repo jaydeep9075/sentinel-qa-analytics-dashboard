@@ -102,7 +102,7 @@ server {
     }
 
     # Everything else the frontend doesn't own is the backend API.
-    location ~ ^/(health|auth|ingest|chat|chart|data|dashboard|debug|ingestions|suggestions|feedback|projects|roles|test|usage)(/|$) {
+    location ~ ^/(health|auth|ingest|chat|chart|data|dashboard|debug|ingestions|suggestions|feedback|projects|roles|test|usage|voice)(/|$) {
         proxy_pass http://127.0.0.1:8000;
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;

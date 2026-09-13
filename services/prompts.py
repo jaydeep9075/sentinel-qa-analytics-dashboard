@@ -439,6 +439,41 @@ CHAT_RELEASE_VERDICT = """📊 **Release Readiness Report**
 
 
 # ---------------------------------------------------------------------------
+# VOICE – TRANSCRIPTION AND SPOKEN SUMMARY (services/voice.py)
+# ---------------------------------------------------------------------------
+
+VOICE_TRANSCRIBE_PROMPT = """Transcribe the spoken question in this audio recording.
+
+The speaker is asking a QA test-analytics dashboard about its test results, so expect
+terms like: build, test case, test suite, pass rate, fail rate, failed, broken, skipped,
+flaky, retries, duration, regression, smoke, sanity, P1, P2, severity, release readiness,
+Allure, Playwright, Cypress.
+
+Rules:
+- Output ONLY the words spoken, as one plain line of text. No quotes, labels or commentary.
+- Keep the speaker's wording; drop only filler ("um", "uh") and false starts.
+- Write numbers as digits.
+- If there is no intelligible speech, output exactly: NO_SPEECH"""
+
+
+VOICE_SUMMARY_PROMPT = """The text below is a written answer from a QA analytics assistant.
+Rewrite it as a short reply that a text-to-speech voice will read aloud.
+
+Rules:
+- One or two sentences, at most 35 words.
+- Lead with the single most important figure or conclusion.
+- Plain spoken English: no markdown, bullets, emoji, tables or URLs.
+- Say numbers the way a person would ("about 92 percent", "14 failed tests").
+- Use only facts stated in the answer; never add new ones.
+- If the answer is an error or says the data is unavailable, say that briefly.
+
+WRITTEN ANSWER:
+{answer}
+
+SPOKEN REPLY:"""
+
+
+# ---------------------------------------------------------------------------
 # CHART – SQL PROMPT
 # ---------------------------------------------------------------------------
 
