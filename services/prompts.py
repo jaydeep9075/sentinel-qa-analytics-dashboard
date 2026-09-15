@@ -234,6 +234,10 @@ RESPONSE_QUALITY_HINTS:
 - Avoid SELECT * unless necessary; include only relevant columns
 - Use aliases for clarity (e.g., AS total_failures, AS pct_failed)
 - Order results in ways that reveal patterns (DESC for impact metrics)
+- The question may be in any language. Understand it in that language, but
+  keep the SQL itself in English — column and table names are fixed. Only
+  action="answer" text is read by the user, and that must be written in the
+  same language and script as the question.
 
 Return ONLY this JSON (no markdown, no explanation), in one of these shapes:
 {{"action":"sql","data":"SELECT ..."}}
@@ -258,6 +262,14 @@ WHOLE-RESULT FACTS (computed over ALL {row_count} rows — these are exact):
 
 SAMPLE ROWS (may be a subset of the full result):
 {data_json}
+
+=== LANGUAGE ===
+Reply in the same language the USER QUESTION is written in, in that language's
+own script. A question asked in Hindi is answered in Hindi, one asked in
+Spanish in Spanish. If the question mixes languages, use the one most of it is
+in. Names that exist only in the data - tests, modules, projects, suites,
+browsers, tools - are identifiers: reproduce them exactly as they appear,
+never translated or transliterated.
 
 === HOW TO ANSWER ===
 
@@ -325,6 +337,8 @@ RESULTS:
 {result_blocks}
 
 === HOW TO ANSWER ===
+- Reply in the same language and script the USER QUESTION is written in, never
+  translating test, module, project or tool names.
 - Answer the question as ONE coherent response, not a list of query dumps. The
   labels are for you, not the reader — don't echo them as headings unless they
   genuinely help.
@@ -442,28 +456,41 @@ CHAT_RELEASE_VERDICT = """📊 **Release Readiness Report**
 # VOICE – TRANSCRIPTION AND SPOKEN SUMMARY (services/voice.py)
 # ---------------------------------------------------------------------------
 
-VOICE_TRANSCRIBE_PROMPT = """Transcribe the spoken question in this audio recording.
+VOICE_TRANSCRIBE_PROMPT = """You are transcribing a spoken question put to a QA
+test-analytics dashboard. Return JSON with exactly two fields.
 
-The speaker is asking a QA test-analytics dashboard about its test results, so expect
-terms like: build, test case, test suite, pass rate, fail rate, failed, broken, skipped,
-flaky, retries, duration, regression, smoke, sanity, P1, P2, severity, release readiness,
-Allure, Playwright, Cypress.
+"language": the BCP-47 tag of the language actually SPOKEN - "en-US", "hi-IN",
+"es-ES", "fr-FR", "de-DE", "ja-JP", "ko-KR", "pt-BR", "ar-EG", "ta-IN",
+"mr-IN", "zh-CN" and so on. Judge it from the speech, not from any English
+technical terms inside it.
 
-Rules:
-- Output ONLY the words spoken, as one plain line of text. No quotes, labels or commentary.
-- Keep the speaker's wording; drop only filler ("um", "uh") and false starts.
+"text": what was said. Rules:
+- Transcribe in the language spoken, in that language's own script. Never
+  translate, and never romanise a non-Latin script.
+- Code-switching is normal here. English product and QA terms spoken inside
+  another language stay in English ("pass rate", "smoke suite", "Playwright"),
+  while the words around them keep their own script.
+- Keep the speaker's wording; drop only fillers ("um", "uh") and false starts.
 - Write numbers as digits.
-- If there is no intelligible speech, output exactly: NO_SPEECH"""
+- Expect this vocabulary, in any language's accent: build, test case, test
+  suite, pass rate, fail rate, failed, broken, skipped, flaky, retries,
+  duration, regression, smoke, sanity, P1, P2, severity, release readiness,
+  Allure, Playwright, Cypress.
+- If there is no intelligible speech, set "text" to exactly: NO_SPEECH"""
 
 
 VOICE_SUMMARY_PROMPT = """The text below is a written answer from a QA analytics assistant.
 Rewrite it as a short reply that a text-to-speech voice will read aloud.
 
 Rules:
-- One or two sentences, at most 35 words.
+- Write in the SAME LANGUAGE and script as the written answer. Never translate it.
+- One or two sentences, at most 35 words - or the equivalent length in a
+  language that isn't counted in words.
 - Lead with the single most important figure or conclusion.
-- Plain spoken English: no markdown, bullets, emoji, tables or URLs.
-- Say numbers the way a person would ("about 92 percent", "14 failed tests").
+- Plain spoken prose: no markdown, bullets, emoji, tables or URLs.
+- Say numbers the way a speaker of that language would say them out loud.
+- Leave test, module, project and tool names (Playwright, Allure, Checkout)
+  exactly as written - they are identifiers, not words to translate.
 - Use only facts stated in the answer; never add new ones.
 - If the answer is an error or says the data is unavailable, say that briefly.
 

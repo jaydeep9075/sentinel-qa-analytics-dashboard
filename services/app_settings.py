@@ -8,27 +8,31 @@ container is already running with those values by the time any UI could
 change them - genuinely runtime-editable settings are the narrow exception,
 not the rule. See WORKLOG.md item 5 for why this split exists.
 
-Resolution order for every field is **database > env > built-in default**:
+Resolution order for every field is **newest author wins**, between two of
+them: the operator editing .env, and an admin editing the Settings tab.
 
-  * database is what the admin Settings tab writes, and always wins once set.
-    This is deliberate: a Docker image is meant to ship with nothing
-    preconfigured, and whatever an admin sets from the UI - including
-    switching providers/models later, or rotating SECRET_KEY - has to stick
-    even if .env still has an old value sitting in it from how the container
-    was first brought up. Nothing here is "locked" by env anymore.
-  * env is the seed for a fresh deployment that hasn't been configured from
-    the UI yet (or is intentionally pinned via infra and never will be -
-    nothing forces you to use the admin UI, env still works exactly as
-    before if you just never touch Settings).
+  * When an admin saves, the value is stored along with a snapshot of what
+    .env said for that field at that moment. The saved value keeps winning
+    for as long as .env still says the same thing.
+  * When .env is changed to anything else, that snapshot no longer matches,
+    so the operator is the more recent author and env takes over again.
   * default is config.py's per-provider table (gemini/openai/anthropic/ollama
     default models) for LLM fields, or the auto-generated state/secret_key
     file for SECRET_KEY (config.SECRET_KEY already resolves that tier).
 
-The one wrinkle database>env>default doesn't cover on its own: the env-
-resolved API key was historically computed against whichever provider
-LLM_PROVIDER named at startup. If the admin changes the *provider* through
-this module, the key has to be re-resolved against the NEW effective
-provider, not the old one - see config.resolve_api_key_for_provider().
+This replaced a flat "database always wins once set", which made editing
+.env a silent no-op forever after the first visit to the Settings tab - the
+value in the file and the value in use simply disagreed, with nothing on
+screen explaining why.
+
+Note that config.py reads the environment once at import, so a .env edit
+takes effect on the next restart, not immediately.
+
+The one wrinkle this doesn't cover on its own: the env-resolved API key was
+historically computed against whichever provider LLM_PROVIDER named at
+startup. If the admin changes the *provider* through this module, the key has
+to be re-resolved against the NEW effective provider, not the old one - see
+config.resolve_api_key_for_provider().
 """
 
 import logging
@@ -43,6 +47,9 @@ from . import config
 logger = logging.getLogger(__name__)
 
 _KEYS = ("llm_provider", "llm_model", "llm_api_key", "llm_api_base")
+# Stored beside each saved field: what .env said for it when the admin saved.
+# Comparing that against .env now is what tells the two authors apart.
+_ENV_SNAPSHOT_SUFFIX = "__env_at_save"
 
 
 class Base(DeclarativeBase):
@@ -86,6 +93,33 @@ def _set_raw(key: str, value: str, updated_by: str) -> None:
         session.commit()
 
 
+def _env_value(key: str, provider: str = "") -> str:
+    """What .env currently says for one LLM field, or "" if it says nothing.
+
+    Everything but the key is read once at import by config.py; the API key is
+    resolved per call because which variable holds it depends on `provider`.
+    """
+    if key == "llm_provider":
+        return config.LLM_PROVIDER if config.LLM_PROVIDER_FROM_ENV else ""
+    if key == "llm_model":
+        return config.LLM_MODEL if config.LLM_MODEL_FROM_ENV else ""
+    if key == "llm_api_base":
+        return config.LLM_API_BASE if config.LLM_API_BASE_FROM_ENV else ""
+    if key == "llm_api_key":
+        return config.resolve_api_key_for_provider(provider)
+    return ""
+
+
+def _pick(key: str, env_now: str) -> tuple:
+    """(value, source) for one field, newest author winning."""
+    db_value = _get_raw(key)
+    if db_value and (_get_raw(key + _ENV_SNAPSHOT_SUFFIX) or "") == env_now:
+        return db_value, "database"
+    if env_now:
+        return env_now, "env"
+    return "", "default"
+
+
 def mask_api_key(key: str) -> str:
     """Never return a usable credential over the API. Shows just enough to
     confirm which key is configured without letting a network capture (or a
@@ -106,46 +140,23 @@ def get_llm_settings(include_secret: bool = False) -> Dict[str, object]:
     that actually calls the LLM - llm_client.py); every API response instead
     uses the masked form from mask_api_key().
     """
-    db_provider = _get_raw("llm_provider")
-    db_model = _get_raw("llm_model")
-    db_api_key = _get_raw("llm_api_key")
-    db_api_base = _get_raw("llm_api_base")
-
-    if db_provider:
-        provider, provider_source = db_provider, "database"
-    elif config.LLM_PROVIDER_FROM_ENV:
-        provider, provider_source = config.LLM_PROVIDER, "env"
-    else:
+    provider, provider_source = _pick("llm_provider", _env_value("llm_provider"))
+    if not provider:
         provider, provider_source = config.LLM_PROVIDER, "default"
 
-    if db_model:
-        model, model_source = db_model, "database"
-    elif config.LLM_MODEL_FROM_ENV:
-        model, model_source = config.LLM_MODEL, "env"
-    else:
+    model, model_source = _pick("llm_model", _env_value("llm_model"))
+    if not model:
         model, model_source = config.default_model_for(provider), "default"
 
     # Re-resolved against the EFFECTIVE provider, not the startup-time one -
     # see the module docstring.
-    env_key_for_provider = config.resolve_api_key_for_provider(provider)
-    if db_api_key:
-        api_key, api_key_source = db_api_key, "database"
-    elif env_key_for_provider:
-        api_key, api_key_source = env_key_for_provider, "env"
-    else:
-        api_key, api_key_source = "", "default"
-
-    if db_api_base:
-        api_base, api_base_source = db_api_base, "database"
-    elif config.LLM_API_BASE_FROM_ENV:
-        api_base, api_base_source = config.LLM_API_BASE, "env"
-    else:
-        api_base, api_base_source = "", "default"
+    api_key, api_key_source = _pick("llm_api_key", _env_value("llm_api_key", provider))
+    api_base, api_base_source = _pick("llm_api_base", _env_value("llm_api_base"))
 
     result = {
         "provider": provider,
-        # Nothing is env-locked anymore (database always wins once set) -
-        # kept as a field for frontend compatibility, always False now.
+        # Nothing is env-locked: either author can take over, whichever
+        # changed its value most recently.
         "provider_locked": False,
         "provider_source": provider_source,
         "model": model,
@@ -184,16 +195,39 @@ def update_llm_settings(
     would have failed at boot instead fails immediately, in this call, before
     it's saved.
     """
+    written = []
     if provider is not None:
         _set_raw("llm_provider", provider.strip().lower(), updated_by)
+        written.append("llm_provider")
     if model is not None:
         _set_raw("llm_model", model.strip(), updated_by)
+        written.append("llm_model")
     if api_base is not None:
         _set_raw("llm_api_base", api_base.strip(), updated_by)
+        written.append("llm_api_base")
     if clear_api_key:
         _set_raw("llm_api_key", "", updated_by)
+        written.append("llm_api_key")
     elif api_key is not None and api_key.strip():
         _set_raw("llm_api_key", api_key.strip(), updated_by)
+        written.append("llm_api_key")
+
+    # Stamp each saved field with what .env says for it now, so that a later
+    # .env edit reads as the newer authority and takes back over. Only fields
+    # touched by this call are stamped - re-stamping the others would quietly
+    # swallow an unrelated .env change the operator has already made.
+    for key in written:
+        if key != "llm_api_key":
+            _set_raw(key + _ENV_SNAPSHOT_SUFFIX, _env_value(key), updated_by)
+    if "llm_api_key" in written:
+        # Which env var holds the key depends on the provider that is
+        # effective after the writes above, so this one is stamped last.
+        effective_provider = str(get_llm_settings()["provider"])
+        _set_raw(
+            "llm_api_key" + _ENV_SNAPSHOT_SUFFIX,
+            _env_value("llm_api_key", effective_provider),
+            updated_by,
+        )
 
     updated = get_llm_settings(include_secret=True)
     config.validate_llm_config(

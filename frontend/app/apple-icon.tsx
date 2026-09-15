@@ -1,3 +1,4 @@
+
 import { ImageResponse } from "next/og";
 
 /** iOS home-screen icon — same TR mark as icon.tsx, at Apple's touch-icon size. */

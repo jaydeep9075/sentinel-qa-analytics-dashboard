@@ -6,12 +6,35 @@
 // new answer always cuts off the previous one and audio survives the panel
 // that asked for it closing.
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
+import { fetchVoiceCapabilities, speakText } from "@/lib/api";
 
 const TARGET_RATE = 16000;
 const MAX_RECORDING_MS = 60_000;
 // Anything shorter is an accidental double-tap, not a question.
 const MIN_RECORDING_SECONDS = 0.3;
 const FLUSH_TIMEOUT_MS = 300;
+
+// ── silence detection ───────────────────────────────────────────────────────
+//
+// So a question ends itself. Having to tap a second time means the speaker
+// has to think about the button while they are still thinking about the
+// question, and every turn carries however long it takes them to notice they
+// have finished. The worklet already hands whole blocks of samples to the
+// main thread, so the loudness check rides along on those rather than costing
+// a second message or a second node in the graph.
+
+// Quiet for this long, once something has actually been said, ends it. Long
+// enough to survive the pause mid-sentence that a person takes to think.
+const SILENCE_HOLD_MS = 1300;
+// Nothing said at all by now: the mic is muted, or the tap was a misfire.
+const NO_SPEECH_TIMEOUT_MS = 7000;
+const WATCHDOG_TICK_MS = 150;
+// An absolute floor under the adaptive threshold, so a silent room can't
+// lower it until the speaker's own breathing counts as talking.
+const MIN_SPEECH_RMS = 0.01;
+// Speech has to be this many times the room's own noise to count, which is
+// what lets this work next to a fan or in an open office.
+const NOISE_MARGIN = 3.5;
 
 export function isVoiceSupported(): boolean {
   return (
@@ -85,24 +108,104 @@ type RecordingSession = {
   node: AudioWorkletNode;
   chunks: Float32Array[];
   onFlushed: (() => void) | null;
-  timer: ReturnType<typeof setTimeout>;
+  watchdog: ReturnType<typeof setInterval> | null;
+  startedAt: number;
+  /** A running estimate of the room with nobody talking. */
+  noiseFloor: number;
+  heardSpeech: boolean;
+  lastVoiceAt: number;
 };
 
+function rootMeanSquare(samples: Float32Array): number {
+  let total = 0;
+  for (let i = 0; i < samples.length; i++) total += samples[i] * samples[i];
+  return Math.sqrt(total / Math.max(1, samples.length));
+}
+
+/** Fold one block of microphone samples into the is-anyone-talking state. */
+function observeLevel(session: RecordingSession, samples: Float32Array): void {
+  const level = rootMeanSquare(samples);
+  // Drops to a new quiet immediately but climbs back slowly, so a passing
+  // noise raises the bar without a moment of silence resetting it.
+  session.noiseFloor =
+    level < session.noiseFloor ? level : session.noiseFloor * 0.98 + level * 0.02;
+  if (level > Math.max(MIN_SPEECH_RMS, session.noiseFloor * NOISE_MARGIN)) {
+    session.heardSpeech = true;
+    session.lastVoiceAt = Date.now();
+  }
+}
+
+/** Whether the recording has run its course, for whichever of the three
+ * reasons: the speaker finished, never started, or ran past the cap. */
+function shouldAutoStop(session: RecordingSession, now: number): boolean {
+  if (now - session.startedAt > MAX_RECORDING_MS) return true;
+  if (!session.heardSpeech) return now - session.startedAt > NO_SPEECH_TIMEOUT_MS;
+  return now - session.lastVoiceAt > SILENCE_HOLD_MS;
+}
+
+let sharedContext: AudioContext | null = null;
+let workletReady: Promise<void> | null = null;
+// Chat and chart each render their own mic, so more than one recorder can be
+// live on the shared context at a time.
+let activeRecordings = 0;
+
+/**
+ * The one AudioContext every recording runs on.
+ *
+ * Building a context and compiling the worklet costs a few hundred
+ * milliseconds, and on push-to-talk that lands exactly between the tap and
+ * the microphone actually listening - the window in which the first word of a
+ * question gets clipped. Keeping both alive makes every tap after the first
+ * start instantly.
+ */
+async function recordingContext(): Promise<AudioContext> {
+  if (!sharedContext || sharedContext.state === "closed") {
+    sharedContext = new AudioContext();
+    workletReady = sharedContext.audioWorklet.addModule("/worklets/pcm-recorder.js");
+  }
+  try {
+    await workletReady;
+  } catch (error) {
+    // A failed compile would otherwise be cached and rethrown forever.
+    sharedContext = null;
+    workletReady = null;
+    throw error;
+  }
+  if (sharedContext.state === "suspended") await sharedContext.resume();
+  return sharedContext;
+}
+
+/** Build the context ahead of the click that needs it. Safe to call often and
+ * from any user gesture; failures are the caller's problem to surface later. */
+export function warmUpVoiceRecorder(): void {
+  void recordingContext().catch(() => {});
+}
+
 function teardown(session: RecordingSession) {
-  clearTimeout(session.timer);
+  if (session.watchdog) clearInterval(session.watchdog);
+  session.watchdog = null;
   session.node.port.onmessage = null;
   session.source.disconnect();
   session.node.disconnect();
   session.stream.getTracks().forEach((track) => track.stop());
-  void session.context.close().catch(() => {});
+  activeRecordings = Math.max(0, activeRecordings - 1);
+  // The context is shared and deliberately kept alive. Suspending parks the
+  // audio thread without throwing away the compiled worklet; the microphone
+  // itself is released by stopping the tracks above, which is what clears the
+  // browser's recording indicator.
+  if (activeRecordings === 0) void session.context.suspend().catch(() => {});
 }
 
 /**
- * Tap-to-start / tap-to-stop microphone capture.
+ * Hands-free microphone capture: tap to start, then just stop talking.
+ *
+ * `onAutoStop` fires once the speaker has finished - a short silence after
+ * speech, nothing said at all, or the 60 s cap - so the caller can finish the
+ * recording exactly as a second tap would. Tapping again still works, for
+ * anyone who would rather not wait out the pause.
  *
  * `stop()` resolves to a 16 kHz WAV, or null when the recording was too short
- * to hold a question. `onAutoStop` fires when the 60 s cap is reached so the
- * caller can finish the recording the same way a second tap would.
+ * to hold a question.
  */
 export function useVoiceRecorder({ onAutoStop }: { onAutoStop?: () => void } = {}) {
   const sessionRef = useRef<RecordingSession | null>(null);
@@ -115,14 +218,14 @@ export function useVoiceRecorder({ onAutoStop }: { onAutoStop?: () => void } = {
 
   const start = useCallback(async () => {
     if (sessionRef.current) return;
+    // The context first: getUserMedia is the slow, permission-gated half, and
+    // starting it only once the graph is ready keeps the mic from listening
+    // to a moment nothing is recording.
+    const context = await recordingContext();
     const stream = await navigator.mediaDevices.getUserMedia({
       audio: { echoCancellation: true, noiseSuppression: true, channelCount: 1 },
     });
-    let context: AudioContext | null = null;
     try {
-      context = new AudioContext();
-      await context.audioWorklet.addModule("/worklets/pcm-recorder.js");
-      await context.resume();
       const source = context.createMediaStreamSource(stream);
       const node = new AudioWorkletNode(context, "pcm-recorder");
       const session: RecordingSession = {
@@ -132,21 +235,38 @@ export function useVoiceRecorder({ onAutoStop }: { onAutoStop?: () => void } = {
         node,
         chunks: [],
         onFlushed: null,
-        timer: setTimeout(() => onAutoStopRef.current?.(), MAX_RECORDING_MS),
+        watchdog: null,
+        startedAt: Date.now(),
+        // Starts high so the first blocks pull it down to the real room
+        // rather than the first word setting the bar for the rest.
+        noiseFloor: 1,
+        heardSpeech: false,
+        lastVoiceAt: Date.now(),
       };
       node.port.onmessage = (event: MessageEvent) => {
-        if (event.data instanceof Float32Array) session.chunks.push(event.data);
-        else if (event.data?.done) session.onFlushed?.();
+        if (event.data instanceof Float32Array) {
+          session.chunks.push(event.data);
+          observeLevel(session, event.data);
+        } else if (event.data?.done) session.onFlushed?.();
       };
+      session.watchdog = setInterval(() => {
+        if (!shouldAutoStop(session, Date.now())) return;
+        // Cleared before handing over, because finishing is asynchronous and
+        // this would otherwise fire again while it is in progress.
+        if (session.watchdog) clearInterval(session.watchdog);
+        session.watchdog = null;
+        onAutoStopRef.current?.();
+      }, WATCHDOG_TICK_MS);
       source.connect(node);
       // The processor writes no output, so this is silent; it only keeps the
       // node in the rendered graph so process() keeps being called.
       node.connect(context.destination);
       sessionRef.current = session;
+      activeRecordings += 1;
       setIsRecording(true);
     } catch (error) {
       stream.getTracks().forEach((track) => track.stop());
-      void context?.close().catch(() => {});
+      if (activeRecordings === 0) void context.suspend().catch(() => {});
       throw error;
     }
   }, []);
@@ -166,10 +286,13 @@ export function useVoiceRecorder({ onAutoStop }: { onAutoStop?: () => void } = {
       session.node.port.postMessage("flush");
     });
     const inputRate = session.context.sampleRate;
+    const heardSpeech = session.heardSpeech;
     teardown(session);
 
     const total = session.chunks.reduce((sum, chunk) => sum + chunk.length, 0);
-    if (total < inputRate * MIN_RECORDING_SECONDS) return null;
+    // Nothing above the room's own noise: uploading seven seconds of a muted
+    // microphone would only buy a slower way of saying the same thing.
+    if (!heardSpeech || total < inputRate * MIN_RECORDING_SECONDS) return null;
     const merged = new Float32Array(total);
     let offset = 0;
     for (const chunk of session.chunks) {
@@ -209,6 +332,11 @@ export function stopVoice() {
     currentAudio.pause();
     currentAudio.src = "";
     currentAudio = null;
+  }
+  // The browser engine is a separate player with its own queue, so silencing
+  // one without the other would leave an answer still talking.
+  if (typeof window !== "undefined" && "speechSynthesis" in window) {
+    window.speechSynthesis.cancel();
   }
   setPlaying(null);
 }
@@ -250,4 +378,201 @@ export function useVoicePlayback(): string | null {
     () => playingId,
     () => null,
   );
+}
+
+// ── browser speech ──────────────────────────────────────────────────────────
+//
+// The fallback for deployments whose LLM has no speech API at all - Claude,
+// or a local Ollama. Both halves run in the browser, need no key and cost
+// nothing, so the mic keeps working whatever LLM_PROVIDER is set to. Quality
+// is below a hosted speech model, which is why it is only used when the
+// server says it has no vendor of its own.
+
+type RecognitionEvent = {
+  results: ArrayLike<ArrayLike<{ transcript: string }>>;
+};
+type RecognitionLike = {
+  lang: string;
+  continuous: boolean;
+  interimResults: boolean;
+  maxAlternatives: number;
+  start(): void;
+  stop(): void;
+  abort(): void;
+  onresult: ((event: RecognitionEvent) => void) | null;
+  onerror: ((event: { error?: string }) => void) | null;
+  onend: (() => void) | null;
+};
+
+function recognitionConstructor(): (new () => RecognitionLike) | null {
+  if (typeof window === "undefined") return null;
+  const scope = window as unknown as Record<string, unknown>;
+  const ctor = scope.SpeechRecognition || scope.webkitSpeechRecognition;
+  return (ctor as (new () => RecognitionLike) | undefined) ?? null;
+}
+
+export function isBrowserSpeechInputSupported(): boolean {
+  return recognitionConstructor() !== null;
+}
+
+export function isBrowserSpeechOutputSupported(): boolean {
+  return typeof window !== "undefined" && "speechSynthesis" in window;
+}
+
+/**
+ * Listen until the speaker stops talking, then resolve with what was heard.
+ *
+ * `onAutoStop` fires when the engine ended the turn by itself, so the caller
+ * can pick the transcript up without a second tap - the same hands-free shape
+ * the server path gets from its own silence detection. Calling `stop()`
+ * suppresses it, since the caller is already finishing.
+ *
+ * No language is given, so the engine uses the page's own - browsers won't
+ * auto-detect across languages the way a hosted model does. The transcript's
+ * language is reported back as "" and everything downstream infers it from
+ * the words instead.
+ */
+export function listenWithBrowser(onAutoStop?: () => void): {
+  stop: () => void;
+  heard: Promise<string>;
+} {
+  const Recognition = recognitionConstructor();
+  if (!Recognition) {
+    return { stop: () => {}, heard: Promise.reject(new Error("This browser cannot listen.")) };
+  }
+  const recognition = new Recognition();
+  // false is what makes the engine end the turn on its own once the speaker
+  // pauses; with it on, the recording only ever ends when told to.
+  recognition.continuous = false;
+  recognition.interimResults = false;
+  recognition.maxAlternatives = 1;
+  recognition.lang = typeof navigator !== "undefined" ? navigator.language || "en-US" : "en-US";
+
+  const pieces: string[] = [];
+  let stoppedByCaller = false;
+  // Assigned synchronously by the executor below; `!` because TypeScript's
+  // flow analysis can't see that.
+  let settle!: (value: string) => void;
+  let fail!: (error: Error) => void;
+
+  const heard = new Promise<string>((resolve, reject) => {
+    settle = resolve;
+    fail = reject;
+  });
+
+  recognition.onresult = (event) => {
+    for (let i = 0; i < event.results.length; i++) {
+      const alternative = event.results[i]?.[0];
+      if (alternative?.transcript) pieces.push(alternative.transcript);
+    }
+  };
+  recognition.onerror = (event) => {
+    const code = event?.error || "";
+    if (code === "no-speech" || code === "aborted") return;
+    fail(new Error(code === "not-allowed" ? "Microphone access is blocked." : "Could not hear that."));
+  };
+  recognition.onend = () => {
+    settle(pieces.join(" ").replace(/\s+/g, " ").trim());
+    if (!stoppedByCaller) onAutoStop?.();
+  };
+
+  try {
+    recognition.start();
+  } catch (error) {
+    fail(error instanceof Error ? error : new Error("Could not start listening."));
+  }
+  return {
+    stop: () => {
+      stoppedByCaller = true;
+      recognition.stop();
+    },
+    heard,
+  };
+}
+
+const LINK_RE = /\[([^\]]+)\]\([^)]*\)/g;
+const EMOJI_RE = /[\u{1F000}-\u{1FAFF}\u2600-\u27BF\u2B00-\u2BFF\uFE0F\u200D]/gu;
+const BULLET_RE = /^\s*(?:[-•]|\d+[.)])\s+/gm;
+const MARKDOWN_RE = /[*_`#>|~]+/g;
+
+/** Strip what a speech voice would read out literally. Mirrors
+ * services/voice.py's plain_speech(), which the server path applies for us. */
+export function plainSpeech(text: string): string {
+  return (text || "")
+    .replace(LINK_RE, "$1")
+    .replace(EMOJI_RE, "")
+    .replace(BULLET_RE, "")
+    .replace(MARKDOWN_RE, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function pickVoice(language: string): SpeechSynthesisVoice | null {
+  if (!language) return null;
+  const wanted = language.toLowerCase();
+  const base = wanted.split("-")[0];
+  const voices = window.speechSynthesis.getVoices();
+  return (
+    voices.find((v) => v.lang?.toLowerCase() === wanted) ||
+    voices.find((v) => v.lang?.toLowerCase().startsWith(base)) ||
+    null
+  );
+}
+
+/** Read `text` aloud with the browser's own engine, under the same
+ * playing-state as the server path so one Stop button covers both. */
+export function speakWithBrowser(text: string, language: string, id: string): Promise<void> {
+  return new Promise((resolve, reject) => {
+    if (!isBrowserSpeechOutputSupported()) {
+      reject(new Error("This browser cannot speak."));
+      return;
+    }
+    stopVoice();
+    const utterance = new SpeechSynthesisUtterance(text);
+    if (language) utterance.lang = language;
+    const voice = pickVoice(language);
+    if (voice) utterance.voice = voice;
+
+    const finish = () => {
+      if (playingId === id) setPlaying(null);
+      resolve();
+    };
+    utterance.onend = finish;
+    utterance.onerror = finish;
+    setPlaying(id);
+    window.speechSynthesis.speak(utterance);
+  });
+}
+
+/**
+ * Say an answer out loud, whichever half of the system can do it.
+ *
+ * Callers don't need to know which: the server's vendor is used when there is
+ * one, and the browser's engine when there isn't - or when the vendor is
+ * configured but not answering. That last case is why the fallback is here
+ * and not only in the capabilities check: a retired speech model, an expired
+ * key or a quota that ran out mid-session all leave the server saying it can
+ * speak right up until it is asked to, and silently reading the answer with
+ * the browser's own voice is a far better outcome than an error toast.
+ */
+export async function speakAnswer(
+  text: string,
+  kind: "chat" | "chart",
+  language: string | undefined,
+  id: string,
+): Promise<void> {
+  const capabilities = await fetchVoiceCapabilities();
+  if (capabilities.mode === "server") {
+    try {
+      const { audio } = await speakText(text, kind, language);
+      await playVoice(audio, id);
+      return;
+    } catch (error) {
+      if (!isBrowserSpeechOutputSupported()) throw error;
+      console.warn("Server speech failed; using the browser's voice instead.", error);
+    }
+  }
+  const spoken = plainSpeech(text);
+  if (!spoken) throw new Error("There is nothing to say for this answer.");
+  await speakWithBrowser(spoken, language || "", id);
 }

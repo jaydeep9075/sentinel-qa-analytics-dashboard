@@ -70,6 +70,12 @@ _PERF_PATH_PREFIXES = (
     "/data/tests",
     "/ingestions",
     "/chart/history/",
+    # The model-backed routes. These are the slowest things the app does and
+    # the only ones a user waits on mid-sentence, so their timings belong in
+    # the log by default rather than behind a debug flag.
+    "/chat",
+    "/chart",
+    "/voice/",
 )
 
 def _get_test_results_table() -> str:
@@ -105,6 +111,10 @@ class VoiceSpeakRequest(BaseModel):
     # "chart" speaks the text as-is (a chart's one-line insight); "chat"
     # condenses a long written answer first.
     kind: Literal["chat", "chart"] = "chat"
+    # BCP-47 tag from /voice/transcribe, so the reply is spoken in the
+    # language the question was asked in. Validated in services.voice, which
+    # drops anything the speech model would reject.
+    language: Optional[str] = Field(None, max_length=voice.MAX_LANGUAGE_CHARS)
 
 class IngestRequest(BaseModel):
     source_path: str
@@ -2593,6 +2603,17 @@ async def chart(
 # auth and build scoping as a typed one. These two routes only convert
 # between speech and text - see services/voice.py.
 
+@app.get("/voice/capabilities")
+async def voice_capabilities(current_user: dict = Depends(get_current_user)):
+    """Whether the server can do the speech, or the browser should.
+
+    Asked before the mic is wired up: with no speech vendor configured - a
+    Claude-only deployment, say - the browser's own speech engine takes over
+    rather than the feature disappearing.
+    """
+    return voice.capabilities()
+
+
 @app.post("/voice/transcribe")
 async def voice_transcribe(
     audio: UploadFile = File(...),
@@ -2609,7 +2630,7 @@ async def voice_transcribe(
     if not data:
         raise HTTPException(status_code=422, detail="The recording was empty.")
     try:
-        text = await voice.transcribe(
+        transcript = await voice.transcribe(
             data,
             mime_type,
             user_id=current_user["username"],
@@ -2619,9 +2640,10 @@ async def voice_transcribe(
         raise HTTPException(status_code=503, detail=str(e)) from e
     except voice.VoiceError as e:
         raise HTTPException(status_code=502, detail=str(e)) from e
-    if not text:
+    if not transcript.text:
         raise HTTPException(status_code=422, detail="Didn't catch that - try again a little closer to the mic.")
-    return {"text": text}
+    # The language travels with the text so the spoken reply comes back in it.
+    return {"text": transcript.text, "language": transcript.language}
 
 
 @app.post("/voice/speak")
@@ -2637,6 +2659,7 @@ async def voice_speak(
             request.kind,
             user_id=current_user["username"],
             workspace_id=_normalize_workspace(x_workspace_id, current_user),
+            language=request.language or "",
         )
     except voice.VoiceNotConfigured as e:
         raise HTTPException(status_code=503, detail=str(e)) from e

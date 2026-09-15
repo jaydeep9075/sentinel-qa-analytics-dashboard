@@ -319,8 +319,51 @@ function errorDetail(data: { detail?: unknown } | null, fallback: string): strin
   return typeof data?.detail === "string" && data.detail ? data.detail : fallback;
 }
 
-/** A recorded question (WAV) as text, via Gemini. */
-export async function transcribeAudio(audio: Blob): Promise<string> {
+/** A recorded question as text, plus the language it was spoken in. */
+export type VoiceTranscript = { text: string; language: string };
+
+/** Whether the server has a speech vendor, or the browser must do it itself. */
+export type VoiceCapabilities = { mode: "server" | "browser"; provider: string | null };
+
+let voiceCapabilities: Promise<VoiceCapabilities> | null = null;
+
+/** Cached for the session: the answer only changes when an admin reconfigures
+ * the provider, and the mic asks for it on every render. */
+export function fetchVoiceCapabilities(): Promise<VoiceCapabilities> {
+  if (!voiceCapabilities) {
+    voiceCapabilities = (async () => {
+      try {
+        const res = await fetch(`${API_BASE}/voice/capabilities`, { headers: getAuthHeaders() });
+        if (!res.ok) throw new Error(String(res.status));
+        const data = await res.json();
+        return data?.mode === "server"
+          ? { mode: "server" as const, provider: data.provider ?? null }
+          : { mode: "browser" as const, provider: null };
+      } catch {
+        // Unreachable backend is not a reason to hide the mic - the browser
+        // can still do the speech on its own.
+        return { mode: "browser" as const, provider: null };
+      }
+    })();
+  }
+  return voiceCapabilities;
+}
+
+/** The server's speech vendor refused or was unreachable, as opposed to the
+ * recording itself being unusable. Carries the status so callers can tell the
+ * two apart and fall back to the browser's own speech engine. */
+export class VoiceServiceError extends Error {
+  readonly status: number;
+
+  constructor(message: string, status: number) {
+    super(message);
+    this.name = "VoiceServiceError";
+    this.status = status;
+  }
+}
+
+/** A recorded question (WAV) as text, via the server's speech vendor. */
+export async function transcribeAudio(audio: Blob): Promise<VoiceTranscript> {
   const form = new FormData();
   form.append("audio", audio, "question.wav");
   const res = await timedFetch(
@@ -330,20 +373,30 @@ export async function transcribeAudio(audio: Blob): Promise<string> {
     "api:voice-transcribe",
   );
   const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(errorDetail(data, "Could not understand the recording"));
-  return String(data?.text || "").trim();
+  if (!res.ok) {
+    const message = errorDetail(data, "Could not understand the recording");
+    throw res.status >= 500
+      ? new VoiceServiceError(message, res.status)
+      : new Error(message);
+  }
+  return {
+    text: String(data?.text || "").trim(),
+    language: String(data?.language || "").trim(),
+  };
 }
 
 const MAX_SPEAK_CHARS = 6000;
 
-/** An answer as a short spoken reply: the words said and a base64 WAV. */
-export async function speakText(text: string, kind: "chat" | "chart") {
+/** An answer as a short spoken reply: the words said and a base64 WAV.
+ * `language` is the tag transcribeAudio returned, so a question asked in one
+ * language is answered out loud in the same one. */
+export async function speakText(text: string, kind: "chat" | "chart", language?: string) {
   const res = await timedFetch(
     `${API_BASE}/voice/speak`,
     {
       method: "POST",
       headers: { "Content-Type": "application/json", ...getAuthHeaders() },
-      body: JSON.stringify({ text: text.slice(0, MAX_SPEAK_CHARS), kind }),
+      body: JSON.stringify({ text: text.slice(0, MAX_SPEAK_CHARS), kind, language: language || null }),
     },
     "api:voice-speak",
   );

@@ -211,15 +211,21 @@ reintroduce Playwright-specific wording into the UI or the schemas.
 
 ### LLM Integration
 - **Provider Abstraction**: `llm_client.py` — any provider litellm supports, not just a fixed list
-- **Three-tier config resolution** (`services/app_settings.py`), decided **per field**:
-  **env > database > built-in default**. A field pinned in `.env` is locked and can't be
-  overridden from the admin UI (`config.LLM_PROVIDER_FROM_ENV` etc. record which fields env
-  claimed at import time); otherwise an admin can set/change it live from **Admin → Settings**
-  (`GET`/`PUT /admin/settings/llm`, `POST /admin/settings/llm/test` for a real one-shot
-  connectivity check) with no restart — `llm_client.LLMClient` reads `app_settings.get_llm_settings()`
+- **Config resolution** (`services/app_settings.py`), decided **per field**, between two
+  authors — `.env` and **Admin → Settings** — with the **most recent change winning**.
+  Saving in the admin UI stores the value together with a snapshot of what `.env` said for
+  that field at the time; the saved value keeps winning until `.env` is changed to something
+  else, at which point env takes back over. Falls through to a built-in default when neither
+  is set. `get_llm_settings()` reports `*_source` per field (`env` | `database` | `default`)
+  and the Settings tab displays it, so it is always visible which one is in effect.
+  Editing `.env` needs a restart (config.py reads the environment at import); the admin UI
+  takes effect immediately — `llm_client.LLMClient` reads `app_settings.get_llm_settings()`
   fresh on every call rather than caching provider/model at construction time.
+  (`GET`/`PUT /admin/settings/llm`, `POST /admin/settings/llm/test` for a real one-shot
+  connectivity check.)
   - `LLM_PROVIDER` (gemini | openai | anthropic | ollama | any litellm provider)
-  - `LLM_API_KEY` — Universal key; falls back to provider-specific vars (OPENAI_API_KEY, GEMINI_API_KEY, etc.)
+  - `LLM_API_KEY` — Generic fallback key; the active provider's own var (GEMINI_API_KEY,
+    OPENAI_API_KEY, ...) takes precedence, so every vendor's key can sit in `.env` at once
   - `LLM_MODEL` — Full model ID (e.g., `models/gemini-2.5-flash`)
   - `OLLAMA_URL` — Local inference endpoint (if using Ollama)
 - **Not a startup requirement**: an unconfigured LLM no longer prevents the backend from starting
@@ -312,7 +318,7 @@ services/
 ├── main.py                   # FastAPI app, all routes
 ├── auth.py                   # JWT + user store
 ├── permissions.py            # Role → permission matrix, require_permission()
-├── app_settings.py           # Runtime LLM settings (env > DB > default)
+├── app_settings.py           # Runtime LLM settings (.env vs admin UI, newest change wins)
 ├── audit_log.py              # Append-only admin/auth action log
 ├── handlers.py                # Chat/chart logic
 ├── data_loader.py            # Query LanceDB/DuckDB
@@ -454,9 +460,17 @@ ROLES_ROOT           # Path to roles/ directory
 INGEST_MAX_FILE_SIZE_BYTES # Max ingestion file size (default 200MB)
 INGEST_MAX_ROWS      # Max rows to ingest (default 500k)
 INGEST_TIMEOUT_SECONDS # Ingestion timeout (default 600s)
-VOICE_TEXT_MODEL     # Transcription + spoken summary (default gemini-3.5-flash-lite)
-VOICE_TTS_MODEL      # Spoken reply (default gemini-3.1-flash-tts-preview)
+VOICE_PROVIDER       # Which vendor does the speech: auto (default) | gemini | openai | browser.
+                     # Independent of LLM_PROVIDER - Anthropic has no speech API, so with no
+                     # Gemini/OpenAI key the browser's own speech engine takes over
+VOICE_TEXT_MODEL     # Gemini: the spoken summary. Tried first; services/voice.py falls back
+                     # through the ids behind it when one fails, and remembers which answered
+VOICE_TRANSCRIBE_MODEL # Gemini: hearing the question. A separate chain from VOICE_TEXT_MODEL,
+                     # because accepting text says nothing about accepting audio
+VOICE_TTS_MODEL      # Gemini: spoken reply, with the same fallback chain behind it
 VOICE_TTS_VOICE      # Gemini prebuilt voice (default Kore)
+VOICE_STT_MODEL      # non-Gemini speech-to-text via litellm (default whisper-1)
+VOICE_OPENAI_TTS_MODEL / VOICE_OPENAI_TTS_VOICE  # non-Gemini text-to-speech (default gpt-4o-mini-tts / alloy)
 ```
 
 **Test repo (live execution)** — set in the repo running the tests, not here:

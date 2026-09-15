@@ -24,8 +24,8 @@ import {
 } from "lucide-react";
 import { useRB } from "@/lib/RBContext";
 import { useIngestion } from "@/lib/IngestionContext";
-import { sendChatMessage, speakText, submitFeedback } from "@/lib/api";
-import { playVoice, stopVoice, useVoicePlayback } from "@/lib/voice";
+import { sendChatMessage, submitFeedback } from "@/lib/api";
+import { speakAnswer as speakOutLoud, stopVoice, useVoicePlayback } from "@/lib/voice";
 import MicButton from "./MicButton";
 import { ASK_SENTINEL_EVENT } from "@/lib/askSentinel";
 import ReactMarkdown from "react-markdown";
@@ -37,7 +37,15 @@ import BrandLogo from "./BrandLogo";
 
 // `voice` marks a question asked by microphone. `speechId` names an answer
 // for its Listen/Stop button - an index would shift when the thread changes.
-type ChatMessage = { role: "user" | "ai"; content: string; voice?: boolean; speechId?: string };
+// `language` is the BCP-47 tag of the question that produced the answer, kept
+// on the message so pressing Listen later still speaks it in that language.
+type ChatMessage = {
+  role: "user" | "ai";
+  content: string;
+  voice?: boolean;
+  speechId?: string;
+  language?: string;
+};
 
 let speechCounter = 0;
 const newSpeechId = () => `chat-${Date.now()}-${(speechCounter += 1)}`;
@@ -280,11 +288,10 @@ export default function FloatingChat() {
 
   // The written answer stays the full answer; this is the one-or-two
   // sentence version read aloud, fetched only when someone wants to hear it.
-  const speakAnswer = async (speechId: string, content: string) => {
+  const speakAnswer = async (speechId: string, content: string, language?: string) => {
     setPreparingSpeechId(speechId);
     try {
-      const { audio } = await speakText(content, "chat");
-      await playVoice(audio, speechId);
+      await speakOutLoud(content, "chat", language, speechId);
     } catch (error: unknown) {
       const reason = error instanceof Error ? error.message : "";
       setVoiceNote(reason ? `Couldn't play the answer: ${reason}` : "Couldn't play the answer.");
@@ -298,10 +305,13 @@ export default function FloatingChat() {
   const toggleSpeech = (msg: ChatMessage, idx: number) => {
     const speechId = speechIdFor(msg, idx);
     if (playingSpeechId === speechId) stopVoice();
-    else void speakAnswer(speechId, msg.content);
+    else void speakAnswer(speechId, msg.content, msg.language);
   };
 
-  const sendQuestion = async (question: string, options: { voice?: boolean } = {}) => {
+  const sendQuestion = async (
+    question: string,
+    options: { voice?: boolean; language?: string } = {},
+  ) => {
     if (!selectedIngestion) {
       setMessages([
         {
@@ -325,10 +335,13 @@ export default function FloatingChat() {
         selectedProject,
       );
       const speechId = newSpeechId();
-      setMessages((prev) => [...prev, { role: "ai", content: answer, speechId }]);
+      setMessages((prev) => [
+        ...prev,
+        { role: "ai", content: answer, speechId, language: options.language },
+      ]);
       // Asked out loud, answered out loud - not awaited, so the written
       // answer is on screen while the spoken one is still being made.
-      if (options.voice) void speakAnswer(speechId, answer);
+      if (options.voice) void speakAnswer(speechId, answer, options.language);
     } catch (error: unknown) {
       const message = error instanceof Error ? error.message : "Could not get answer from AI service.";
       setMessages((prev) => [
@@ -337,6 +350,7 @@ export default function FloatingChat() {
           role: "ai",
           content: `❌ Error: ${message}`,
           speechId: newSpeechId(),
+          language: options.language,
         },
       ]);
     } finally {
@@ -375,9 +389,9 @@ export default function FloatingChat() {
     submitCurrentInput();
   };
 
-  const handleVoiceQuestion = (text: string) => {
+  const handleVoiceQuestion = (text: string, language: string) => {
     setVoiceNote(null);
-    sendQuestion(text, { voice: true });
+    sendQuestion(text, { voice: true, language });
   };
 
   // Enter sends, Shift+Enter breaks the line — the convention every chat

@@ -6,9 +6,9 @@ import { AnimatePresence, motion } from "framer-motion";
 import { BarChart3, X, Loader2, Sparkles } from "lucide-react";
 import { useRB } from "@/lib/RBContext";
 import { useIngestion } from "@/lib/IngestionContext";
-import { generateChart, speakText, submitFeedback } from "@/lib/api";
+import { generateChart, submitFeedback } from "@/lib/api";
 import { readSentinelMeta } from "@/lib/chartTheme";
-import { playVoice } from "@/lib/voice";
+import { speakAnswer } from "@/lib/voice";
 import MicButton from "./MicButton";
 import { useSuggestions } from "@/lib/SuggestionsContext";
 import { MAX_SUGGESTIONS } from "@/lib/roleSuggestions";
@@ -38,21 +38,25 @@ export default function FloatingChart() {
   // the one sentence the backend already computes from the drawn data. The
   // chart is what was asked for, so a failed voice-over is only logged.
   // playVoice's shared player keeps talking after this popover auto-closes.
-  const speakChartInsight = async (chart: unknown) => {
+  const speakChartInsight = async (chart: unknown, language?: string) => {
     try {
       const figure = typeof chart === "string" ? JSON.parse(chart) : chart;
       const insight = readSentinelMeta((figure as { layout?: unknown } | null)?.layout)?.insight?.trim();
-      const { audio } = await speakText(
+      await speakAnswer(
         insight ? `Your chart is ready. ${insight}` : "Your chart is ready.",
         "chart",
+        language,
+        "chart",
       );
-      await playVoice(audio, "chart");
     } catch (error) {
       console.warn("[voice] could not speak the chart insight", error);
     }
   };
 
-  const handleGenerateChart = async (prompt: string, options: { voice?: boolean } = {}) => {
+  const handleGenerateChart = async (
+    prompt: string,
+    options: { voice?: boolean; language?: string } = {},
+  ) => {
     const trimmedPrompt = String(prompt || "").trim();
     const styleHint = String(styleFeedback || "").trim();
     if (!trimmedPrompt) return;
@@ -109,7 +113,7 @@ export default function FloatingChart() {
           detail: { prompt: trimmedPrompt, chart, chartId },
         }),
       );
-      if (options.voice) void speakChartInsight(chart);
+      if (options.voice) void speakChartInsight(chart, options.language);
       // Auto‑close after a short delay
       setTimeout(() => {
         setIsOpen(false);
@@ -138,10 +142,10 @@ export default function FloatingChart() {
     setCustomPrompt("");
   };
 
-  const handleVoicePrompt = async (text: string) => {
+  const handleVoicePrompt = async (text: string, language: string) => {
     setVoiceNote(null);
     setCustomPrompt(text);
-    await handleGenerateChart(text, { voice: true });
+    await handleGenerateChart(text, { voice: true, language });
     setCustomPrompt("");
   };
 
