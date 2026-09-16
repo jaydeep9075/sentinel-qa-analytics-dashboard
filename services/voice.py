@@ -82,6 +82,8 @@ TRANSCRIBE_MODELS = _models(
     "gemini-2.5-flash-lite",
     "gemini-2.5-flash",
 )
+# Every Gemini TTS id is preview-tier, so this chain is the one most likely to
+# need it: preview names get retired or gated per key with no warning.
 TTS_MODELS = _models(
     "VOICE_TTS_MODEL",
     "gemini-3.1-flash-tts-preview",
