@@ -22,7 +22,6 @@ import asyncio
 import json
 import re
 import logging
-from datetime import datetime
 from typing import Optional
 
 import numpy as np
@@ -202,7 +201,8 @@ def _improve_numeric_formatting(response: str, df: pd.DataFrame) -> str:
 
 
 def _sanitize_sql(sql: str) -> str:
-    if not sql: return ""
+    if not sql:
+        return ""
     s = re.sub(r"```sql\s*|```", "", sql, flags=re.IGNORECASE).strip()
     s = re.sub(r"^\s*duckdb\s*:?", "", s, flags=re.IGNORECASE).strip()
     return s.rstrip(";").strip()
@@ -1313,9 +1313,12 @@ async def handle_chat(user_message: str, session_id: str, ingestion_id: str,
                         total = int(df.iloc[0].get("total", 0))
                         failed = int(df.iloc[0].get("failed_count", 0))
                         passed = total - failed
-                        if pr >= 95:   verdict, rec = "✅ GOOD FOR RELEASE", "Quality meets criteria. Proceed."
-                        elif pr >= 80: verdict, rec = "⚠️ CONSIDER WITH CAUTION", f"Pass rate {pr}% below target. Review failures."
-                        else:          verdict, rec = "❌ NOT READY FOR RELEASE", f"Pass rate {pr}% critically low. Fix failures first."
+                        if pr >= 95:
+                            verdict, rec = "✅ GOOD FOR RELEASE", "Quality meets criteria. Proceed."
+                        elif pr >= 80:
+                            verdict, rec = "⚠️ CONSIDER WITH CAUTION", f"Pass rate {pr}% below target. Review failures."
+                        else:
+                            verdict, rec = "❌ NOT READY FOR RELEASE", f"Pass rate {pr}% critically low. Fix failures first."
                         response = CHAT_RELEASE_VERDICT.format(
                             pass_rate=pr, passed=passed, total=total,
                             failed_count=failed, verdict=verdict, recommendation=rec,

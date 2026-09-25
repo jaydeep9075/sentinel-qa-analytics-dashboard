@@ -7,8 +7,7 @@ Tests: Ingestion connector/config validation → Schema Detection
 import sys
 from pathlib import Path
 
-# Add services to path
-sys.path.insert(0, str(Path(__file__).parent))
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from services.ingestion_service import IngestionService
 from universal_ingester.schema.runtime_detector import RuntimeSchemaDetector
@@ -123,7 +122,7 @@ def test_schema_detection():
     )
 
     # Test 2.6: AI not called for clear types
-    print_result("Python heuristics (no AI)", schema['used_ai'] == False)
+    print_result("Python heuristics (no AI)", not schema['used_ai'])
 
     return True
 

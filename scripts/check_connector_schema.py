@@ -5,11 +5,10 @@ Run this to test the implementation.
 """
 
 import sys
-import json
 from pathlib import Path
 
-# Add universal_ingester to path
-sys.path.insert(0, str(Path(__file__).parent / "universal_ingester"))
+REPO_ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(REPO_ROOT / "universal_ingester"))
 
 from connectors.allure_connector import AllureConnector
 from schema.runtime_detector import RuntimeSchemaDetector
@@ -120,40 +119,24 @@ def test_ingestion_with_schema():
     print("TEST 4: Ingestion with Schema Detection (Dry Run)")
     print("="*60)
 
-    from ingester import UniversalIngester
-    import tempfile
-    import os
+    test_data = pd.DataFrame([
+        {"id": "1", "name": "Test1", "status": "PASSED", "duration": 100},
+        {"id": "2", "name": "Test2", "status": "FAILED", "duration": 250},
+    ])
 
-    # Create temp directory for test
-    with tempfile.TemporaryDirectory() as tmpdir:
-        ingester = UniversalIngester(tmpdir)
+    print("Test dataset: {} rows, {} columns".format(len(test_data), len(test_data.columns)))
+    print("Columns: {}".format(list(test_data.columns)))
 
-        # Create test dataset
-        test_data = pd.DataFrame([
-            {"id": "1", "name": "Test1", "status": "PASSED", "duration": 100},
-            {"id": "2", "name": "Test2", "status": "FAILED", "duration": 250},
-        ])
+    # Detect schema (same as ingestion would do)
+    detector = RuntimeSchemaDetector()
+    records = test_data.to_dict('records')
+    schema_info = detector.detect(records, "Test data")
 
-        dataset = {
-            "name": "test_results",
-            "data": test_data,
-            "type": "structured",
-            "metadata": {"source": "test"}
-        }
+    print("\nDetected schema:")
+    for field, info in schema_info['fields'].items():
+        print("  - {}: {} ({})".format(field, info['type'], info['purpose']))
 
-        print("Test dataset: {} rows, {} columns".format(len(test_data), len(test_data.columns)))
-        print("Columns: {}".format(list(test_data.columns)))
-
-        # Detect schema (same as ingestion would do)
-        detector = RuntimeSchemaDetector()
-        records = test_data.to_dict('records')
-        schema_info = detector.detect(records, "Test data")
-
-        print("\nDetected schema:")
-        for field, info in schema_info['fields'].items():
-            print("  - {}: {} ({})".format(field, info['type'], info['purpose']))
-
-        print("\n[PASS] Ingestion schema detection works")
+    print("\n[PASS] Ingestion schema detection works")
 
 
 def test_allure_json_parsing():

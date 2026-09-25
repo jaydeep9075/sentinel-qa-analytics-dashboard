@@ -50,7 +50,7 @@ class LiveRunConnector(BaseConnector):
             # Last 20 lines is enough context for AI search without bloating
             # every row with an unbounded log dump.
             log_excerpt = "\n".join(
-                f"[{l.get('level', 'log')}] {l.get('message', '')}" for l in test_logs[-20:]
+                f"[{entry.get('level', 'log')}] {entry.get('message', '')}" for entry in test_logs[-20:]
             )
             rows.append({
                 "build_id": run.get("run_id"),

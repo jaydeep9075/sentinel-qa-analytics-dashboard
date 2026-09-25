@@ -41,11 +41,11 @@ python -m services.admin_users list-users
 # Install dependencies
 npm install
 
-# Start dev server (auto-regenerates builds.json via predev script)
+# Start dev server
 npm run dev
 
 # Production build
-npm build
+npm run build
 
 # Start production server
 npm start
@@ -72,12 +72,13 @@ python -m pytest tests/test_chart_pipeline.py tests/test_chat_helpers.py -v
 # Run adaptive ingestion tests
 python -m pytest tests/test_adaptive_ingestion.py -v
 
-# Run specific test file
-python test_edge_cases.py
-python test_full_pipeline.py
+# Lint backend
+python -m ruff check services universal_ingester tests scripts
 
-# Run verification system checks
-python verify_system.py
+# Standalone dev scripts (not part of the pytest suite)
+python scripts/verify_system.py
+python scripts/check_ingest_pipeline.py
+python scripts/check_prompt_edge_cases.py
 ```
 
 ## Architecture Overview
@@ -391,9 +392,9 @@ frontend/
 - Review ingestion logs in `ingestion_service.py` for validation errors
 
 ### Testing Changes
-- Unit tests in `tests/` (e.g., `test_adaptive_ingestion.py`)
-- Integration tests: `test_full_pipeline.py`, `test_edge_cases.py`
-- Manual verification: `verify_system.py` (checks dependencies, DB, API)
+- Unit tests in `tests/` (the only pytest suite; `pyproject.toml` sets `testpaths`)
+- Standalone dev scripts in `scripts/` (`check_ingest_pipeline.py`, `check_prompt_edge_cases.py`)
+- Manual verification: `scripts/verify_system.py` (checks dependencies, DB, API)
 - Frontend: Start `npm run dev`, browse to http://localhost:3000
 
 ## Important Caveats
@@ -424,11 +425,10 @@ frontend/
 
 No pre-build step. The build list comes from `GET /ingestions` (see
 `lib/api.ts`'s `listIngestions()`), called live over HTTP — there is no
-generated `builds.json` and no filesystem dependency. (A `frontend/scripts/
-generate-builds-json.js` pre-build step existed historically; it was removed
-because nothing consumed its output and it was baking real ingested test
-data into a git-tracked, publicly-served static file — see
-`docs/08-split-hosting-and-production-readiness.md` §2.)
+generated `builds.json` and no filesystem dependency. A pre-build generator
+existed historically; it was removed because nothing consumed its output and
+it baked real ingested test data into a git-tracked, publicly-served static
+file — see `docs/08-split-hosting-and-production-readiness.md` §2.
 
 ## Environment Variable Reference
 

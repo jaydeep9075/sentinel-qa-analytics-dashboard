@@ -1,13 +1,14 @@
 """
 Read the full ingested test data from a specific build's LanceDB table.
-Data folder is expected to be in the current directory.
-Usage: python read_build_data.py [build_id]
+Usage: python scripts/export_build_csv.py [build_id]
 """
 
 import sys
 from pathlib import Path
 import lancedb
 import pandas as pd
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
 
 def list_builds(data_path: Path):
     """Return sorted list of ingestion build folders."""
@@ -31,14 +32,12 @@ def load_build_data(data_path: Path, build_id: str):
     return table.to_pandas()
 
 def main():
-    # Data folder is in the current working directory (dashboard root)
-    data_path = Path.cwd() / "data"
+    data_path = REPO_ROOT / "data"
     if not data_path.exists():
-        print(f"❌ Data folder not found at {data_path}")
-        print("Make sure you are running this script from the dashboard root directory.")
+        print(f"Data folder not found at {data_path}")
         return
 
-    print(f"📁 Data folder: {data_path}")
+    print(f"Data folder: {data_path}")
 
     builds = list_builds(data_path)
     if not builds:
@@ -70,18 +69,18 @@ def main():
                 print(f"Build '{build_id}' not found")
                 return
 
-    print(f"\n🔍 Loading build: {build_id}")
+    print(f"\nLoading build: {build_id}")
     df = load_build_data(data_path, build_id)
-    print(f"✅ Loaded {len(df)} test records")
-    print(f"📋 Columns: {list(df.columns)}")
+    print(f"Loaded {len(df)} test records")
+    print(f"Columns: {list(df.columns)}")
 
     # Show first few rows
     pd.set_option('display.max_colwidth', 60)
-    print("\n📊 First 5 test records:\n")
+    print("\nFirst 5 test records:\n")
     print(df.head(5).to_string())
 
     # Quick stats
-    print("\n📈 Quick stats:")
+    print("\nQuick stats:")
     print(f"  - Passed: {(df['status'] == 'passed').sum()}")
     print(f"  - Failed: {(df['status'] == 'failed').sum()}")
     if 'skipped' in df['status'].values:
@@ -91,7 +90,7 @@ def main():
     # Export to CSV for further analysis
     export_csv = data_path / build_id / "exported_tests.csv"
     df.to_csv(export_csv, index=False)
-    print(f"\n💾 Full data exported to: {export_csv}")
+    print(f"\nFull data exported to: {export_csv}")
 
 if __name__ == "__main__":
     main()

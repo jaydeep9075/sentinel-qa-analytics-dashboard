@@ -13,7 +13,6 @@ nothing depends on the developer's own state/users.db.
 """
 
 import importlib
-import os
 import sys
 
 import pytest

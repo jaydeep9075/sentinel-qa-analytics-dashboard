@@ -7,14 +7,10 @@ Verifies system handles complex requests, ambiguity, errors gracefully.
 import sys
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).parent))
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from services.production_prompts import (
-    validate_for_production,
-    validate_response_quality,
-    ERROR_HANDLING_PROMPT,
-    COMPLEX_QUERY_PROMPT,
-    AMBIGUITY_RESOLUTION_PROMPT
+    validate_for_production
 )
 
 
@@ -84,14 +80,6 @@ def test_ambiguous_query_handling():
     """Test handling ambiguous/unclear queries."""
     test_section("Ambiguous Queries")
 
-    # Ambiguous query
-    ambiguous = "How are the tests?"
-
-    # What the system should do:
-    # 1. Recognize ambiguity
-    # 2. List possible interpretations
-    # 3. Ask clarification
-
     interpretations = [
         "How many tests passed vs failed (overall status)?",
         "How fast are tests running (performance)?",
@@ -99,7 +87,7 @@ def test_ambiguous_query_handling():
         "How well-organized are tests (quality)?",
     ]
 
-    print_result("Recognizes ambiguity", True, f"4 interpretations possible")
+    print_result("Recognizes ambiguity", True, f"{len(interpretations)} interpretations possible")
 
     # Clarifying response
     clarification_response = """Your question "How are the tests?" could mean several things.
@@ -112,8 +100,6 @@ Could you clarify which aspect you're interested in?
 4. **Quality** - Are tests well-written and maintainable?
 
 I can answer any of these - just let me know which!"""
-
-    validation = validate_for_production(clarification_response, "How are the tests?")
 
     print_result(
         "Asks for clarification",
@@ -184,15 +170,6 @@ def test_multi_part_query():
     test_section("Complex Multi-Part Queries")
 
     complex_query = "Compare our mobile and desktop test pass rates this week vs last week and show the trend"
-
-    # Should break down into parts
-    parts = [
-        "mobile pass rate this week",
-        "mobile pass rate last week",
-        "desktop pass rate this week",
-        "desktop pass rate last week",
-        "trend over time"
-    ]
 
     # Example structured response
     structured_response = """# Test Pass Rate Comparison: Mobile vs Desktop

@@ -5,8 +5,7 @@ Fixes the 0% pass rate issue by mapping to your data structure.
 
 import json
 import logging
-from typing import Optional, Dict, Any, List
-from pathlib import Path
+from typing import Dict, List
 
 logger = logging.getLogger(__name__)
 

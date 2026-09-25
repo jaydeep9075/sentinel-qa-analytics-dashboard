@@ -2,10 +2,8 @@
 Production-grade ingestion service with connector field mapping and validation.
 """
 
-import json
 import logging
-import os
-from typing import Optional, Dict, Any, List
+from typing import Optional, Dict, Any
 from pathlib import Path
 
 logger = logging.getLogger(__name__)

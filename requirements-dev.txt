@@ -1,0 +1,8 @@
+# Test and lint tooling. Not needed at runtime and not installed into the
+# Docker images - CI and local dev only:
+#   pip install -r requirements.txt -r requirements-dev.txt
+pytest==9.1.1
+ruff==0.16.9
+
+# TestClient in tests/ drives the FastAPI app over httpx.
+httpx==0.28.1

@@ -6,7 +6,6 @@ import uuid
 import json
 import re
 import shutil
-import tempfile
 import time
 from pathlib import Path
 from fastapi import FastAPI, HTTPException, Header, Depends, Query, Request, BackgroundTasks, File, UploadFile, Form
@@ -36,7 +35,6 @@ from .auth import (
     initialize_auth_store,
     is_admin,
     register_user,
-    rename_account,
     require_admin,
 )
 from . import permissions

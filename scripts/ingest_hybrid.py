@@ -12,7 +12,7 @@ import json
 import logging
 from pathlib import Path
 from datetime import datetime, timezone
-from typing import Dict, Any, Optional
+from typing import Optional
 
 import pandas as pd
 import duckdb
@@ -21,7 +21,11 @@ import lancedb
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
-sys.path.insert(0, str(Path(__file__).parent))
+# Output contains non-ASCII markers; a default Windows console is cp1252.
+sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(REPO_ROOT))
 
 from universal_ingester.connectors.allure_connector import AllureConnector
 from universal_ingester.utils import EmbeddingGenerator
@@ -59,16 +63,15 @@ class HybridIngester:
 
         logger.info(
             f"Data analysis: {num_cols} cols, {text_cols} text, {numeric_cols} numeric "
-            f"→ {'STRUCTURED' if is_structured else 'UNSTRUCTURED'}"
+            f"-> {'STRUCTURED' if is_structured else 'UNSTRUCTURED'}"
         )
 
         return is_structured
 
     def ingest_structured(self, name: str, df: pd.DataFrame) -> int:
         """Ingest structured data - NO embeddings, direct to DB."""
-        print(f"\n✅ STRUCTURED DATA: {name}")
-        print(f"   Strategy: Python-only (no embeddings)")
-        print(f"   Speed: ⚡ Fast")
+        print(f"\nSTRUCTURED DATA: {name}")
+        print("   Strategy: Python-only (no embeddings)")
 
         # Add build_id if needed
         if 'build_id' not in df.columns:
@@ -92,9 +95,8 @@ class HybridIngester:
 
     def ingest_unstructured(self, name: str, texts: list) -> int:
         """Ingest unstructured data - WITH embeddings for RAG."""
-        print(f"\n✅ UNSTRUCTURED DATA: {name}")
-        print(f"   Strategy: AI + embeddings (smart RAG)")
-        print(f"   Speed: ⚡ Medium (embedding overhead)")
+        print(f"\nUNSTRUCTURED DATA: {name}")
+        print("   Strategy: AI + embeddings (smart RAG)")
 
         if not texts:
             logger.warning(f"No text data for {name}")
@@ -122,7 +124,7 @@ class HybridIngester:
             for doc, emb in zip(docs, embeddings):
                 doc['embedding'] = emb
 
-            print(f"   ✅ Generated {len(embeddings)} embeddings")
+            print(f"   Generated {len(embeddings)} embeddings")
         except Exception as e:
             logger.warning(f"Embedding failed: {e} - storing without embeddings")
             # Continue without embeddings
@@ -136,7 +138,7 @@ class HybridIngester:
 
     def ingest_allure(self, path: str) -> int:
         """Ingest Allure test data - structured, so NO embeddings."""
-        print(f"\n📊 Allure Test Data (structured)")
+        print("\nAllure Test Data (structured)")
 
         try:
             connector = AllureConnector(path)
@@ -161,16 +163,16 @@ class HybridIngester:
         """Smart ingestion for ANY data type."""
 
         print("\n" + "="*70)
-        print("🚀 HYBRID INGESTION (Smart embeddings)")
+        print("HYBRID INGESTION (Smart embeddings)")
         print("="*70)
 
         path = Path(path)
         if not path.exists():
-            print(f"❌ Path not found: {path}")
+            print(f"Path not found: {path}")
             return False
 
-        print(f"\n📁 Source: {path}")
-        print(f"📋 Type: {data_type or 'auto-detect'}")
+        print(f"\nSource: {path}")
+        print(f"Type: {data_type or 'auto-detect'}")
 
         # Setup databases
         try:
@@ -184,9 +186,9 @@ class HybridIngester:
             self.lance_db = lancedb.connect(str(lancedb_path))
             self.duck_db = duckdb.connect()
 
-            print(f"✅ Build ID: {self.build_id}")
+            print(f"Build ID: {self.build_id}")
         except Exception as e:
-            print(f"❌ Setup failed: {e}")
+            print(f"Setup failed: {e}")
             return False
 
         # Ingest based on type
@@ -234,20 +236,20 @@ class HybridIngester:
 
             # Summary
             print("\n" + "="*70)
-            print("✅ INGESTION COMPLETE")
+            print("INGESTION COMPLETE")
             print("="*70)
             print(f"Build ID: {self.build_id}")
             print(f"Total records: {total_rows}")
             print(f"Database: {lancedb_path}")
 
-            print("\n📊 Query modes enabled:")
-            print("   ✅ SQL queries (for structured data)")
-            print("   ✅ Vector search + RAG (for unstructured data)")
+            print("\nQuery modes enabled:")
+            print("   SQL queries (for structured data)")
+            print("   Vector search + RAG (for unstructured data)")
 
             return True
 
         except Exception as e:
-            print(f"\n❌ Ingestion failed: {e}")
+            print(f"\nIngestion failed: {e}")
             import traceback
             traceback.print_exc()
             return False
@@ -257,21 +259,14 @@ def main():
     """Main entry point."""
     ingester = HybridIngester()
 
-    # Try common paths
-    paths = [
-        Path(__file__).parent / "vm-data.zip",
-        Path(__file__).parent / "vm-data",
-        Path(__file__).parent / "data",
-    ]
-
-    for path in paths:
+    for path in (REPO_ROOT / "ingest-source", REPO_ROOT / "data"):
         if path.exists():
             logger.info(f"Found data: {path}")
             success = ingester.ingest_any_data(str(path))
             return 0 if success else 1
 
-    print("❌ No data found. Provide path as argument:")
-    print(f"   python {Path(__file__).name} /path/to/data")
+    print("No data found. Provide a path as argument:")
+    print("   python scripts/ingest_hybrid.py /path/to/data")
     return 1
 
 

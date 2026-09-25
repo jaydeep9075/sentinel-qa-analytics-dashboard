@@ -137,7 +137,7 @@ export function RBProvider({ children }: { children: React.ReactNode }) {
         : [];
       const availableProjectItems: ProjectItem[] = Array.isArray(projectsData.project_items)
         ? projectsData.project_items
-            .map((item: unknown) => {
+            .map((item: unknown): ProjectItem => {
               const row = item as Partial<ProjectItem>;
               return {
                 project_id: String(row.project_id || "").trim(),
@@ -145,7 +145,7 @@ export function RBProvider({ children }: { children: React.ReactNode }) {
                 is_subproject: Boolean(row.is_subproject),
               };
             })
-            .filter((row) => row.project_id)
+            .filter((row: ProjectItem) => row.project_id)
         : availableProjects.map((project_id) => ({
             project_id,
             parent_project_id: null,

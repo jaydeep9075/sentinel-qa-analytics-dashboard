@@ -164,7 +164,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_approve = sub.add_parser("approve", help="Approve a pending registration")
     p_approve.add_argument("--username", required=True)
     p_approve.add_argument("--workspace", required=False, help="Defaults to what they requested")
-    p_approve.add_argument("--role", required=False, help=f"Defaults to AUTH_DEFAULT_ROLE")
+    p_approve.add_argument("--role", required=False, help="Defaults to AUTH_DEFAULT_ROLE")
     p_approve.set_defaults(func=_cmd_approve)
 
     p_del = sub.add_parser("delete-user", help="Permanently delete a user")

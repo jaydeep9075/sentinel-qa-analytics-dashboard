@@ -577,10 +577,6 @@ def validate_for_production(response: str, query: str) -> dict:
     if not has_structure:
         issues.append("Response lacks clear structure")
 
-    # Uncertainty checks
-    uncertainty_words = {'approximately', 'roughly', 'about', 'around', 'estimate', 'approximately', 'unclear'}
-    has_uncertainty = any(word in response_lower for word in uncertainty_words)
-
     quality_score = max(0, 100 - (len(issues) * 15))
 
     return {

@@ -6,12 +6,16 @@ Helps identify why queries return 0% pass rate.
 
 import json
 import logging
+import sys
 from pathlib import Path
 from collections import defaultdict
 from typing import Dict, Any, List, Set
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+# Output contains non-ASCII markers; a default Windows console is cp1252.
+sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
 
 class DataDiagnostic:
@@ -132,45 +136,44 @@ class DataDiagnostic:
         print("DATA DIAGNOSTIC REPORT")
         print("="*80)
 
-        print(f"\n📊 DATA OVERVIEW")
+        print("\nDATA OVERVIEW")
         print(f"   Total records: {len(self.data_records)}")
         print(f"   Actual fields found: {len(self.actual_fields)}")
 
-        print(f"\n📋 ACTUAL FIELDS IN DATA")
+        print("\nACTUAL FIELDS IN DATA")
         for i, field in enumerate(sorted(self.actual_fields), 1):
             samples = self.field_samples[field][:3]
             print(f"   {i:2}. {field:<30} | Samples: {samples}")
 
         field_mapping = self.find_field_mapping()
 
-        print(f"\n🔄 FIELD MAPPING (Expected ← Actual)")
+        print("\nFIELD MAPPING (Expected <- Actual)")
         print(f"   {'Expected':<20} {'Mapped To':<30} {'Status'}")
         print("   " + "-"*70)
 
         for expected, actual in field_mapping.items():
-            status = "✅ FOUND"
-            print(f"   {expected:<20} {actual:<30} {status}")
+            print(f"   {expected:<20} {actual:<30} [FOUND]")
 
         missing = set(self.EXPECTED_FIELDS.keys()) - set(field_mapping.keys())
         if missing:
-            print(f"\n   ⚠️  MISSING FIELDS:")
+            print("\n   MISSING FIELDS:")
             for field in missing:
-                print(f"   ❌ {field:<20} (Expected one of: {', '.join(self.EXPECTED_FIELDS[field])})")
+                print(f"   [MISS] {field:<20} (Expected one of: {', '.join(self.EXPECTED_FIELDS[field])})")
 
-        print(f"\n💡 RECOMMENDATIONS")
+        print("\nRECOMMENDATIONS")
 
         if len(field_mapping) < len(self.EXPECTED_FIELDS) * 0.7:
-            print("   ⚠️  Low field coverage! Consider:")
+            print("   Low field coverage! Consider:")
             print("      1. Check if data format is correct")
             print("      2. Verify data was ingested properly")
             print("      3. Check data transformation settings")
 
         if 'pass_count' in field_mapping or 'total_count' in field_mapping:
-            print("   ✅ Appears to be aggregated data (pass/fail counts)")
-            print("      → Query should use: SELECT pass_count, fail_count FROM data")
+            print("   Appears to be aggregated data (pass/fail counts)")
+            print("      Query should use: SELECT pass_count, fail_count FROM data")
         else:
-            print("   ✅ Appears to be row-level data (individual test results)")
-            print("      → Query should use: SELECT status, COUNT(*) FROM data GROUP BY status")
+            print("   Appears to be row-level data (individual test results)")
+            print("      Query should use: SELECT status, COUNT(*) FROM data GROUP BY status")
 
         print("\n" + "="*80)
 
@@ -234,21 +237,18 @@ LIMIT 5;
 
 def main():
     """Run diagnostic."""
-    print("\n🔍 DATA DIAGNOSTIC TOOL")
+    print("\nDATA DIAGNOSTIC TOOL")
     print("="*80)
-    print("This tool identifies why your queries return 0% pass rate.")
-    print("It finds the actual field names in your data and generates correct queries.\n")
+    print("Finds the actual field names in your data and generates matching queries.\n")
 
-    data_path = input("📁 Enter path to your data (JSON file or folder): ").strip()
-
-    if not data_path:
-        print("Using example path: ./data/test_results.json")
-        data_path = "./data/test_results.json"
+    if len(sys.argv) < 2:
+        print("Usage: python scripts/diagnose_data.py <path-to-json-file-or-folder>")
+        return
 
     diagnostic = DataDiagnostic()
 
-    if not diagnostic.load_data(data_path):
-        print("\n❌ Could not load data. Check the path and try again.")
+    if not diagnostic.load_data(sys.argv[1]):
+        print("\nCould not load data. Check the path and try again.")
         return
 
     field_mapping = diagnostic.print_report()
@@ -261,7 +261,7 @@ def main():
     print(query_template)
 
     print("\n" + "="*80)
-    print("✅ Diagnostic complete. Use the corrected queries above.")
+    print("Diagnostic complete. Use the corrected queries above.")
     print("="*80)
 
 

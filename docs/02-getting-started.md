@@ -152,9 +152,10 @@ python -m services.admin_users create-user --username admin --role cto
 python -m services.admin_users reset-password --username admin
 python -m services.admin_users list-users
 
-# Tests
+# Tests and lint
 python -m pytest tests/ -q
-python verify_system.py     # dependency/DB/API sanity check
+python -m ruff check services universal_ingester tests scripts
+python scripts/verify_system.py     # dependency/DB/API sanity check
 ```
 
 ---
