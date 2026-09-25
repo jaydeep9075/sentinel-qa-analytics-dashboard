@@ -1,0 +1,46 @@
+{
+  "_comment": "Ingestion config. The live copy lives at state/config2.json and is seeded on first backend start; edit that one. Paths here are CONTAINER paths - ingest-source/ on your host is mounted to /app/ingest-source, so drop raw data there and reference it as /app/ingest-source/<file>. Run with: docker compose run --rm ingest",
+
+  "ingestion_name": "my_build",
+
+  "_source_types": "One entry per source. universal_ingester/connectors/ implements these `type`s - see _other_source_types below for the full shape of each.",
+
+  "sources": [
+    {
+      "type": "allure",
+      "_example": "an Allure results folder OR a .zip of one - the connector auto-detects and extracts zips",
+      "path": "/app/ingest-source/allure-results.zip"
+    }
+  ],
+
+  "_other_source_types": {
+    "file": {
+      "type": "file",
+      "_example": "any single file file_connector.py supports: csv, tsv, xlsx, xls, json, jsonl, ndjson, parquet, xml, txt, log, pdf, png/jpg (OCR'd), yaml",
+      "path": "/app/ingest-source/results.csv"
+    },
+    "db": {
+      "type": "db",
+      "_example": "any SQLAlchemy URL - mysql+pymysql://, postgresql://, sqlite:///. Put real credentials in state/config2.json, which is gitignored; never commit them here.",
+      "params": {
+        "connection_string": "mysql+pymysql://USERNAME:PASSWORD@HOST:4000/DATABASE_NAME",
+        "tables": ["test_cases", "test_results"],
+        "connect_args": {
+          "ssl": { "verify_cert": false, "verify_identity": false }
+        }
+      }
+    },
+    "api": {
+      "type": "api",
+      "_example": "HTTP/GraphQL endpoint returning JSON; supports pagination",
+      "params": {
+        "url": "https://ci.example.com/api/test-results",
+        "headers": { "Authorization": "Bearer ${CI_API_TOKEN}" }
+      }
+    }
+  },
+
+  "output": {
+    "base_path": "/app/data"
+  }
+}

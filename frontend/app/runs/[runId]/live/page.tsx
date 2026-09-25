@@ -114,12 +114,15 @@ export default function LiveRunPage() {
   const [now, setNow] = useState(() => Date.now());
   const logEndRef = useRef<HTMLDivElement>(null);
   const token = typeof window !== "undefined" ? localStorage.getItem("token") : null;
+  // Effects below key off the status alone; depending on `run` itself would
+  // re-run them on every SSE event that mutates the object.
+  const runStatus = run?.status;
 
   useEffect(() => {
-    if (run && run.status !== "running") return;
+    if (runStatus && runStatus !== "running") return;
     const t = setInterval(() => setNow(Date.now()), 1000);
     return () => clearInterval(t);
-  }, [run?.status]);
+  }, [runStatus]);
 
   // A finished run's SQLite rows are gone (see LIVE_EXECUTION_WHY_THIS_APPROACH.md),
   // so /live/runs/{id}/stream would 404 forever and EventSource would just
@@ -287,7 +290,7 @@ export default function LiveRunPage() {
   // links on screen. Finalize duration varies (embeddings can take a
   // while on a cold model), so this polls rather than assuming a fixed delay.
   useEffect(() => {
-    if (historyMode || !run || run.status === "running" || !runId) return;
+    if (historyMode || !runStatus || runStatus === "running" || !runId) return;
     let cancelled = false;
     const authHeaders: Record<string, string> = token ? { Authorization: `Bearer ${token}` } : {};
 
@@ -312,7 +315,7 @@ export default function LiveRunPage() {
     return () => {
       cancelled = true;
     };
-  }, [run?.status, historyMode, runId, token]);
+  }, [runStatus, historyMode, runId, token]);
 
   const attachmentUrl = (a: AttachmentRow) =>
     historyMode

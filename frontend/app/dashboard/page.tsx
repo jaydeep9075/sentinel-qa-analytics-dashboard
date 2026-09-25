@@ -127,7 +127,11 @@ export default function Dashboard() {
     checks?: { name?: string; passed?: boolean; detail?: string }[];
   } | null>(null);
   const [insights, setInsights] = useState<DashboardInsights | null>(null);
-  const [isHeaderLoading, setIsHeaderLoading] = useState(true);
+  // Which ingestion the header tiles currently hold data for. `undefined`
+  // means "nothing loaded yet", which is how the first paint gets a skeleton
+  // and why switching ingestions re-shows one without an effect writing state.
+  const [loadedIngestion, setLoadedIngestion] = useState<string | null | undefined>(undefined);
+  const isHeaderLoading = loadedIngestion !== (selectedIngestion ?? null);
   const headerLoadStartRef = useRef<number>(0);
 
   // `chart-generated` is handled inside ChartGallery, which inserts the new
@@ -143,7 +147,6 @@ export default function Dashboard() {
       typeof performance !== "undefined" && typeof performance.now === "function"
         ? performance.now()
         : Date.now();
-    setIsHeaderLoading(true);
 
     const applyOverview = (overview: {
       connected?: boolean;
@@ -165,7 +168,7 @@ export default function Dashboard() {
       if (overview.status) setDataStatus(overview.status);
       if (overview.quality) setDataQuality(overview.quality);
       if (overview.insights) setInsights(overview.insights);
-      setIsHeaderLoading(false);
+      setLoadedIngestion(selectedIngestion ?? null);
     };
 
     const cached = selectedIngestion ? readCachedDashboardOverview(selectedIngestion) : null;
@@ -180,7 +183,7 @@ export default function Dashboard() {
           setDataQuality(null);
           setInsights(null);
           setBackendConnected(true);
-          setIsHeaderLoading(false);
+          setLoadedIngestion(null);
         }
         return;
       }

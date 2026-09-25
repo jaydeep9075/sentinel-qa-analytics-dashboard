@@ -17,16 +17,10 @@ import {
   Database,
   ArrowDown,
   Trash2,
-  Loader2,
-  Mic,
-  Square,
-  Volume2,
 } from "lucide-react";
 import { useRB } from "@/lib/RBContext";
 import { useIngestion } from "@/lib/IngestionContext";
 import { sendChatMessage, submitFeedback } from "@/lib/api";
-import { speakAnswer as speakOutLoud, stopVoice, useVoicePlayback } from "@/lib/voice";
-import MicButton from "./MicButton";
 import { ASK_SENTINEL_EVENT } from "@/lib/askSentinel";
 import ReactMarkdown from "react-markdown";
 import { useSuggestions } from "@/lib/SuggestionsContext";
@@ -35,20 +29,11 @@ import { formatRoleLabel } from "@/lib/roles";
 import ThinkingIndicator from "./ThinkingIndicator";
 import BrandLogo from "./BrandLogo";
 
-// `voice` marks a question asked by microphone. `speechId` names an answer
-// for its Listen/Stop button - an index would shift when the thread changes.
-// `language` is the BCP-47 tag of the question that produced the answer, kept
-// on the message so pressing Listen later still speaks it in that language.
 type ChatMessage = {
   role: "user" | "ai";
   content: string;
-  voice?: boolean;
-  speechId?: string;
   language?: string;
 };
-
-let speechCounter = 0;
-const newSpeechId = () => `chat-${Date.now()}-${(speechCounter += 1)}`;
 
 const REGEN_QUESTION_CAP = 900;
 const REGEN_ANSWER_CAP = 1200;
@@ -71,10 +56,6 @@ export default function FloatingChat() {
   const [regeneratingIndex, setRegeneratingIndex] = useState<number | null>(null);
   const [feedbackStatus, setFeedbackStatus] = useState<Record<number, string>>({});
   const [isPinnedToBottom, setIsPinnedToBottom] = useState(true);
-  const [isListening, setIsListening] = useState(false);
-  const [voiceNote, setVoiceNote] = useState<string | null>(null);
-  const [preparingSpeechId, setPreparingSpeechId] = useState<string | null>(null);
-  const playingSpeechId = useVoicePlayback();
 
   const scrollRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
@@ -125,24 +106,11 @@ export default function FloatingChat() {
     }
   }, [isOpen]);
 
-  // A spoken answer belongs to the open conversation: closing the panel
-  // silences it instead of leaving a voice with no visible Stop button.
-  useEffect(() => {
-    if (!isOpen) stopVoice();
-  }, [isOpen]);
-
-  useEffect(() => {
-    if (!voiceNote) return;
-    const t = setTimeout(() => setVoiceNote(null), 6000);
-    return () => clearTimeout(t);
-  }, [voiceNote]);
-
   // Closing the panel is not the same as ending the conversation — a
   // question asked, the panel closed to look at a chart, then reopened, used
   // to come back to an empty window. The thread now survives; "New chat"
   // below is the explicit way to drop it.
   const clearConversation = () => {
-    stopVoice();
     setMessages([]);
     setCustomQuestion("");
     setFeedbackStatus({});
@@ -286,32 +254,7 @@ export default function FloatingChat() {
     }
   };
 
-  // The written answer stays the full answer; this is the one-or-two
-  // sentence version read aloud, fetched only when someone wants to hear it.
-  const speakAnswer = async (speechId: string, content: string, language?: string) => {
-    setPreparingSpeechId(speechId);
-    try {
-      await speakOutLoud(content, "chat", language, speechId);
-    } catch (error: unknown) {
-      const reason = error instanceof Error ? error.message : "";
-      setVoiceNote(reason ? `Couldn't play the answer: ${reason}` : "Couldn't play the answer.");
-    } finally {
-      setPreparingSpeechId(null);
-    }
-  };
-
-  const speechIdFor = (msg: ChatMessage, idx: number) => msg.speechId ?? `chat-${idx}`;
-
-  const toggleSpeech = (msg: ChatMessage, idx: number) => {
-    const speechId = speechIdFor(msg, idx);
-    if (playingSpeechId === speechId) stopVoice();
-    else void speakAnswer(speechId, msg.content, msg.language);
-  };
-
-  const sendQuestion = async (
-    question: string,
-    options: { voice?: boolean; language?: string } = {},
-  ) => {
+  const sendQuestion = async (question: string) => {
     if (!selectedIngestion) {
       setMessages([
         {
@@ -325,7 +268,7 @@ export default function FloatingChat() {
 
     setIsPinnedToBottom(true);
     setIsLoading(true);
-    setMessages((prev) => [...prev, { role: "user", content: question, voice: options.voice }]);
+    setMessages((prev) => [...prev, { role: "user", content: question }]);
 
     try {
       const answer = await sendChatMessage(
@@ -334,25 +277,10 @@ export default function FloatingChat() {
         selectedRole,
         selectedProject,
       );
-      const speechId = newSpeechId();
-      setMessages((prev) => [
-        ...prev,
-        { role: "ai", content: answer, speechId, language: options.language },
-      ]);
-      // Asked out loud, answered out loud - not awaited, so the written
-      // answer is on screen while the spoken one is still being made.
-      if (options.voice) void speakAnswer(speechId, answer, options.language);
+      setMessages((prev) => [...prev, { role: "ai", content: answer }]);
     } catch (error: unknown) {
       const message = error instanceof Error ? error.message : "Could not get answer from AI service.";
-      setMessages((prev) => [
-        ...prev,
-        {
-          role: "ai",
-          content: `❌ Error: ${message}`,
-          speechId: newSpeechId(),
-          language: options.language,
-        },
-      ]);
+      setMessages((prev) => [...prev, { role: "ai", content: `❌ Error: ${message}` }]);
     } finally {
       setIsLoading(false);
     }
@@ -387,11 +315,6 @@ export default function FloatingChat() {
   const handleCustomSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     submitCurrentInput();
-  };
-
-  const handleVoiceQuestion = (text: string, language: string) => {
-    setVoiceNote(null);
-    sendQuestion(text, { voice: true, language });
   };
 
   // Enter sends, Shift+Enter breaks the line — the convention every chat
@@ -631,17 +554,6 @@ export default function FloatingChat() {
                                 )}
                                 {copiedMessageIndex === idx ? "Copied" : "Copy"}
                               </button>
-                              <ListenButton
-                                state={
-                                  preparingSpeechId === speechIdFor(msg, idx)
-                                    ? "preparing"
-                                    : playingSpeechId === speechIdFor(msg, idx)
-                                      ? "playing"
-                                      : "idle"
-                                }
-                                disabled={preparingSpeechId !== null}
-                                onClick={() => toggleSpeech(msg, idx)}
-                              />
                               <button
                                 type="button"
                                 onClick={() => handleRegenerate(idx)}
@@ -684,15 +596,7 @@ export default function FloatingChat() {
                             )}
                           </>
                         ) : (
-                          <>
-                            {msg.voice && (
-                              <Mic
-                                aria-hidden
-                                className="mr-1.5 inline h-3 w-3 -translate-y-px opacity-75"
-                              />
-                            )}
-                            {msg.content}
-                          </>
+                          msg.content
                         )}
                       </div>
                     </div>
@@ -742,20 +646,12 @@ export default function FloatingChat() {
                   onChange={handleInputChange}
                   onKeyDown={handleKeyDown}
                   placeholder={
-                    isListening
-                      ? "Listening… tap ■ when you're done"
-                      : selectedIngestion
-                        ? `Ask about ${buildLabel}…`
-                        : "Select a test build from the top bar first…"
+                    selectedIngestion
+                      ? `Ask about ${buildLabel}…`
+                      : "Select a test build from the top bar first…"
                   }
                   className="max-h-[132px] flex-1 resize-none rounded-xl border border-slate-300 bg-white px-4 py-2.5 text-sm leading-relaxed text-slate-800 transition-all placeholder:text-slate-400 focus:border-cyan-500/30 focus:shadow-[0_0_12px_rgba(0,240,255,0.06)] focus:outline-none focus:ring-1 focus:ring-cyan-500/20 disabled:opacity-60 dark:border-white/[0.08] dark:bg-white/[0.03] dark:text-white dark:placeholder:text-white/20"
                   disabled={!canSend}
-                />
-                <MicButton
-                  disabled={!canSend}
-                  onTranscript={handleVoiceQuestion}
-                  onError={setVoiceNote}
-                  onRecordingChange={setIsListening}
                 />
                 <button
                   type="submit"
@@ -768,9 +664,7 @@ export default function FloatingChat() {
               </form>
 
               <p className="mt-2 text-center text-[10px] text-slate-400 dark:text-white/25">
-                {voiceNote ? (
-                  <span className="font-semibold text-amber-600 dark:text-amber-400">{voiceNote}</span>
-                ) : selectedIngestion ? (
+                {selectedIngestion ? (
                   <>
                     <kbd className="font-sans font-semibold">Enter</kbd> to send ·{" "}
                     <kbd className="font-sans font-semibold">Shift + Enter</kbd> for a new line
@@ -787,35 +681,5 @@ export default function FloatingChat() {
       )}
       </AnimatePresence>
     </>
-  );
-}
-
-function ListenButton({
-  state,
-  disabled,
-  onClick,
-}: {
-  state: "idle" | "preparing" | "playing";
-  disabled: boolean;
-  onClick: () => void;
-}) {
-  const isPlaying = state === "playing";
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      disabled={disabled && !isPlaying}
-      title={isPlaying ? "Stop speaking" : "Hear a short spoken answer"}
-      className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-[11px] font-semibold text-slate-500 transition-colors hover:bg-cyan-500/10 hover:text-cyan-700 disabled:opacity-40 dark:text-white/45 dark:hover:text-cyan-300"
-    >
-      {state === "preparing" ? (
-        <Loader2 className="h-3 w-3 animate-spin" />
-      ) : isPlaying ? (
-        <Square className="h-3 w-3 fill-current" />
-      ) : (
-        <Volume2 className="h-3 w-3" />
-      )}
-      {isPlaying ? "Stop" : "Listen"}
-    </button>
   );
 }

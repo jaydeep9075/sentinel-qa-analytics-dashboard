@@ -24,9 +24,11 @@ lancedb==0.34.0
 pyarrow==25.0.0
 
 # AI & LLM
-google-generativeai==0.8.6
 # Voice (services/voice.py): speech-to-text and text-to-speech go straight to
-# Gemini, since litellm's text-message interface carries neither.
+# Gemini, since litellm's text-message interface carries neither. The /voice/*
+# routes are still served; the dashboard UI no longer calls them.
+# google-generativeai intentionally removed: the legacy SDK is imported nowhere
+# (voice.py uses `from google import genai`, the current one).
 google-genai==2.19.0
 sentence-transformers==5.6.0
 requests==2.34.2

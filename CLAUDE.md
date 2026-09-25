@@ -280,27 +280,24 @@ prompt → chart_spec.parse()      intent: form, measure, dimension, breakdown,
 - `handlers._dataset_facts()` computes sums/extremes/distributions over **all**
   rows and injects them, since only the first 50 rows are sent to the model.
 
-### Voice (push-to-talk)
+### Voice (API only — no UI)
 ```
-🎤 MicButton → AudioWorklet (public/worklets/pcm-recorder.js) → 16 kHz WAV
-  → POST /voice/transcribe   Gemini flash-lite → question text
-  → the ordinary /chat or /chart call, unchanged
-  → POST /voice/speak        chat: condensed to ≤2 sentences; chart: its insight line
-                             → Gemini TTS → WAV → lib/voice.ts playVoice()
+POST /voice/transcribe   audio → Gemini flash-lite → question text + BCP-47 language
+POST /voice/speak        text  → condensed to ≤2 sentences → Gemini TTS → WAV
+GET  /voice/capabilities which half (server vs browser) can do the speech
 ```
-- **Voice converts speech ↔ text and nothing else.** A spoken question goes through
-  the same `/chat`/`/chart` pipeline, auth and build scoping as a typed one — don't
-  give `/voice/*` its own answering path.
+- **The dashboard no longer calls these.** `MicButton`, `lib/voice.ts` and the
+  PCM worklet were removed; `services/voice.py` and the routes were kept so an
+  external client can still use them. Don't re-add a mic without being asked.
+- **Voice converts speech ↔ text and nothing else.** A spoken question is meant to
+  go through the same `/chat`/`/chart` pipeline, auth and build scoping as a typed
+  one — don't give `/voice/*` its own answering path.
 - `services/voice.py` calls Gemini through `google-genai` directly (litellm's text
   messages can't carry audio in or out), but records usage through
   `LLMClient._record_usage`, so voice counts toward quotas like everything else.
 - The key is the active LLM key when the provider is `gemini`, else `GEMINI_API_KEY`
   / `GOOGLE_API_KEY` — never another provider's key.
 - Short chat answers (≤35 words) skip the summary call; chart insights are never summarised.
-- The mic needs a secure context: `localhost` works, a plain-HTTP IP hides the button.
-- Grew out of the sibling ADK voice-workshop POC folder (Google ADK + Gemini Live over WebSocket).
-  That duplex design was deliberately not ported: a Live model answers from its
-  own knowledge, and a WebSocket skips the HTTP auth middlewares.
 
 ### Data Storage
 - **LanceDB**: Vector embeddings for semantic search (historical context retrieval)

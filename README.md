@@ -34,7 +34,7 @@ under `data/`.
 ├── frontend/                  Next.js 16 App Router dashboard
 │   ├── app/                   Routes (dashboard, admin, projects, runs, login)
 │   ├── components/            React components
-│   ├── lib/                   API client, contexts, voice, theming
+│   ├── lib/                   API client, contexts, theming
 │   └── types/                 Shared TS types
 ├── packages/sentinel-qa-reporter/  npm package installed in YOUR test repo
 ├── tests/                     pytest suite (the only one pytest collects)
@@ -49,6 +49,7 @@ under `data/`.
 
 | Doc | What's in it |
 |---|---|
+| [`docs/00-developer-map.md`](docs/00-developer-map.md) | **Where to change what** — file-by-file lookup table |
 | [`docs/01-overview.md`](docs/01-overview.md) | What TR-Insight is, architecture at a glance |
 | [`docs/02-getting-started.md`](docs/02-getting-started.md) | Install and first run — Docker or local dev |
 | [`docs/03-architecture-guide.md`](docs/03-architecture-guide.md) | Modules, data flow, chart/chat pipelines, live execution |
@@ -57,6 +58,7 @@ under `data/`.
 | [`docs/06-hosting-and-resources.md`](docs/06-hosting-and-resources.md) | Sizing, storage layout, full env-var reference, scaling |
 | [`docs/07-user-guide.md`](docs/07-user-guide.md) | Accounts, ingestion, chat, charts, live runs, admin console |
 | [`docs/08-split-hosting-and-production-readiness.md`](docs/08-split-hosting-and-production-readiness.md) | Split hosting, production hardening log |
+| [`docs/09-connect-an-automation-repo.md`](docs/09-connect-an-automation-repo.md) | **Wiring a new test repo in** — live reporter and ingest config |
 
 `CLAUDE.md` is the AI-agent brief for this repo, not user documentation.
 
@@ -117,7 +119,7 @@ See [`.env.example`](.env.example) for the annotated full list and
 | `LLM_PROVIDER` | — | `openai`, `anthropic`, `gemini`, `ollama`, or any litellm provider |
 | `LLM_MODEL` | per provider | Model id |
 | `LLM_API_BASE` | — | Gateway/proxy URL |
-| `VOICE_PROVIDER` | `auto` | `auto` \| `gemini` \| `openai` \| `browser` |
+| `VOICE_PROVIDER` | `auto` | Speech vendor for the `/voice/*` API. Not used by the dashboard UI. |
 | `EMBEDDING_MODEL` | `BAAI/bge-small-en-v1.5` | Sentence-transformers model |
 | `CORS_ALLOWED_ORIGINS` | `http://localhost:3000,http://127.0.0.1:3000` | Frontend origins |
 | `SENTINEL_DATA_DIR` | `./data` | Ingestion output root |
@@ -153,7 +155,8 @@ backend picks up immediately — no restart needed.
 
 ```bash
 # 1. Drop raw data (Allure zip, CSV, JSON, ...) into ingest-source/
-# 2. Point state/config2.json at it (seeded on first backend start)
+# 2. Point state/config2.json at it (seeded on first backend start;
+#    shape and all source types: config2.json.example)
 # 3. Run one of:
 
 docker compose run --rm ingest             # Docker
@@ -180,6 +183,9 @@ SENTINEL_DASHBOARD_URL=http://localhost:3000 \
 ```
 
 Watch it at http://localhost:3000/runs/live.
+
+Full walkthrough for wiring up a new test repo (both paths, CI included):
+[`docs/09-connect-an-automation-repo.md`](docs/09-connect-an-automation-repo.md).
 
 ---
 

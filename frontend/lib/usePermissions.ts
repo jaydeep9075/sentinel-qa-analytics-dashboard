@@ -62,23 +62,13 @@ export function usePermissions() {
   useEffect(() => {
     let cancelled = false;
     const token = typeof window !== "undefined" ? localStorage.getItem("token") : null;
-    if (!token) {
+    // One async path for all three cases - signed out, warm cache, cold fetch.
+    // fetchPermissions() already returns the cached value without a request.
+    const resolving = token ? fetchPermissions(token) : Promise.resolve(EMPTY);
+    resolving.then((data) => {
+      if (cancelled) return;
+      setPermissions(data);
       setLoaded(true);
-      return;
-    }
-    if (cache?.token === token) {
-      // Already resolved by a prior mount (or the initializer above) -
-      // nothing to await, so skip straight to loaded rather than flashing
-      // the optimistic default for one render.
-      setPermissions(cache.data);
-      setLoaded(true);
-      return;
-    }
-    fetchPermissions(token).then((data) => {
-      if (!cancelled) {
-        setPermissions(data);
-        setLoaded(true);
-      }
     });
     return () => {
       cancelled = true;

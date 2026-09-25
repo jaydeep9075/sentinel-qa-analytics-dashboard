@@ -1,5 +1,5 @@
 "use client";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useRouter, usePathname } from "next/navigation";
 import Link from "next/link";
 import { ArrowLeft, Bell, FolderOpen, Gauge, KeyRound, ScrollText, Settings as SettingsIcon, Users } from "lucide-react";
@@ -36,23 +36,26 @@ function NotificationBell() {
   const [open, setOpen] = useState(false);
   const boxRef = useRef<HTMLDivElement>(null);
 
-  const load = useCallback(async () => {
-    try {
-      const res = await fetch(`${API}/admin/notifications`, { headers: authHeaders() });
-      if (!res.ok) return;
-      const data = await res.json();
-      setItems(data.items || []);
-    } catch {
-      // Silent - a failed background poll shouldn't put an error banner in
-      // front of an admin who's looking at something else entirely.
-    }
-  }, []);
-
   useEffect(() => {
-    load();
-    const interval = setInterval(load, NOTIF_POLL_MS);
-    return () => clearInterval(interval);
-  }, [load]);
+    let cancelled = false;
+    const poll = async () => {
+      try {
+        const res = await fetch(`${API}/admin/notifications`, { headers: authHeaders() });
+        if (!res.ok) return;
+        const data = await res.json();
+        if (!cancelled) setItems(data.items || []);
+      } catch {
+        // Silent - a failed background poll shouldn't put an error banner in
+        // front of an admin who's looking at something else entirely.
+      }
+    };
+    poll();
+    const interval = setInterval(poll, NOTIF_POLL_MS);
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
+    };
+  }, []);
 
   useEffect(() => {
     function onClickOutside(e: MouseEvent) {

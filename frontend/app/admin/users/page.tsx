@@ -352,10 +352,15 @@ function UserRow({
   onCall: (url: string, init: RequestInit, msg: string) => Promise<boolean>;
 }) {
   const [tokenLimit, setTokenLimit] = useState(String(user.token_limit || 0));
+  const [syncedLimit, setSyncedLimit] = useState(user.token_limit);
   const retired = isRetiredRole(user.role);
   const adminAccount = ["admin", "cto"].includes(String(user.role).toLowerCase());
 
-  useEffect(() => setTokenLimit(String(user.token_limit || 0)), [user.token_limit]);
+  // Re-seed the input when the row's server value changes, without an effect.
+  if (syncedLimit !== user.token_limit) {
+    setSyncedLimit(user.token_limit);
+    setTokenLimit(String(user.token_limit || 0));
+  }
 
   const resetPassword = async () => {
     const password = window.prompt(`New password for ${user.username} (min 8 characters):`);
