@@ -1,34 +1,16 @@
-import { ImageResponse } from "next/og";
+import { readFile } from "node:fs/promises";
+import { join } from "node:path";
 
 /**
- * Browser-tab favicon, generated at build/request time instead of a static
- * PNG so the TR mark (see components/BrandLogo.tsx) never drifts from the
- * one actually shown in the app.
+ * Browser-tab favicon, served from the same public/tr-insight-logo.png the app
+ * renders (see components/BrandLogo.tsx) so the two can never drift apart.
  */
 
-export const size = { width: 32, height: 32 };
 export const contentType = "image/png";
 
-export default function Icon() {
-  return new ImageResponse(
-    (
-      <div
-        style={{
-          width: "100%",
-          height: "100%",
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "center",
-          background: "transparent",
-          color: "#20BC75",
-          fontSize: 20,
-          fontWeight: 800,
-          letterSpacing: -0.5,
-        }}
-      >
-        TR
-      </div>
-    ),
-    { ...size },
-  );
+export default async function Icon() {
+  const png = await readFile(join(process.cwd(), "public", "tr-insight-logo.png"));
+  return new Response(new Uint8Array(png), {
+    headers: { "Content-Type": contentType },
+  });
 }

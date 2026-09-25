@@ -11,5 +11,8 @@
 
 export const BRAND_NAME = "TR-Insight";
 
+/** Testrig brand green, worn by the "TR" half of the wordmark. */
+export const TR_GREEN = "#20BC75";
+
 /** The one-liner shown under the name. Keep it to a single sentence. */
 export const BRAND_TAGLINE = "AI QE that knows your results";

@@ -50,11 +50,17 @@ def _get_bool(name: str, default: bool = False) -> bool:
     return raw.strip().lower() in {"1", "true", "yes", "on"}
 
 
+# Both spellings of the dev frontend: a browser treats localhost and 127.0.0.1
+# as different origins, so opening the app at one while only the other is
+# allowed blocks every API call as an opaque "Failed to fetch".
+_DEFAULT_ORIGINS = ["http://localhost:3000", "http://127.0.0.1:3000"]
+
+
 def _parse_origins(raw: str) -> list[str]:
     if not raw:
-        return ["http://localhost:3000"]
+        return list(_DEFAULT_ORIGINS)
     origins = [o.strip() for o in raw.split(",") if o.strip()]
-    return origins or ["http://localhost:3000"]
+    return origins or list(_DEFAULT_ORIGINS)
 
 # --- LLM -------------------------------------------------------------------
 #
@@ -321,7 +327,7 @@ SECRET_KEY_FROM_ENV = bool((os.getenv("SECRET_KEY") or "").strip())
 BCRYPT_ROUNDS = int(os.getenv("BCRYPT_ROUNDS", "12"))
 
 # CORS
-CORS_ALLOWED_ORIGINS = _parse_origins(os.getenv("CORS_ALLOWED_ORIGINS", "http://localhost:3000"))
+CORS_ALLOWED_ORIGINS = _parse_origins(os.getenv("CORS_ALLOWED_ORIGINS", ""))
 
 # Auth storage (free, local defaults)
 AUTH_BACKEND = os.getenv("AUTH_BACKEND", "db").strip().lower()  # db | memory

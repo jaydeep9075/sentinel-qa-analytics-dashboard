@@ -3,22 +3,18 @@
 import type { ReactNode } from "react";
 
 import BrandLogo from "./BrandLogo";
-import { BRAND_TAGLINE } from "@/lib/brand";
+import { BRAND_TAGLINE, TR_GREEN } from "@/lib/brand";
 
 /**
- * The one brand lockup: green "TR" · "-Insight", with the tagline set on its
- * own line underneath.
+ * The one brand lockup: the mark, then "TR-Insight", with the tagline set on
+ * its own line underneath.
  *
- * TR already reads as Testrig on its own, so there is no separate company
- * wordmark or icon here — just the two-tone product name, "TR" in Testrig
- * green and "-Insight" in the product's own accent. Every surface that
- * introduces the product — the signed-in header, the sign-in and
- * registration cards, the landing nav and footer — renders this, so it can
- * only ever be arranged one way and at one set of proportions.
+ * Every surface that introduces the product — the signed-in header, the
+ * sign-in and registration cards, the landing nav and footer — renders this,
+ * so it can only ever be arranged one way and at one set of proportions.
  *
- * `scale` is the optical height (px) the wordmark should read at; "TR" and
- * "-Insight" share it exactly, so the two halves sit on one baseline at one
- * size instead of drifting apart.
+ * `scale` is the optical height (px) the wordmark should read at; the mark is
+ * sized from it too, so the two halves stay in proportion at every size.
  */
 
 interface BrandLockupProps {
@@ -45,17 +41,18 @@ export default function BrandLockup({
 
   return (
     <div className={`min-w-0 ${className}`}>
-      <div className="flex items-baseline" style={{ gap: 8 }}>
-        <span className="inline-flex items-baseline">
-          <BrandLogo size={nameSize} />
+      <div className="flex items-center" style={{ gap: 8 }}>
+        <BrandLogo size={Math.round(nameSize * 1.25)} />
+        <span className="inline-flex items-baseline" style={{ gap: 8 }}>
           <span
-            className="font-bold leading-none tracking-tight text-cyan-600 dark:text-cyan-400"
+            className="font-bold leading-none tracking-tight"
             style={{ fontSize: nameSize }}
           >
-            -Insight
+            <span style={{ color: TR_GREEN }}>TR</span>
+            <span className="text-cyan-600 dark:text-cyan-400">-Insight</span>
           </span>
+          {trailing}
         </span>
-        {trailing}
       </div>
 
       {tagline && (

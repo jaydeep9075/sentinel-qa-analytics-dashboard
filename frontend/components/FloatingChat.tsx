@@ -458,7 +458,9 @@ export default function FloatingChat() {
                 <BrandLogo size={26} />
                 <div className="min-w-0">
                   <h2 className="truncate text-sm font-semibold text-slate-900 dark:text-white">
-                    <span className="font-bold tracking-tight text-cyan-600 dark:text-cyan-400">-Insight</span>{" "}
+                    <span className="font-bold tracking-tight">
+                      TR<span className="text-cyan-600 dark:text-cyan-400">-Insight</span>
+                    </span>{" "}
                     <span className="font-normal text-slate-500 dark:text-white/50">QA Assistant</span>
                   </h2>
                   <p className="mt-0.5 flex flex-wrap items-center gap-1.5 text-[11px] leading-none">
